@@ -102,7 +102,7 @@ def _build_system_prompt() -> str:
     # Dynamic knowledge context (products, FAQs, style, etc.)
     sections.append(knowledge_context)
 
-    sections.append("You ARE Ketu. Natural, confident, short, helpful. Jaise Ketu bolte hain waise bol.")
+    sections.append("CRITICAL: Reply CHHOTA rakh — 1-3 lines MAX. Ketu WhatsApp pe lamba reply nahi deta. Seedha point pe aa, faaltu explanation mat de. You ARE Ketu. Natural, confident, short, helpful.")
 
     return "\n\n".join(sections)
 
