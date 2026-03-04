@@ -242,12 +242,19 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
 
     _mark_run("whatsapp")
 
+    filter_stats = knowledge.get("filter_stats", {})
+    quality_messages = knowledge.get("quality_messages", [])
+
     log_activity(
         source="wwbun-sync",
         action="learned",
         details={
             "total_messages": len(req.messages),
             "manual_messages": len([m for m in req.messages if not m.get("is_ai_generated")]),
+            "quality_messages_count": filter_stats.get("kept", 0),
+            "junk_skipped": filter_stats.get("junk", 0),
+            "too_short_skipped": filter_stats.get("too_short", 0),
+            "quality_messages_preview": quality_messages[:5],
             "updates_applied": result.get("applied", []),
         },
         items_count=result.get("count", 0),
@@ -255,7 +262,9 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
 
     return {
         "status": "ok",
-        "knowledge_extracted": knowledge,
+        "filter_stats": filter_stats,
+        "quality_messages": quality_messages,
+        "knowledge_extracted": {k: v for k, v in knowledge.items() if k not in ("filter_stats", "quality_messages")},
         "updates_applied": result,
     }
 
@@ -374,6 +383,38 @@ async def dashboard_activity(
     """
     return {
         "entries": get_activity_log(limit=limit, source_filter=source, date_filter=date),
+    }
+
+
+@app.get("/api/learn/history")
+async def learn_history(limit: int = 20):
+    """Show what messages Digital Ketu learned from.
+
+    Returns recent wwbun-sync events with:
+    - Which quality messages were used for learning
+    - How many junk messages were filtered out
+    - What knowledge was extracted
+    """
+    entries = get_activity_log(limit=limit, source_filter="wwbun-sync")
+
+    history = []
+    for entry in entries:
+        details = entry.get("details", {})
+        history.append({
+            "time": entry.get("time", ""),
+            "date": entry.get("date", ""),
+            "total_received": details.get("total_messages", 0),
+            "manual_messages": details.get("manual_messages", 0),
+            "quality_kept": details.get("quality_messages_count", 0),
+            "junk_skipped": details.get("junk_skipped", 0),
+            "too_short_skipped": details.get("too_short_skipped", 0),
+            "quality_messages": details.get("quality_messages_preview", []),
+            "learned": details.get("updates_applied", []),
+        })
+
+    return {
+        "total_syncs": len(history),
+        "history": history,
     }
 
 

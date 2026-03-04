@@ -250,7 +250,7 @@ def extract_knowledge_from_wwbun_messages(
     ]
 
     if not manual_messages:
-        return {"status": "no_manual_messages", "updates": []}
+        return {"status": "no_manual_messages", "updates": [], "filter_stats": {"total": len(messages), "kept": 0, "junk": 0, "too_short": 0}}
 
     # Smart filter: remove junk messages BEFORE sending to Claude
     filtered, filter_stats = filter_messages(messages, owner_key="sender_id", owner_value=owner_user_id)
@@ -311,12 +311,15 @@ Return ONLY valid JSON."""
         result_text = response.content[0].text
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
         if json_match:
-            return json.loads(json_match.group())
-        return {"status": "parse_error", "raw": result_text}
+            result = json.loads(json_match.group())
+            result["filter_stats"] = filter_stats
+            result["quality_messages"] = [m.get("content", "") for m in filtered if m.get("sender_id") == owner_user_id and not m.get("is_ai_generated")]
+            return result
+        return {"status": "parse_error", "raw": result_text, "filter_stats": filter_stats}
 
     except Exception as e:
         logger.error(f"Knowledge extraction error: {e}")
-        return {"status": "error", "detail": str(e)}
+        return {"status": "error", "detail": str(e), "filter_stats": filter_stats}
 
 
 def apply_knowledge_updates(updates: dict) -> dict:
