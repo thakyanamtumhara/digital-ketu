@@ -1073,6 +1073,26 @@ async function loadStorage() {
       </div>`;
   }
 
+  // WhatsApp conversations (DB)
+  if (data.conversation_log && data.conversation_log.count > 0) {
+    html += `
+      <div class="storage-item">
+        <span class="name" style="color:var(--green);">WhatsApp Conversations</span>
+        <span class="size">${data.conversation_log.size_kb} KB</span>
+        <span class="modified">${data.conversation_log.count} entries</span>
+      </div>`;
+  }
+
+  // Activity log (DB)
+  if (data.activity_log && data.activity_log.count > 0) {
+    html += `
+      <div class="storage-item">
+        <span class="name" style="color:var(--accent);">Activity Log</span>
+        <span class="size">${data.activity_log.size_kb} KB</span>
+        <span class="modified">${data.activity_log.count} entries</span>
+      </div>`;
+  }
+
   body.innerHTML = html || '<div class="empty-state">No files</div>';
 
   // Strength meter

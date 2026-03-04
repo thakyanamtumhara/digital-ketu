@@ -138,17 +138,32 @@ def get_storage_stats() -> dict:
         "storage_mode": "postgresql" if use_db else "json-files",
     }
 
-    # Main knowledge files (from filesystem for file size info)
+    # Main knowledge files — prefer DB content size, fallback to filesystem
+    if use_db:
+        for key in ["products", "faq", "style", "prompt"]:
+            data = load_knowledge_from_db(key)
+            if data:
+                content_str = json.dumps(data, ensure_ascii=False)
+                size = len(content_str.encode("utf-8"))
+                stats["knowledge_files"][key] = {
+                    "file": f"{key}.json",
+                    "size_kb": round(size / 1024, 1),
+                    "modified": "(in database)",
+                }
+                stats["total_size_kb"] += size
+
+    # Also count local files not in DB
     for f in knowledge_dir.glob("*.json"):
-        size = f.stat().st_size
-        stats["knowledge_files"][f.stem] = {
-            "file": f.name,
-            "size_kb": round(size / 1024, 1),
-            "modified": datetime.fromtimestamp(
-                f.stat().st_mtime, tz=IST
-            ).strftime("%d %b %Y %I:%M %p IST"),
-        }
-        stats["total_size_kb"] += size
+        if f.stem not in stats["knowledge_files"]:
+            size = f.stat().st_size
+            stats["knowledge_files"][f.stem] = {
+                "file": f.name,
+                "size_kb": round(size / 1024, 1),
+                "modified": datetime.fromtimestamp(
+                    f.stat().st_mtime, tz=IST
+                ).strftime("%d %b %Y %I:%M %p IST"),
+            }
+            stats["total_size_kb"] += size
 
     # Learned files
     if use_db:
@@ -178,6 +193,48 @@ def get_storage_stats() -> dict:
                 ).strftime("%d %b %Y %I:%M %p IST"),
             })
             stats["total_size_kb"] += size
+
+    # WhatsApp conversations size (DB only)
+    if use_db:
+        from core.database import _execute
+        try:
+            rows = _execute(
+                "SELECT COUNT(*) as cnt FROM conversation_log", fetch=True
+            )
+            convo_count = rows[0]["cnt"] if rows else 0
+            # Estimate ~500 bytes per conversation entry
+            convo_size = convo_count * 500
+            stats["conversation_log"] = {
+                "count": convo_count,
+                "size_kb": round(convo_size / 1024, 1),
+            }
+            stats["total_size_kb"] += convo_size
+        except Exception:
+            stats["conversation_log"] = {"count": 0, "size_kb": 0}
+
+    # Activity log size
+    if use_db:
+        try:
+            rows = _execute(
+                "SELECT COUNT(*) as cnt FROM activity_log", fetch=True
+            )
+            activity_count = rows[0]["cnt"] if rows else 0
+            # Estimate ~300 bytes per activity entry
+            activity_size = activity_count * 300
+            stats["activity_log"] = {
+                "count": activity_count,
+                "size_kb": round(activity_size / 1024, 1),
+            }
+            stats["total_size_kb"] += activity_size
+        except Exception:
+            stats["activity_log"] = {"count": 0, "size_kb": 0}
+
+    # YouTube backfill state size
+    if use_db:
+        backfill = kv_get("_backfill_state", {})
+        if backfill and isinstance(backfill, dict):
+            bs_size = len(json.dumps(backfill, ensure_ascii=False).encode("utf-8"))
+            stats["total_size_kb"] += bs_size
 
     stats["total_size_kb"] = round(stats["total_size_kb"] / 1024, 1)
 
