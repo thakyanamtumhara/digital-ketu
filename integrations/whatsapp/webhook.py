@@ -21,20 +21,42 @@ _seen_messages: OrderedDict[str, float] = OrderedDict()
 _SEEN_MAX = 1000
 _SEEN_TTL = 300  # 5 minutes
 
-# --- Rate Limiting ---
-# Per-customer: max messages per window to prevent spam/cost burning
+# --- Rate Limiting (reads from config, adjustable via env vars or admin commands) ---
 _customer_msg_timestamps: dict[str, list[float]] = {}
-_RATE_LIMIT_PER_CUSTOMER = 10  # max 10 msgs per customer per window
+_global_reply_timestamps: list[float] = []
 _RATE_LIMIT_WINDOW = 3600  # 1 hour window
 
-# Global: total AI calls per hour to protect API budget
-_global_reply_timestamps: list[float] = []
-_GLOBAL_RATE_LIMIT = 100  # max 100 AI replies per hour
+# Track rate-limited messages for dashboard visibility
+_rate_limited_today: dict[str, int] = {}  # phone -> count
+_rate_limited_total: int = 0
+_rate_limited_date: str = ""
 
-# Night hours (IST): restrict auto-replies during sleeping hours
-_NIGHT_START = 23  # 11 PM IST
-_NIGHT_END = 7  # 7 AM IST
-_NIGHT_LIMIT_PER_CUSTOMER = 3  # only 3 replies per customer at night
+
+def get_rate_limit_stats() -> dict:
+    """Get rate limiting stats for dashboard."""
+    from datetime import datetime, timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    today = datetime.now(ist).strftime("%d %b %Y")
+
+    # Reset if new day
+    global _rate_limited_total, _rate_limited_date, _rate_limited_today
+    if _rate_limited_date != today:
+        _rate_limited_today = {}
+        _rate_limited_total = 0
+        _rate_limited_date = today
+
+    return {
+        "today_blocked": _rate_limited_total,
+        "top_blocked_phones": sorted(
+            _rate_limited_today.items(), key=lambda x: x[1], reverse=True
+        )[:5],
+        "current_limits": {
+            "per_customer_per_hour": settings.rate_limit_per_customer,
+            "global_per_hour": settings.rate_limit_global,
+            "night_per_customer": settings.rate_limit_night_per_customer,
+            "night_hours": f"{settings.rate_limit_night_start}:00-{settings.rate_limit_night_end}:00 IST",
+        },
+    }
 
 
 def _is_rate_limited(phone: str) -> str | None:
@@ -42,9 +64,11 @@ def _is_rate_limited(phone: str) -> str | None:
     Returns reason string if limited, None if OK.
     """
     now = time.time()
-
-    # Clean old entries
     cutoff = now - _RATE_LIMIT_WINDOW
+
+    per_cust = settings.rate_limit_per_customer
+    global_limit = settings.rate_limit_global
+    night_limit = settings.rate_limit_night_per_customer
 
     # Per-customer check
     if phone in _customer_msg_timestamps:
@@ -52,8 +76,9 @@ def _is_rate_limited(phone: str) -> str | None:
             t for t in _customer_msg_timestamps[phone] if t > cutoff
         ]
         count = len(_customer_msg_timestamps[phone])
-        if count >= _RATE_LIMIT_PER_CUSTOMER:
-            return f"customer_limit ({count}/{_RATE_LIMIT_PER_CUSTOMER} per hour)"
+        if count >= per_cust:
+            _track_rate_limited(phone)
+            return f"customer_limit ({count}/{per_cust} per hour)"
     else:
         _customer_msg_timestamps[phone] = []
 
@@ -61,18 +86,34 @@ def _is_rate_limited(phone: str) -> str | None:
     from datetime import datetime, timezone, timedelta
     ist = timezone(timedelta(hours=5, minutes=30))
     hour_ist = datetime.now(ist).hour
-    is_night = hour_ist >= _NIGHT_START or hour_ist < _NIGHT_END
+    is_night = hour_ist >= settings.rate_limit_night_start or hour_ist < settings.rate_limit_night_end
     if is_night:
         count = len(_customer_msg_timestamps.get(phone, []))
-        if count >= _NIGHT_LIMIT_PER_CUSTOMER:
-            return f"night_limit ({count}/{_NIGHT_LIMIT_PER_CUSTOMER} between {_NIGHT_START}:00-{_NIGHT_END}:00 IST)"
+        if count >= night_limit:
+            _track_rate_limited(phone)
+            return f"night_limit ({count}/{night_limit} between {settings.rate_limit_night_start}:00-{settings.rate_limit_night_end}:00 IST)"
 
     # Global check
     _global_reply_timestamps[:] = [t for t in _global_reply_timestamps if t > cutoff]
-    if len(_global_reply_timestamps) >= _GLOBAL_RATE_LIMIT:
-        return f"global_limit ({len(_global_reply_timestamps)}/{_GLOBAL_RATE_LIMIT} per hour)"
+    if len(_global_reply_timestamps) >= global_limit:
+        _track_rate_limited(phone)
+        return f"global_limit ({len(_global_reply_timestamps)}/{global_limit} per hour)"
 
     return None
+
+
+def _track_rate_limited(phone: str):
+    """Track rate-limited messages for dashboard stats."""
+    global _rate_limited_total, _rate_limited_date, _rate_limited_today
+    from datetime import datetime, timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    today = datetime.now(ist).strftime("%d %b %Y")
+    if _rate_limited_date != today:
+        _rate_limited_today = {}
+        _rate_limited_total = 0
+        _rate_limited_date = today
+    _rate_limited_total += 1
+    _rate_limited_today[phone] = _rate_limited_today.get(phone, 0) + 1
 
 
 def _record_reply(phone: str):
@@ -230,7 +271,7 @@ async def receive_message(request: Request):
                     # Only send a polite message for the first rate-limit hit
                     if "customer_limit" in rate_reason or "night_limit" in rate_reason:
                         count = len(_customer_msg_timestamps.get(sender, []))
-                        if count == _RATE_LIMIT_PER_CUSTOMER or count == _NIGHT_LIMIT_PER_CUSTOMER:
+                        if count == settings.rate_limit_per_customer or count == settings.rate_limit_night_per_customer:
                             await send_text_message(
                                 to=sender,
                                 message="Ji, bahut saare messages aa rahe hain. Thodi der mein reply karta hun. Aap sale91.com pe bhi dekh sakte hain.",
@@ -358,6 +399,45 @@ async def _handle_admin_command(sender: str, text: str):
         settings.auto_reply_enabled = False
         await send_text_message(to=sender, message="Auto-reply OFF kar diya hai.")
         return
+
+    # --- /limit command (view/set rate limits) ---
+    if text_lower.startswith("/limit"):
+        parts = text.strip().split()
+        if len(parts) == 1:
+            # Show current limits
+            rl_stats = get_rate_limit_stats()
+            msg = (
+                f"*Rate Limits:*\n"
+                f"Per customer: {settings.rate_limit_per_customer}/hr\n"
+                f"Global: {settings.rate_limit_global}/hr\n"
+                f"Night ({settings.rate_limit_night_start}:00-{settings.rate_limit_night_end}:00): {settings.rate_limit_night_per_customer}/customer\n"
+                f"Blocked today: {rl_stats['today_blocked']}\n\n"
+                f"_Change: /limit customer 15_\n"
+                f"_Or: /limit global 200_\n"
+                f"_Or: /limit night 5_"
+            )
+            await send_text_message(to=sender, message=msg)
+            return
+        elif len(parts) >= 3:
+            import re as _re
+            target = parts[1].lower()
+            try:
+                val = int(parts[2])
+            except ValueError:
+                await send_text_message(to=sender, message="Number dijiye. Example: /limit customer 15")
+                return
+            if target in ("customer", "per_customer"):
+                settings.rate_limit_per_customer = val
+                await send_text_message(to=sender, message=f"Per-customer limit: {val}/hr set.")
+            elif target == "global":
+                settings.rate_limit_global = val
+                await send_text_message(to=sender, message=f"Global limit: {val}/hr set.")
+            elif target == "night":
+                settings.rate_limit_night_per_customer = val
+                await send_text_message(to=sender, message=f"Night limit: {val}/customer set.")
+            else:
+                await send_text_message(to=sender, message="Options: customer, global, night")
+            return
 
     # --- Correction: "3: Sahi answer yahan" ---
     import re

@@ -203,25 +203,45 @@ def mark_corrected(customer_phone: str):
 
 
 def init_conversation_log_table():
-    """Create conversation_log table if it doesn't exist."""
+    """Create conversation_log table if it doesn't exist.
+
+    Also verifies the table can accept inserts (health check).
+    """
     try:
         from core.database import is_db_available, _execute
-        if is_db_available():
-            _execute("""
-                CREATE TABLE IF NOT EXISTS conversation_log (
-                    id SERIAL PRIMARY KEY,
-                    customer_phone TEXT NOT NULL,
-                    customer_name TEXT DEFAULT '',
-                    customer_message TEXT NOT NULL,
-                    ai_reply TEXT NOT NULL,
-                    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-                    corrected BOOLEAN DEFAULT FALSE
-                );
-                CREATE INDEX IF NOT EXISTS idx_convlog_phone
-                    ON conversation_log(customer_phone);
-                CREATE INDEX IF NOT EXISTS idx_convlog_timestamp
-                    ON conversation_log(timestamp DESC);
-            """)
-            logger.info("[DB] conversation_log table ready")
+        if not is_db_available():
+            logger.warning("[ConvoLog] DB not available — conversation_log table skipped")
+            return
+
+        # Create table
+        _execute("""
+            CREATE TABLE IF NOT EXISTS conversation_log (
+                id SERIAL PRIMARY KEY,
+                customer_phone TEXT NOT NULL,
+                customer_name TEXT DEFAULT '',
+                customer_message TEXT NOT NULL,
+                ai_reply TEXT NOT NULL,
+                timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+                corrected BOOLEAN DEFAULT FALSE
+            );
+            CREATE INDEX IF NOT EXISTS idx_convlog_phone
+                ON conversation_log(customer_phone);
+            CREATE INDEX IF NOT EXISTS idx_convlog_timestamp
+                ON conversation_log(timestamp DESC);
+        """)
+
+        # Health check — verify table exists and is writable
+        check = _execute(
+            "SELECT COUNT(*) as cnt FROM conversation_log", fetch=True
+        )
+        count = check[0]["cnt"] if check else -1
+        logger.info(f"[ConvoLog] Table ready — {count} existing conversations")
+
+        if count == 0:
+            logger.warning(
+                "[ConvoLog] Table is EMPTY — if AI has been replying, "
+                "conversation logs were lost. Check previous deploy logs for errors."
+            )
+
     except Exception as e:
-        logger.debug(f"conversation_log table creation failed (non-fatal): {e}")
+        logger.error(f"[ConvoLog] Table creation/check FAILED: {e}")

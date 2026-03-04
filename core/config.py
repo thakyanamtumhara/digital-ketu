@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     port: int = 8000
     auto_reply_enabled: bool = True
 
+    # Rate Limiting (per hour)
+    rate_limit_per_customer: int = 10  # max msgs per customer per hour
+    rate_limit_global: int = 100  # max total AI replies per hour
+    rate_limit_night_per_customer: int = 3  # max msgs per customer at night
+    rate_limit_night_start: int = 23  # 11 PM IST
+    rate_limit_night_end: int = 7  # 7 AM IST
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

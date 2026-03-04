@@ -945,6 +945,20 @@ async function loadDashboard() {
         <div class="source-detail">${info.items_learned} items | Last: ${info.last_time}</div>
       </div>`;
   }
+  // Rate limit stats
+  const rlData = await fetchJSON('/api/rate-limit/stats');
+  if (rlData) {
+    const blocked = rlData.today_blocked || 0;
+    const limits = rlData.current_limits || {};
+    const topBlocked = (rlData.top_blocked_phones || []).map(([ph, cnt]) => `...${ph.slice(-4)}: ${cnt}`).join(', ');
+    todayHTML += `
+      <div class="today-card" style="border-color: ${blocked > 0 ? 'rgba(214,48,49,0.3)' : 'rgba(255,255,255,0.06)'};">
+        <div class="source-name">Rate Limited</div>
+        <div class="source-count" style="color:${blocked > 0 ? 'var(--red)' : 'var(--green)'}">${blocked}</div>
+        <div class="source-detail">${blocked > 0 ? topBlocked : `Limits: ${limits.per_customer_per_hour || 10}/cust, ${limits.global_per_hour || 100}/global`}</div>
+      </div>`;
+  }
+
   grid.innerHTML = todayHTML;
 
   // Activity feed

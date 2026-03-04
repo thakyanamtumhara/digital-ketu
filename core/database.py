@@ -314,14 +314,20 @@ def list_learned_files() -> list[dict]:
     )
     if not rows:
         return []
-    return [
-        {
+    result = []
+    for row in rows:
+        ts = row["updated_at"]
+        if ts and hasattr(ts, "astimezone"):
+            ts_ist = ts.astimezone(IST)
+            formatted = ts_ist.strftime("%d %b %Y %I:%M %p IST")
+        else:
+            formatted = str(ts) if ts else ""
+        result.append({
             "file": row["filename"],
             "metadata": row["metadata"] or {},
-            "updated_at": row["updated_at"].isoformat() if row["updated_at"] else "",
-        }
-        for row in rows
-    ]
+            "updated_at": formatted,
+        })
+    return result
 
 
 def count_learned_files() -> int:

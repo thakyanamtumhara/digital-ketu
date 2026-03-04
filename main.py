@@ -694,6 +694,17 @@ async def realtime_learner_stats():
     return get_realtime_stats()
 
 
+@app.get("/api/rate-limit/stats")
+async def rate_limit_stats():
+    """Rate limiting stats for dashboard.
+
+    Shows how many messages were blocked today, top blocked phones,
+    and current limit values.
+    """
+    from integrations.whatsapp.webhook import get_rate_limit_stats
+    return get_rate_limit_stats()
+
+
 # --- FAQ Validation ---
 
 
