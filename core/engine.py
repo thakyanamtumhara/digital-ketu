@@ -163,6 +163,55 @@ def get_conversation_history(phone: str) -> list:
     return _conversations.get(phone, [])
 
 
+def _is_conversation_ender(message: str, last_ai_message: str = "") -> bool:
+    """Detect if customer is just acknowledging/ending the conversation.
+
+    If the customer says "okay", "thanks", "theek hai" etc. after we gave them
+    info (address, price, details), there's no need to reply. Ketu doesn't
+    keep replying after the conversation is naturally done.
+
+    Returns True if we should NOT reply.
+    """
+    msg = message.strip().lower()
+
+    # Remove common punctuation
+    msg_clean = msg.rstrip("!.,?").strip()
+
+    # Short acknowledgement patterns (Hindi + English)
+    enders = {
+        # English
+        "ok", "okay", "okk", "okkk", "okayy", "k", "kk", "kkk",
+        "thanks", "thank you", "thankyou", "thnx", "thnks", "ty",
+        "got it", "noted", "sure", "fine", "alright", "right",
+        "great", "good", "nice", "cool", "done", "yes", "yep", "ya",
+        # Hindi / Hinglish
+        "theek hai", "thik hai", "theek", "thik", "teek hai",
+        "accha", "acha", "achha", "ok ji", "okay ji", "ji",
+        "shukriya", "dhanyawad", "dhanyavaad",
+        "samajh gaya", "samajh gaye", "samjh gya", "samjha",
+        "haan", "ha", "haa", "hmm", "hm", "hmmmm",
+        "bilkul", "zaroor", "sahi hai", "sahi",
+        "badhiya", "bohot accha", "bahut accha",
+    }
+
+    if msg_clean in enders:
+        return True
+
+    # Short messages (1-3 words) that look like acknowledgements
+    words = msg_clean.split()
+    if len(words) <= 3:
+        # "ok bhai", "thanks sir", "theek hai ji", "accha ok"
+        if any(w in enders for w in words):
+            # But NOT if they're asking something (contains question mark or question words)
+            question_words = {"kya", "kab", "kaise", "kitna", "kitne", "kaha", "kahan",
+                              "what", "when", "how", "which", "where", "why", "price",
+                              "rate", "sample", "order", "send", "bhej", "batao", "bata"}
+            if not any(w in question_words for w in words) and "?" not in msg:
+                return True
+
+    return False
+
+
 def generate_reply(
     message: str,
     customer_phone: str = "",
@@ -189,6 +238,21 @@ def generate_reply(
         messages = get_conversation_history(customer_phone)
     else:
         messages = []
+
+    # Check if this is a conversation-ender (customer just acknowledged, no need to reply)
+    last_ai_msg = ""
+    for m in reversed(messages):
+        if m.get("role") == "assistant":
+            last_ai_msg = m.get("content", "")
+            break
+
+    if last_ai_msg and _is_conversation_ender(message, last_ai_msg):
+        logger.info(f"Conversation ender detected: '{message[:50]}' — skipping reply")
+        # Still store the message in history but don't generate a reply
+        if customer_phone:
+            _conversations[customer_phone] = messages + [{"role": "user", "content": message}]
+            _conversation_timestamps[customer_phone] = time.time()
+        return ""  # Empty = don't send
 
     # Add current message
     messages = messages + [{"role": "user", "content": message}]

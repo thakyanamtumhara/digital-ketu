@@ -287,6 +287,11 @@ async def receive_message(request: Request):
                     customer_name=name,
                 )
 
+                # Empty reply = conversation ender, don't send anything
+                if not reply:
+                    logger.info(f"Skipped reply to {sender} — conversation ender: '{text[:50]}'")
+                    continue
+
                 # Send reply
                 await send_text_message(to=sender, message=reply)
                 _record_reply(sender)

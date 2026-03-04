@@ -187,6 +187,7 @@ class ReplyRequest(BaseModel):
 class ReplyResponse(BaseModel):
     reply: str
     status: str = "ok"
+    should_reply: bool = True
 
 
 @app.post("/api/reply", response_model=ReplyResponse)
@@ -194,6 +195,8 @@ async def api_reply(req: ReplyRequest):
     """Generate AI reply — used by wwbun to get Digital Ketu's response.
 
     wwbun sends customer message → Digital Ketu returns reply.
+    If should_reply is false, wwbun should NOT send anything — customer
+    just acknowledged (said "ok", "thanks", etc.) and conversation is done.
     """
     reply = await asyncio.to_thread(
         generate_reply,
@@ -202,6 +205,22 @@ async def api_reply(req: ReplyRequest):
         customer_name=req.customer_name,
         conversation_history=req.conversation_history,
     )
+
+    # Empty reply = conversation ender detected, don't send
+    if not reply:
+        log_activity(
+            source="api-reply",
+            action="skipped",
+            details={
+                "customer_phone": req.customer_phone[-4:] if req.customer_phone else "unknown",
+                "customer_name": req.customer_name or "unknown",
+                "message_preview": req.message[:80],
+                "reason": "conversation_ender",
+            },
+            items_count=0,
+        )
+        return ReplyResponse(reply="", status="skipped", should_reply=False)
+
     log_activity(
         source="api-reply",
         action="replied",
