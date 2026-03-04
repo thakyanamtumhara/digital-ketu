@@ -750,12 +750,14 @@
         <button class="tab-btn" onclick="switchTab('faqs')">FAQs</button>
         <button class="tab-btn" onclick="switchTab('style')">Style</button>
         <button class="tab-btn" onclick="switchTab('company')">Company</button>
+        <button class="tab-btn" onclick="switchTab('ytvideos')">YouTube Videos</button>
       </div>
       <div class="card-body" id="knowledgeBody">
         <div id="tab-products" class="tab-content active"></div>
         <div id="tab-faqs" class="tab-content"></div>
         <div id="tab-style" class="tab-content"></div>
         <div id="tab-company" class="tab-content"></div>
+        <div id="tab-ytvideos" class="tab-content"></div>
       </div>
     </div>
 
@@ -1235,8 +1237,73 @@ async function loadKnowledge() {
       </div>`;
   }
 
+  // YouTube Videos tab
+  loadYouTubeVideos();
+
   // System prompt
   loadSystemPrompt();
+}
+
+async function loadYouTubeVideos() {
+  const tab = document.getElementById('tab-ytvideos');
+  tab.innerHTML = '<div class="empty-state">Loading YouTube data...</div>';
+
+  const [learnedData, backfillData] = await Promise.all([
+    fetchJSON('/api/learned-files'),
+    fetchJSON('/api/learn/youtube-backfill/status'),
+  ]);
+
+  if (!learnedData && !backfillData) {
+    tab.innerHTML = '<div class="empty-state">Could not load YouTube data</div>';
+    return;
+  }
+
+  let html = '';
+
+  // Backfill progress summary
+  if (backfillData) {
+    const total = backfillData.total || 0;
+    const done = backfillData.processed || 0;
+    const remaining = backfillData.remaining || 0;
+    const pct = backfillData.progress_pct || 0;
+    const statusColor = backfillData.status === 'complete' ? 'var(--green)' : 'var(--orange)';
+    html += `<div class="knowledge-section" style="padding:12px;background:rgba(214,48,49,0.05);border:1px solid rgba(214,48,49,0.15);border-radius:8px;margin-bottom:12px;">
+      <h4 style="color:var(--red);margin-bottom:8px;">Backfill Progress</h4>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:13px;">
+        <span><strong style="color:${statusColor}">${done}</strong> / ${total} videos done</span>
+        <span><strong style="color:var(--orange)">${remaining}</strong> remaining</span>
+        <span style="color:${statusColor};font-weight:600;">${pct}%</span>
+      </div>
+      <div style="margin-top:8px;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;">
+        <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--red),var(--orange));border-radius:3px;"></div>
+      </div>
+    </div>`;
+  }
+
+  // Learned files list
+  const files = (learnedData && learnedData.files) || [];
+  const ytFiles = files.filter(f => f.file && f.file.startsWith('yt_'));
+
+  if (ytFiles.length) {
+    html += `<div class="knowledge-section"><h4 style="margin-bottom:8px;">Learned Videos (${ytFiles.length})</h4>`;
+    html += ytFiles.slice(0, 50).map(f => {
+      const videoId = f.file.replace('yt_', '').replace('.json', '');
+      const updated = f.updated_at ? new Date(f.updated_at).toLocaleDateString('en-IN', {day:'numeric',month:'short',year:'numeric'}) : '';
+      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;margin-bottom:4px;background:rgba(255,255,255,0.02);border-radius:6px;font-size:12px;">
+        <span style="background:rgba(214,48,49,0.15);color:var(--red);padding:3px 8px;border-radius:4px;font-weight:600;min-width:24px;text-align:center;">YT</span>
+        <span style="color:var(--text-bright);flex:1;">${videoId}</span>
+        <span style="color:var(--text-dim);font-size:11px;">${updated}</span>
+      </div>`;
+    }).join('');
+    if (ytFiles.length > 50) {
+      html += `<div style="text-align:center;padding:8px;color:var(--text-dim);font-size:12px;">+ ${ytFiles.length - 50} more videos</div>`;
+    }
+    html += '</div>';
+  } else {
+    html += '<div class="empty-state">No YouTube videos learned yet. Backfill will start automatically.</div>';
+  }
+
+  tab.innerHTML = html;
 }
 
 async function loadSystemPrompt() {
