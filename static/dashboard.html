@@ -727,14 +727,23 @@
       </div>
     </div>
 
-    <!-- System Instructions -->
+    <!-- System Instructions (Evolving) -->
     <div class="card">
       <div class="card-header">
-        <h3>System Instructions (Prompt)</h3>
-        <span class="badge">AI Personality</span>
+        <h3>System Prompt (Auto-Evolving)</h3>
+        <span class="badge" id="promptVersion">v1</span>
+      </div>
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchPromptTab('personality')">Personality</button>
+        <button class="tab-btn" onclick="switchPromptTab('rules')">Rules</button>
+        <button class="tab-btn" onclick="switchPromptTab('phrases')">Phrases</button>
+        <button class="tab-btn" onclick="switchPromptTab('evolution')">Evolution Log</button>
       </div>
       <div class="card-body">
-        <div class="system-prompt" id="systemPrompt">Loading...</div>
+        <div id="ptab-personality" class="tab-content active"></div>
+        <div id="ptab-rules" class="tab-content"></div>
+        <div id="ptab-phrases" class="tab-content"></div>
+        <div id="ptab-evolution" class="tab-content"></div>
       </div>
     </div>
 
@@ -944,13 +953,25 @@ function updateStrength(storage) {
   document.getElementById('strengthScore').textContent = score + '%';
   document.getElementById('strengthFill').style.width = score + '%';
 
+  // Also count prompt evolution
+  const evolvedTraits = storage.evolved_traits_count || 0;
+  const evolvedPhrases = storage.evolved_phrases_count || 0;
+  const evolvedRules = storage.evolved_rules_count || 0;
+  const totalEvolved = evolvedTraits + evolvedPhrases + evolvedRules;
+
+  // Add evolved items to score
+  score += Math.min(totalEvolved * 2, 10);
+  score = Math.min(score, 100);
+  document.getElementById('strengthScore').textContent = score + '%';
+  document.getElementById('strengthFill').style.width = score + '%';
+
   document.getElementById('strengthStats').innerHTML = `
     <div class="stat-chip"><div class="num">${products}</div><div class="label">Products</div></div>
     <div class="stat-chip"><div class="num">${faqs}</div><div class="label">FAQs</div></div>
     <div class="stat-chip"><div class="num">${patterns}</div><div class="label">Patterns Learned</div></div>
     <div class="stat-chip"><div class="num">${examples}</div><div class="label">Example Convos</div></div>
     <div class="stat-chip"><div class="num">${videos}</div><div class="label">YouTube Videos</div></div>
-    <div class="stat-chip"><div class="num">${learned}</div><div class="label">Learned Files</div></div>
+    <div class="stat-chip"><div class="num">${totalEvolved}</div><div class="label">Evolved Traits</div></div>
   `;
 }
 
@@ -1068,34 +1089,80 @@ async function loadKnowledge() {
   loadSystemPrompt();
 }
 
-function loadSystemPrompt() {
-  // Hardcoded from engine.py — shows the actual AI personality
-  document.getElementById('systemPrompt').textContent =
-`You are Digital Ketu — the AI twin of Ketu, owner of Own Knitted Blank Wears (Sale91.com).
+async function loadSystemPrompt() {
+  const data = await fetchJSON('/api/knowledge');
+  if (!data || !data.prompt) return;
 
-You are NOT a chatbot. You ARE Ketu. You talk exactly like he does — Hinglish mein, confident, direct, helpful.
+  const p = data.prompt;
+  document.getElementById('promptVersion').textContent = 'v' + (p.version || 1);
 
-HOW KETU TALKS:
-- Hinglish natural mix — "Ji sir, 200 GSM Rs 99 se start hota hai"
-- SHORT replies — 2-5 lines max, no essays
-- Respectful — "Ji", "Sir", "Bhai" naturally use karta hai
-- Direct pricing — kabhi "DM for price" mat bol, seedha rate bata
-- Confident — apne product pe full bharosa hai
-- Factory owner feel — "Tiruppur se direct", "apna factory hai"
-- Business-minded — bade order pe excited, better rate offer karta hai
-- Always next step — "sale91.com pe order karo" ya "WhatsApp karo"
+  // Personality tab
+  const baseTr = (p.personality_traits || []);
+  const evolTr = (p.evolved_traits || []);
+  let personalityHTML = '<div class="knowledge-section"><h4>Base Personality</h4><ul class="knowledge-list">';
+  personalityHTML += baseTr.map(t => `<li>${t}</li>`).join('');
+  personalityHTML += '</ul></div>';
+  if (evolTr.length) {
+    personalityHTML += '<div class="knowledge-section"><h4 style="color:var(--green);">Evolved Traits (Auto-Learned)</h4><ul class="knowledge-list">';
+    personalityHTML += evolTr.map(t => `<li style="color:var(--green);">${t}</li>`).join('');
+    personalityHTML += '</ul></div>';
+  }
+  document.getElementById('ptab-personality').innerHTML = personalityHTML;
 
-REPLY RULES:
-1. Pricing SEEDHA bata
-2. Product pucha? → Rate + GSM + quality + next step
-3. Bulk pucha? → Excited ho, discount bata
-4. Confused hai? → Simply samjha, comparison de
-5. Nahi pata? → "Ek min check karke batata hun"
-6. Emoji max 1-2
-7. End mein CTA — sale91.com ya WhatsApp
-8. Greeting → Warm response + help puch
+  // Rules tab
+  const baseRules = (p.reply_rules || []);
+  const evolRules = (p.evolved_rules || []);
+  let rulesHTML = '<div class="knowledge-section"><h4>Base Rules</h4><ul class="knowledge-list">';
+  rulesHTML += baseRules.map((r, i) => `<li><strong>${i+1}.</strong> ${r}</li>`).join('');
+  rulesHTML += '</ul></div>';
+  if (evolRules.length) {
+    rulesHTML += '<div class="knowledge-section"><h4 style="color:var(--green);">Evolved Rules (Auto-Learned)</h4><ul class="knowledge-list">';
+    rulesHTML += evolRules.map(r => `<li style="color:var(--green);">${r}</li>`).join('');
+    rulesHTML += '</ul></div>';
+  }
+  document.getElementById('ptab-rules').innerHTML = rulesHTML;
 
-+ Dynamic Knowledge Context (Products, FAQs, Style patterns loaded at runtime)`;
+  // Phrases tab
+  const basePh = (p.signature_phrases || []);
+  const evolPh = (p.evolved_phrases || []);
+  let phrasesHTML = '<div class="knowledge-section"><h4>Signature Phrases</h4><div style="display:flex;flex-wrap:wrap;gap:6px;">';
+  phrasesHTML += basePh.map(ph => `<span style="background:rgba(108,92,231,0.15);color:var(--accent);padding:4px 10px;border-radius:8px;font-size:12px;">"${ph}"</span>`).join('');
+  phrasesHTML += '</div></div>';
+  if (evolPh.length) {
+    phrasesHTML += '<div class="knowledge-section"><h4 style="color:var(--green);">Evolved Phrases (Auto-Learned)</h4><div style="display:flex;flex-wrap:wrap;gap:6px;">';
+    phrasesHTML += evolPh.map(ph => `<span style="background:rgba(0,184,148,0.15);color:var(--green);padding:4px 10px;border-radius:8px;font-size:12px;">"${ph}"</span>`).join('');
+    phrasesHTML += '</div></div>';
+  }
+  document.getElementById('ptab-phrases').innerHTML = phrasesHTML;
+
+  // Evolution log tab
+  const logs = (p.evolution_log || []);
+  if (logs.length) {
+    let logHTML = logs.slice(-10).reverse().map(log => {
+      const changes = (log.changes || []);
+      return `<div class="activity-item">
+        <div class="activity-icon learn" style="font-size:11px;">EV</div>
+        <div class="activity-info">
+          <div class="title">${changes.length} change(s)</div>
+          <div class="detail">${changes.slice(0, 3).join(' | ')}</div>
+          <div class="time">${log.timestamp || ''}</div>
+        </div>
+      </div>`;
+    }).join('');
+    document.getElementById('ptab-evolution').innerHTML = logHTML;
+  } else {
+    document.getElementById('ptab-evolution').innerHTML = '<div class="empty-state">No evolution yet — will auto-evolve from your conversations</div>';
+  }
+}
+
+function switchPromptTab(tabName) {
+  // Get the parent card of the clicked button
+  const btn = event.target;
+  const card = btn.closest('.card');
+  card.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  card.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('ptab-' + tabName).classList.add('active');
 }
 
 // ---- TAB SWITCHING ----

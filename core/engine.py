@@ -1,5 +1,8 @@
+import json
 import time
 import logging
+from pathlib import Path
+
 from anthropic import Anthropic
 
 from core.config import settings
@@ -7,43 +10,79 @@ from core.knowledge import format_context
 
 logger = logging.getLogger(__name__)
 
+KNOWLEDGE_DIR = Path(__file__).parent.parent / "knowledge"
+PROMPT_FILE = KNOWLEDGE_DIR / "prompt.json"
+
 # In-memory conversation history per customer (phone -> messages)
 _conversations: dict[str, list] = {}
 _conversation_timestamps: dict[str, float] = {}
 CONVERSATION_TTL = 3600  # 1 hour
 
-SYSTEM_PROMPT = """You are Digital Ketu — the AI twin of Ketu, owner of Own Knitted Blank Wears (Sale91.com).
 
-You are NOT a chatbot. You ARE Ketu. You talk exactly like he does — Hinglish mein, confident, direct, helpful.
-
-## HOW KETU TALKS:
-- Hinglish natural mix — "Ji sir, 200 GSM Rs 99 se start hota hai"
-- SHORT replies — 2-5 lines max, no essays. Customer WhatsApp pe hai, chhota reply chahiye
-- Respectful — "Ji", "Sir", "Bhai" naturally use karta hai
-- Direct pricing — kabhi "DM for price" mat bol, seedha rate bata
-- Confident — apne product pe full bharosa hai, quality ki guarantee deta hai
-- Factory owner feel — "Tiruppur se direct", "apna factory hai", "no middleman"
-- Business-minded — bade order pe excited hota hai, better rate offer karta hai
-- Always next step deta hai — "sale91.com pe order karo" ya "WhatsApp karo"
-
-## REPLY RULES:
-1. Pricing SEEDHA bata — color aur quantity ke hisaab se range de
-2. Customer ne product pucha? → Rate + GSM + quality + next step
-3. Customer ne bulk pucha? → Excited ho, discount bata, special rate offer kar
-4. Customer confused hai? → Simply samjha, comparison de (180 vs 200 vs 220 GSM)
-5. Agar koi cheez nahi pata → "Ek min check karke batata hun" bol, kabhi "I don't know" mat bol
-6. Emoji max 1-2 use kar, zyada mat laga
-7. End mein CTA de — sale91.com ya WhatsApp
-8. Agar customer greeting kare (Hi, Hello) → Warm response + kaise help karu puch
-
-{knowledge_context}
-
-You ARE Ketu. Natural, confident, short, helpful. Jaise Ketu bolte hain waise bol."""
+def _load_prompt_config() -> dict:
+    """Load the evolving prompt configuration from prompt.json."""
+    try:
+        with open(PROMPT_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load prompt.json: {e}")
+        return {}
 
 
 def _build_system_prompt() -> str:
-    context = format_context()
-    return SYSTEM_PROMPT.format(knowledge_context=context)
+    """Build system prompt dynamically from prompt.json + knowledge context.
+
+    This prompt evolves over time as Digital Ketu learns from Ketu's real messages.
+    """
+    config = _load_prompt_config()
+    knowledge_context = format_context()
+
+    identity = config.get("identity", {})
+    name = identity.get("name", "Digital Ketu")
+    role = identity.get("role", "AI twin of Ketu")
+    core = identity.get("core_instruction", "You ARE Ketu.")
+
+    # Base personality traits (original + evolved)
+    base_traits = config.get("personality_traits", [])
+    evolved_traits = config.get("evolved_traits", [])
+    all_traits = base_traits + evolved_traits
+
+    # Reply rules (original + evolved)
+    base_rules = config.get("reply_rules", [])
+    evolved_rules = config.get("evolved_rules", [])
+    all_rules = base_rules + evolved_rules
+
+    # Signature phrases (original + evolved)
+    base_phrases = config.get("signature_phrases", [])
+    evolved_phrases = config.get("evolved_phrases", [])
+    all_phrases = base_phrases + evolved_phrases
+
+    # Build prompt
+    sections = []
+
+    sections.append(f"You are {name} — {role}.\n\n{core}")
+
+    # Personality
+    if all_traits:
+        trait_lines = "\n".join(f"- {t}" for t in all_traits)
+        sections.append(f"## HOW KETU TALKS:\n{trait_lines}")
+
+    # Rules
+    if all_rules:
+        rule_lines = "\n".join(f"{i+1}. {r}" for i, r in enumerate(all_rules))
+        sections.append(f"## REPLY RULES:\n{rule_lines}")
+
+    # Signature phrases — these are Ketu's real words, use them naturally
+    if all_phrases:
+        phrase_str = ", ".join(f'"{p}"' for p in all_phrases)
+        sections.append(f"## KETU'S SIGNATURE PHRASES (use naturally):\n{phrase_str}")
+
+    # Dynamic knowledge context (products, FAQs, style, etc.)
+    sections.append(knowledge_context)
+
+    sections.append("You ARE Ketu. Natural, confident, short, helpful. Jaise Ketu bolte hain waise bol.")
+
+    return "\n\n".join(sections)
 
 
 def _cleanup_old_conversations():

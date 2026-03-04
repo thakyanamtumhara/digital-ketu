@@ -9,6 +9,16 @@ from core.config import settings
 
 logger = logging.getLogger(__name__)
 KNOWLEDGE_DIR = Path(__file__).parent.parent / "knowledge"
+PROMPT_FILE = KNOWLEDGE_DIR / "prompt.json"
+
+
+def _load_prompt_config() -> dict:
+    """Load current prompt config for evolution comparison."""
+    try:
+        with open(PROMPT_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 # --- Smart Message Filter ---
 # Messages that are too short or match these patterns are noise, not knowledge.
@@ -158,22 +168,45 @@ def extract_knowledge_from_messages(messages: list[dict], ketu_name: str = "Ketu
         for m in filtered[:200]
     )
 
+    # Load current prompt config for context
+    prompt_config = _load_prompt_config()
+    current_traits = prompt_config.get("personality_traits", []) + prompt_config.get("evolved_traits", [])
+    current_phrases = prompt_config.get("signature_phrases", []) + prompt_config.get("evolved_phrases", [])
+
     prompt = f"""Analyze these WhatsApp chat messages from Ketu (the business owner of Sale91.com / Own Knitted Blank Wears).
 
-IMPORTANT: Only learn from messages sent BY Ketu (not by customers or AI).
+IMPORTANT: Analyze BOTH customer questions AND Ketu's replies together — the customer question gives context for WHY Ketu replied that way. But only learn FROM Ketu's messages.
 Ketu's name in chat: {ketu_name}
 
 Chat messages:
 {chat_sample}
 
+CURRENT personality traits already known:
+{json.dumps(current_traits, ensure_ascii=False)}
+
+CURRENT signature phrases already known:
+{json.dumps(current_phrases, ensure_ascii=False)}
+
 Extract the following (in JSON format):
 1. "new_products": Any new products mentioned with prices
 2. "price_updates": Any price changes mentioned
 3. "style_patterns": How Ketu talks — phrases, greetings, closing patterns
-4. "new_faqs": New question-answer pairs from customer interactions
+4. "new_faqs": Customer Q + Ketu's A pairs (use customer question for context)
 5. "business_updates": Any new business info (offers, policies, etc.)
+6. "prompt_evolution": {{
+     "new_traits": ["NEW personality traits you noticed that are NOT already in the list above"],
+     "new_phrases": ["NEW signature phrases/words Ketu uses repeatedly that are NOT already known"],
+     "new_rules": ["NEW reply rules/patterns you noticed — how Ketu handles specific situations"],
+     "example_conversations": [{{"customer": "what customer asked", "reply": "what Ketu replied"}}]
+   }}
 
-Return ONLY valid JSON. If nothing new found, return empty arrays."""
+CRITICAL for prompt_evolution:
+- Only add traits/phrases/rules that are genuinely NEW (not already in current list)
+- Look for Ketu's UNIQUE way of talking — his catchphrases, his way of convincing, his humor
+- Notice how he handles objections, how he upsells, how he closes deals
+- If you find a pattern Ketu uses 2+ times, that's a signature move — capture it
+
+Return ONLY valid JSON. If nothing new found, return empty arrays/objects."""
 
     try:
         response = client.messages.create(
@@ -232,17 +265,39 @@ def extract_knowledge_from_wwbun_messages(
 
     chat_text = "\n".join(chat_context)
 
-    prompt = f"""Analyze these WhatsApp conversations. Learn ONLY from KETU's messages (NOT from [AI] tagged or CUSTOMER messages).
+    # Load current prompt config for context
+    prompt_config = _load_prompt_config()
+    current_traits = prompt_config.get("personality_traits", []) + prompt_config.get("evolved_traits", [])
+    current_phrases = prompt_config.get("signature_phrases", []) + prompt_config.get("evolved_phrases", [])
+
+    prompt = f"""Analyze these WhatsApp conversations. Learn from KETU's MANUAL messages only (NOT [AI] tagged). Use CUSTOMER messages as CONTEXT to understand why Ketu replied that way.
 
 Messages:
 {chat_text}
 
+CURRENT personality traits already known:
+{json.dumps(current_traits, ensure_ascii=False)}
+
+CURRENT signature phrases already known:
+{json.dumps(current_phrases, ensure_ascii=False)}
+
 Extract in JSON format:
 1. "style_patterns": How Ketu types — his phrases, greetings, tone, typical replies
 2. "price_updates": Any prices Ketu mentioned
-3. "new_faqs": Q&A pairs where customer asked and Ketu answered
+3. "new_faqs": Customer Q + Ketu's A pairs (use customer question for context)
 4. "business_updates": Any new policies, offers, shipping info
 5. "product_updates": Any new product info Ketu shared
+6. "prompt_evolution": {{
+     "new_traits": ["NEW personality traits NOT already known"],
+     "new_phrases": ["NEW signature phrases/words NOT already known"],
+     "new_rules": ["NEW reply patterns — how Ketu handles specific situations"],
+     "example_conversations": [{{"customer": "question", "reply": "Ketu's reply"}}]
+   }}
+
+CRITICAL for prompt_evolution:
+- Only add genuinely NEW traits/phrases/rules (not duplicates)
+- Capture Ketu's unique selling style, humor, objection handling
+- If Ketu uses a phrase 2+ times, it's a signature — add it
 
 Return ONLY valid JSON."""
 
@@ -309,5 +364,83 @@ def apply_knowledge_updates(updates: dict) -> dict:
 
         with open(style_path, "w", encoding="utf-8") as f:
             json.dump(style_data, f, indent=2, ensure_ascii=False)
+
+    # Evolve the system prompt
+    if updates.get("prompt_evolution"):
+        evolution = updates["prompt_evolution"]
+        try:
+            with open(PROMPT_FILE, "r", encoding="utf-8") as f:
+                prompt_data = json.load(f)
+
+            # Collect all existing values for dedup
+            all_traits = set(
+                t.lower() for t in prompt_data.get("personality_traits", [])
+                + prompt_data.get("evolved_traits", [])
+            )
+            all_phrases = set(
+                p.lower() for p in prompt_data.get("signature_phrases", [])
+                + prompt_data.get("evolved_phrases", [])
+            )
+            all_rules = set(
+                r.lower() for r in prompt_data.get("reply_rules", [])
+                + prompt_data.get("evolved_rules", [])
+            )
+
+            # Add new traits
+            for trait in evolution.get("new_traits", []):
+                if isinstance(trait, str) and trait.lower() not in all_traits:
+                    prompt_data.setdefault("evolved_traits", []).append(trait)
+                    applied.append(f"Evolved trait: {trait}")
+
+            # Add new phrases
+            for phrase in evolution.get("new_phrases", []):
+                if isinstance(phrase, str) and phrase.lower() not in all_phrases:
+                    prompt_data.setdefault("evolved_phrases", []).append(phrase)
+                    applied.append(f"Evolved phrase: {phrase}")
+
+            # Add new rules
+            for rule in evolution.get("new_rules", []):
+                if isinstance(rule, str) and rule.lower() not in all_rules:
+                    prompt_data.setdefault("evolved_rules", []).append(rule)
+                    applied.append(f"Evolved rule: {rule}")
+
+            # Add example conversations to style.json
+            new_examples = evolution.get("example_conversations", [])
+            if new_examples:
+                style_path = KNOWLEDGE_DIR / "style.json"
+                with open(style_path, "r", encoding="utf-8") as f:
+                    style_data = json.load(f)
+
+                existing_replies = {
+                    ex["reply"].lower()[:50]
+                    for ex in style_data.get("example_conversations", [])
+                }
+
+                for ex in new_examples:
+                    if (isinstance(ex, dict)
+                            and ex.get("customer") and ex.get("reply")
+                            and ex["reply"].lower()[:50] not in existing_replies):
+                        style_data.setdefault("example_conversations", []).append(ex)
+                        applied.append(f"New example: {ex['customer'][:40]}...")
+
+                with open(style_path, "w", encoding="utf-8") as f:
+                    json.dump(style_data, f, indent=2, ensure_ascii=False)
+
+            # Log evolution event
+            from datetime import datetime, timezone, timedelta
+            ist = timezone(timedelta(hours=5, minutes=30))
+            prompt_data.setdefault("evolution_log", []).append({
+                "timestamp": datetime.now(ist).isoformat(),
+                "changes": [a for a in applied if a.startswith("Evolved")],
+            })
+            prompt_data["version"] = prompt_data.get("version", 1) + 1
+
+            with open(PROMPT_FILE, "w", encoding="utf-8") as f:
+                json.dump(prompt_data, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Prompt evolved: {[a for a in applied if a.startswith('Evolved')]}")
+
+        except Exception as e:
+            logger.error(f"Prompt evolution error: {e}")
 
     return {"applied": applied, "count": len(applied)}

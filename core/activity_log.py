@@ -190,6 +190,20 @@ def get_storage_stats() -> dict:
         stats["style_patterns_count"] = 0
         stats["example_conversations_count"] = 0
 
+    # Prompt evolution counts
+    try:
+        with open(knowledge_dir / "prompt.json", "r") as f:
+            prompt_data = json.load(f)
+            stats["evolved_traits_count"] = len(prompt_data.get("evolved_traits", []))
+            stats["evolved_phrases_count"] = len(prompt_data.get("evolved_phrases", []))
+            stats["evolved_rules_count"] = len(prompt_data.get("evolved_rules", []))
+            stats["prompt_version"] = prompt_data.get("version", 1)
+    except Exception:
+        stats["evolved_traits_count"] = 0
+        stats["evolved_phrases_count"] = 0
+        stats["evolved_rules_count"] = 0
+        stats["prompt_version"] = 1
+
     # Processed YouTube videos count
     processed_file = learned_dir / "_processed_videos.json"
     if processed_file.exists():
