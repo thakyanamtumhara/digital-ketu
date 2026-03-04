@@ -1,0 +1,104 @@
+{
+  "faqs": [
+    {
+      "question": "Minimum order kitna hai?",
+      "answer": "Ji, minimum 10 pieces se order kar sakte hain ready stock items ke liye. Custom orders ke liye MOQ vary karta hai.",
+      "keywords": ["moq", "minimum", "kitna", "kam se kam", "least"]
+    },
+    {
+      "question": "GSM kya hota hai?",
+      "answer": "GSM matlab Grams per Square Meter — fabric ki thickness batata hai. 180 GSM light hota hai everyday ke liye, 200 GSM premium printing ke liye best, 220 GSM heavy premium hai.",
+      "keywords": ["gsm", "thickness", "weight", "mota", "patla"]
+    },
+    {
+      "question": "Bio-washed kya hota hai?",
+      "answer": "Bio-washed matlab enzyme treatment hota hai — fabric ko extra soft aur smooth banata hai. Washing ke baad bhi quality same rehti hai.",
+      "keywords": ["bio-wash", "bio wash", "enzyme", "soft"]
+    },
+    {
+      "question": "Combed cotton kya hai?",
+      "answer": "Combed cotton mein shorter fibers nikal diye jaate hain, sirf premium long fibers rehte hain. Isse fabric zyada soft, smooth aur durable hoti hai.",
+      "keywords": ["combed", "cotton", "ring spun", "yarn"]
+    },
+    {
+      "question": "Delivery time kya hai?",
+      "answer": "Delhi NCR mein 1-2 din, North India 2-4 din, South India 3-5 din. Ready stock items 24-48 ghante mein dispatch. Priority dispatch bhi available hai.",
+      "keywords": ["delivery", "shipping", "time", "days", "kitne din", "kab"]
+    },
+    {
+      "question": "COD available hai?",
+      "answer": "Ji, first order pe 50% COD available hai (+3% COD charge). Second order onwards prepaid hota hai. Online payment pe Rs 3/piece discount milta hai.",
+      "keywords": ["cod", "cash on delivery", "payment", "pay"]
+    },
+    {
+      "question": "Custom printing karte ho?",
+      "answer": "Hum blank/plain t-shirts banate hain — printing businesses ke liye. Aap apna printing khud kar sakte ho (DTG, DTF, Screen Print). Humari t-shirts printing ke liye optimized hain.",
+      "keywords": ["print", "custom", "dtg", "dtf", "screen", "design"]
+    },
+    {
+      "question": "Export karte ho?",
+      "answer": "Ji bilkul, hum export karte hain courier aur sea transport dono se. Many countries mein supply karte hain. Quantity bata do, rates share kar denge.",
+      "keywords": ["export", "international", "abroad", "foreign", "country"]
+    },
+    {
+      "question": "GST invoice milega?",
+      "answer": "Ji sir, har order ke saath GST invoice provide karte hain. Hum registered manufacturer hain.",
+      "keywords": ["gst", "invoice", "bill", "tax"]
+    },
+    {
+      "question": "Oversized available hai?",
+      "answer": "Ji, oversized t-shirts available hain. 200 GSM Rs 130 se aur 220 GSM Rs 145 se. Drop shoulder, boxy fit — trending style. Ready stock hai.",
+      "keywords": ["oversized", "drop shoulder", "boxy", "baggy"]
+    },
+    {
+      "question": "Hoodie ka rate kya hai?",
+      "answer": "Plain hoodie 320 GSM Rs 310 se, heavy 430 GSM Rs 410 se. 100% cotton fleece, bio-washed. Kangaroo pocket, adjustable hood. Ready stock.",
+      "keywords": ["hoodie", "hoody", "hood", "winter"]
+    },
+    {
+      "question": "Sweatshirt available hai?",
+      "answer": "Ji, plain sweatshirt 320 GSM Rs 280 se start. Crew neck, no hood, clean look. 100% cotton fleece. Winter ke liye perfect.",
+      "keywords": ["sweatshirt", "sweat shirt", "crew neck"]
+    },
+    {
+      "question": "Polo t-shirt hai?",
+      "answer": "Ji sir, polo t-shirt 220 GSM Rs 150 se. 100% cotton pique fabric. Corporate wear aur casual dono ke liye perfect.",
+      "keywords": ["polo", "collar", "corporate"]
+    },
+    {
+      "question": "Acid wash available hai?",
+      "answer": "Haan ji, acid wash t-shirts available hain — regular fit Rs 155 se aur oversized Rs 175 se. Vintage look, trending hai. MOQ 25 pieces.",
+      "keywords": ["acid", "wash", "vintage", "distressed"]
+    },
+    {
+      "question": "Bulk discount milega?",
+      "answer": "Bilkul! 500+ pieces pe Rs 2/piece discount. Online purchase pe Rs 3/piece discount (koi bhi quantity). 1000+ ke liye special rates — WhatsApp pe baat karo.",
+      "keywords": ["bulk", "discount", "wholesale", "offer", "deal"]
+    },
+    {
+      "question": "Sample order kaise karu?",
+      "answer": "5-10 pieces order karo as sample, same factory rate pe milega. First order pe COD bhi available hai. sale91.com pe order karo ya WhatsApp pe baat karo.",
+      "keywords": ["sample", "try", "test", "check"]
+    },
+    {
+      "question": "Factory kahan hai?",
+      "answer": "Humari factory Tiruppur, Tamil Nadu mein hai — India ka textile hub. Delhi mein warehouse hai Khanpur, South Delhi mein. Factory se direct supply, koi middleman nahi.",
+      "keywords": ["factory", "location", "where", "kahan", "address"]
+    },
+    {
+      "question": "Return policy kya hai?",
+      "answer": "Agar koi defect ya quality issue ho toh replacement available hai. Delivery ke 48 ghante mein report karo with photos. Humara quality check strict hai, rarely issues aate hain.",
+      "keywords": ["return", "refund", "exchange", "defect", "quality issue"]
+    },
+    {
+      "question": "White t-shirt ka rate?",
+      "answer": "White round neck 180 GSM Rs 89, 200 GSM Rs 99, 220 GSM Rs 115. Oversized 200 GSM Rs 130. Sab bio-washed, combed cotton. Ready stock hai.",
+      "keywords": ["white", "safed"]
+    },
+    {
+      "question": "Black t-shirt ka rate?",
+      "answer": "Black round neck 180 GSM Rs 95, 200 GSM Rs 110, 220 GSM Rs 125. Oversized 200 GSM Rs 140. Color items slightly zyada hota hai. Ready stock.",
+      "keywords": ["black", "kala"]
+    }
+  ]
+}

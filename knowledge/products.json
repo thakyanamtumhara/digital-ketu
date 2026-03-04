@@ -1,0 +1,201 @@
+{
+  "catalog": [
+    {
+      "id": "rn-180",
+      "name": "Plain Round Neck T-shirt",
+      "gsm": 180,
+      "description": "Everyday wear, lightweight, comfortable",
+      "fabric": "100% Cotton, Bio-washed, Pre-shrunk, Combed Ring-spun",
+      "sizes": ["S", "M", "L", "XL", "XXL"],
+      "colors": [
+        "White", "Black", "Navy Blue", "Red", "Maroon", "Grey Melange",
+        "Charcoal", "Bottle Green", "Royal Blue", "Yellow", "Pink",
+        "Orange", "Sky Blue", "Olive", "Lavender", "Beige"
+      ],
+      "price_range": "Rs 89-110 per piece (depends on color & quantity)",
+      "moq": 10,
+      "type": "round_neck",
+      "style": "regular_fit"
+    },
+    {
+      "id": "rn-200",
+      "name": "Plain Round Neck T-shirt - Premium",
+      "gsm": 200,
+      "description": "Premium quality, thicker fabric, ideal for printing",
+      "fabric": "100% Cotton, Bio-washed, Pre-shrunk, Combed Ring-spun",
+      "sizes": ["S", "M", "L", "XL", "XXL"],
+      "colors": [
+        "White", "Black", "Navy Blue", "Red", "Maroon", "Grey Melange",
+        "Charcoal", "Bottle Green", "Royal Blue", "Yellow", "Pink",
+        "Orange", "Sky Blue", "Olive", "Lavender", "Beige"
+      ],
+      "price_range": "Rs 99-125 per piece (depends on color & quantity)",
+      "moq": 10,
+      "type": "round_neck",
+      "style": "regular_fit"
+    },
+    {
+      "id": "rn-220",
+      "name": "Plain Round Neck T-shirt - Heavy Premium",
+      "gsm": 220,
+      "description": "Heavy premium, best for DTG/DTF printing, thick feel",
+      "fabric": "100% Cotton, Bio-washed, Pre-shrunk, Combed Ring-spun",
+      "sizes": ["S", "M", "L", "XL", "XXL"],
+      "colors": [
+        "White", "Black", "Navy Blue", "Red", "Maroon", "Grey Melange",
+        "Charcoal", "Bottle Green", "Royal Blue"
+      ],
+      "price_range": "Rs 115-140 per piece (depends on color & quantity)",
+      "moq": 10,
+      "type": "round_neck",
+      "style": "regular_fit"
+    },
+    {
+      "id": "os-200",
+      "name": "Oversized T-shirt",
+      "gsm": 200,
+      "description": "Drop shoulder, boxy fit, trending style",
+      "fabric": "100% Cotton, Bio-washed, Pre-shrunk, Combed Ring-spun",
+      "sizes": ["S", "M", "L", "XL", "XXL"],
+      "colors": [
+        "White", "Black", "Navy Blue", "Grey Melange", "Charcoal",
+        "Beige", "Olive", "Lavender", "Sage Green"
+      ],
+      "price_range": "Rs 130-160 per piece (depends on color & quantity)",
+      "moq": 10,
+      "type": "oversized",
+      "style": "drop_shoulder"
+    },
+    {
+      "id": "os-220",
+      "name": "Oversized T-shirt - Heavy",
+      "gsm": 220,
+      "description": "Heavy oversized, premium drop shoulder, structured fit",
+      "fabric": "100% Cotton, Bio-washed, Pre-shrunk, Combed Ring-spun",
+      "sizes": ["S", "M", "L", "XL", "XXL"],
+      "colors": [
+        "White", "Black", "Navy Blue", "Grey Melange", "Charcoal",
+        "Beige", "Olive"
+      ],
+      "price_range": "Rs 145-175 per piece (depends on color & quantity)",
+      "moq": 10,
+      "type": "oversized",
+      "style": "drop_shoulder"
+    },
+    {
+      "id": "polo-220",
+      "name": "Plain Polo T-shirt",
+      "gsm": 220,
+      "description": "Collar t-shirt, pique fabric, corporate/casual wear",
+      "fabric": "100% Cotton Pique, Bio-washed, Pre-shrunk",
+      "sizes": ["S", "M", "L", "XL", "XXL"],
+      "colors": [
+        "White", "Black", "Navy Blue", "Red", "Maroon", "Grey Melange",
+        "Royal Blue", "Yellow", "Bottle Green"
+      ],
+      "price_range": "Rs 150-185 per piece (depends on color & quantity)",
+      "moq": 10,
+      "type": "polo",
+      "style": "regular_fit"
+    },
+    {
+      "id": "hoodie-320",
+      "name": "Plain Hoodie",
+      "gsm": 320,
+      "description": "Winter wear, kangaroo pocket, adjustable hood",
+      "fabric": "100% Cotton Fleece, Bio-washed, Pre-shrunk",
+      "sizes": ["S", "M", "L", "XL", "XXL"],
+      "colors": [
+        "White", "Black", "Navy Blue", "Grey Melange", "Charcoal",
+        "Maroon", "Olive", "Beige"
+      ],
+      "price_range": "Rs 310-380 per piece (depends on color & quantity)",
+      "moq": 10,
+      "type": "hoodie",
+      "style": "pullover"
+    },
+    {
+      "id": "hoodie-430",
+      "name": "Plain Hoodie - Heavy",
+      "gsm": 430,
+      "description": "Heavy winter hoodie, thick fleece, premium quality",
+      "fabric": "100% Cotton Fleece, Bio-washed, Pre-shrunk",
+      "sizes": ["S", "M", "L", "XL", "XXL"],
+      "colors": [
+        "White", "Black", "Navy Blue", "Grey Melange", "Charcoal"
+      ],
+      "price_range": "Rs 410-480 per piece (depends on color & quantity)",
+      "moq": 10,
+      "type": "hoodie",
+      "style": "pullover"
+    },
+    {
+      "id": "sweatshirt-320",
+      "name": "Plain Sweatshirt",
+      "gsm": 320,
+      "description": "Crew neck, no hood, clean look winter wear",
+      "fabric": "100% Cotton Fleece, Bio-washed, Pre-shrunk",
+      "sizes": ["S", "M", "L", "XL", "XXL"],
+      "colors": [
+        "White", "Black", "Navy Blue", "Grey Melange", "Charcoal",
+        "Maroon", "Olive", "Beige"
+      ],
+      "price_range": "Rs 280-340 per piece (depends on color & quantity)",
+      "moq": 10,
+      "type": "sweatshirt",
+      "style": "crew_neck"
+    },
+    {
+      "id": "acid-rn",
+      "name": "Acid Wash T-shirt - Regular",
+      "gsm": 200,
+      "description": "Vintage acid wash look, trending, regular fit",
+      "fabric": "100% Cotton, Acid Washed, Bio-washed",
+      "sizes": ["S", "M", "L", "XL", "XXL"],
+      "colors": [
+        "Black Acid", "Grey Acid", "Navy Acid", "Brown Acid", "Olive Acid"
+      ],
+      "price_range": "Rs 155-190 per piece (depends on color & quantity)",
+      "moq": 25,
+      "type": "acid_wash",
+      "style": "regular_fit"
+    },
+    {
+      "id": "acid-os",
+      "name": "Acid Wash T-shirt - Oversized",
+      "gsm": 200,
+      "description": "Oversized acid wash, drop shoulder, vintage look",
+      "fabric": "100% Cotton, Acid Washed, Bio-washed",
+      "sizes": ["S", "M", "L", "XL", "XXL"],
+      "colors": [
+        "Black Acid", "Grey Acid", "Navy Acid", "Brown Acid", "Olive Acid"
+      ],
+      "price_range": "Rs 175-210 per piece (depends on color & quantity)",
+      "moq": 25,
+      "type": "acid_wash",
+      "style": "drop_shoulder"
+    }
+  ],
+  "bulk_discounts": {
+    "500_plus": "Rs 2/piece discount",
+    "online_purchase": "Rs 3/piece discount (any quantity, via sale91.com)",
+    "1000_plus": "Special rates available — contact for quote"
+  },
+  "gsm_guide": {
+    "180": "Everyday wear — lightweight, breathable, good for summer",
+    "200": "Premium — slightly thicker, ideal for DTG/DTF printing, year-round",
+    "210": "Mid-premium — balanced weight",
+    "220": "Heavy premium — thick, structured feel, best for screen printing",
+    "240": "Light fleece — sweatshirt/hoodie fabric",
+    "320": "Standard fleece — good winter wear",
+    "430": "Heavy fleece — thick, very warm, premium winter"
+  },
+  "fabric_features": {
+    "bio_washed": "Enzyme-treated for extra smoothness and softness",
+    "pre_shrunk": "Won't shrink after washing — maintains size",
+    "combed_cotton": "Finer, stronger yarn — premium quality feel",
+    "ring_spun": "Softer and more durable than open-end cotton"
+  },
+  "ready_stock": "1 lakh+ t-shirts ready stock at any given time",
+  "total_sold": "1,25,232+ pieces sold in last 30 days"
+}

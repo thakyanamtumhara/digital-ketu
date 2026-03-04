@@ -1,0 +1,64 @@
+{
+  "name": "Own Knitted Blank Wears",
+  "brand": "Sale91",
+  "tagline": "Own Knitted Blank Wears",
+  "websites": {
+    "primary": "sale91.com",
+    "secondary": "bulkplaintshirt.com"
+  },
+  "email": "sales.dushirts@gmail.com",
+  "locations": {
+    "factory": {
+      "city": "Tiruppur",
+      "state": "Tamil Nadu",
+      "description": "Manufacturing unit — India's textile hub, we knit our own fabric in-house"
+    },
+    "warehouse": {
+      "city": "Delhi",
+      "area": "Khanpur, South Delhi",
+      "description": "Ready stock warehouse for fast dispatch"
+    }
+  },
+  "usp": [
+    "Direct factory rate — no middleman",
+    "Manufacturing in Tiruppur — India's textile capital",
+    "We knit our own fabric in-house — not a trader/reseller",
+    "1 lakh+ t-shirts always ready in stock",
+    "Bio-washed, Pre-shrunk, Combed Ring-spun Cotton",
+    "Lowest MOQ — as low as 10 pieces for ready stock"
+  ],
+  "target_customers": [
+    "Custom printing businesses (DTG, DTF, Screen Print, Heat Transfer)",
+    "Clothing brands needing blank/plain apparel",
+    "Corporate bulk buyers",
+    "Exporters needing quality blank t-shirts"
+  ],
+  "payment_terms": {
+    "first_order": "50% COD available (+3% COD charge)",
+    "repeat_orders": "Prepaid only",
+    "online_discount": "Rs 3/piece discount for online purchase via sale91.com",
+    "modes": ["Bank Transfer (NEFT/IMPS)", "UPI", "COD (first order only)"]
+  },
+  "shipping": {
+    "pan_india": true,
+    "export": true,
+    "export_modes": ["Courier", "Sea transport"],
+    "dispatch_time": "24-48 hours for ready stock items",
+    "delivery_time": {
+      "delhi_ncr": "1-2 days",
+      "north_india": "2-4 days",
+      "south_india": "3-5 days",
+      "other": "4-7 days"
+    },
+    "free_shipping_note": "Shipping charges depend on quantity and location"
+  },
+  "gst": {
+    "registered": true,
+    "note": "GST invoice provided with every order"
+  },
+  "social": {
+    "youtube": "Sale91 channel",
+    "whatsapp_business": true,
+    "indiamart": true
+  }
+}
