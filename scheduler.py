@@ -436,6 +436,8 @@ async def check_youtube_channel():
 
     except Exception as e:
         logger.error(f"YouTube channel check failed: {e}")
+        from core.error_tracker import track_error
+        track_error("youtube-check", str(e))
 
 
 def _map_youtube_knowledge(knowledge: dict) -> dict:
@@ -486,10 +488,16 @@ async def catalog_sync_loop():
             result = await sync_catalog()
             if result.get("status") == "ok":
                 invalidate_cache()
+                diff = result.get("diff", {})
                 log_activity(
                     source="catalog-sync",
                     action="synced",
-                    details={"products_synced": result.get("products_synced", 0)},
+                    details={
+                        "products_synced": result.get("products_synced", 0),
+                        "added": diff.get("added", []),
+                        "removed": diff.get("removed", []),
+                        "price_changes": diff.get("price_changes", []),
+                    },
                     items_count=result.get("products_synced", 0),
                 )
                 logger.info(f"Catalog synced: {result.get('products_synced')} products")
@@ -519,6 +527,8 @@ async def catalog_sync_loop():
                 logger.warning(f"Catalog sync issue: {result}")
         except Exception as e:
             logger.error(f"Catalog sync loop error: {e}")
+            from core.error_tracker import track_error
+            track_error("catalog-sync", str(e))
 
         _mark_run("catalog")
         await asyncio.sleep(CATALOG_SYNC_INTERVAL)

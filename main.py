@@ -3,13 +3,16 @@ from contextlib import asynccontextmanager
 
 from pathlib import Path
 
+import io
+import zipfile
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from core.config import settings, init_knowledge_dir, KNOWLEDGE_DIR
-from core.engine import generate_reply
+from core.engine import generate_reply, get_customer_insights, get_faq_hit_rates
 from core.knowledge import load_knowledge, invalidate_cache
 from core.activity_log import log_activity, get_activity_log, get_today_summary, get_storage_stats
 from integrations.whatsapp.webhook import router as whatsapp_router
@@ -36,6 +39,7 @@ from learner.faq_validator import (
     get_faq_health_report,
     reactivate_faq,
 )
+from core.error_tracker import get_recent_errors, get_error_summary
 
 logging.basicConfig(
     level=logging.INFO,
@@ -119,6 +123,43 @@ async def health():
         "status": "ok",
         "service": "digital-ketu",
         "auto_reply": settings.auto_reply_enabled,
+    }
+
+
+@app.get("/api/health/detailed")
+async def health_detailed():
+    """Detailed health check — DB status, error counts, last sync times, uptime."""
+    from core.database import is_db_available
+    from core.error_tracker import get_error_summary
+
+    scheduler = get_scheduler_status()
+    errors = get_error_summary()
+
+    # Check DB connectivity
+    db_ok = is_db_available()
+
+    return {
+        "status": "ok" if db_ok and errors["last_hour_errors"] < 10 else "degraded",
+        "service": "digital-ketu",
+        "auto_reply": settings.auto_reply_enabled,
+        "database": "connected" if db_ok else "disconnected",
+        "errors": errors,
+        "scheduler": {
+            name: {
+                "status": info["status"],
+                "last_run_ago": info.get("last_run_ago"),
+            }
+            for name, info in scheduler.items()
+        },
+    }
+
+
+@app.get("/api/errors")
+async def api_errors(limit: int = 20):
+    """Recent errors for dashboard."""
+    return {
+        "errors": get_recent_errors(limit),
+        "summary": get_error_summary(),
     }
 
 
@@ -376,11 +417,15 @@ async def sync_catalog_endpoint():
     result = await sync_catalog()
     if result.get("status") == "ok":
         invalidate_cache()
+        diff = result.get("diff", {})
         log_activity(
             source="catalog-sync",
             action="synced",
             details={
                 "products_synced": result.get("products_synced", 0),
+                "added": diff.get("added", []),
+                "removed": diff.get("removed", []),
+                "price_changes": diff.get("price_changes", []),
             },
             items_count=result.get("products_synced", 0),
         )
@@ -514,6 +559,58 @@ async def dashboard_storage():
     Shows file sizes, item counts, what's stored where.
     """
     return get_storage_stats()
+
+
+# --- Customer Insights ---
+
+
+@app.get("/api/insights/customers")
+async def customer_insights():
+    """Customer message analytics — top customers, peak hours."""
+    return get_customer_insights()
+
+
+# --- FAQ Hit Rate ---
+
+
+@app.get("/api/insights/faq-hits")
+async def faq_hit_rates():
+    """FAQ hit rates — which FAQs are used most in replies."""
+    return {"faq_hits": get_faq_hit_rates()}
+
+
+# --- Knowledge Backup/Export ---
+
+
+@app.get("/api/backup")
+async def backup_knowledge():
+    """Download entire knowledge base as ZIP file."""
+    import json
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Add all knowledge JSON files
+        for f in KNOWLEDGE_DIR.glob("*.json"):
+            if f.name == "activity_log.json":
+                continue
+            zf.write(f, f"knowledge/{f.name}")
+
+        # Add learned files
+        learned_dir = KNOWLEDGE_DIR / "learned"
+        if learned_dir.exists():
+            for f in learned_dir.iterdir():
+                if not f.name.startswith("_"):
+                    zf.write(f, f"knowledge/learned/{f.name}")
+
+    buf.seek(0)
+    from datetime import datetime, timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    date_str = datetime.now(ist).strftime("%Y%m%d_%H%M")
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=digital-ketu-backup-{date_str}.zip"},
+    )
 
 
 # --- Scheduler Status ---

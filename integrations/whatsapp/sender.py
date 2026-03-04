@@ -33,10 +33,14 @@ async def send_text_message(to: str, message: str) -> dict | None:
                 return result
         except httpx.HTTPStatusError as e:
             logger.error(f"WhatsApp API error (attempt {attempt + 1}): {e.response.status_code} {e.response.text}")
+            from core.error_tracker import track_error
+            track_error("whatsapp-send", f"HTTP {e.response.status_code}: {e.response.text[:100]}", {"to": to[-4:]})
             if e.response.status_code < 500:
                 break  # Don't retry client errors
         except Exception as e:
             logger.error(f"Send message error (attempt {attempt + 1}): {e}")
+            from core.error_tracker import track_error
+            track_error("whatsapp-send", str(e), {"to": to[-4:], "attempt": attempt + 1})
 
     return None
 

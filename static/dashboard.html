@@ -270,6 +270,37 @@
   .activity-icon.learn { background: rgba(0, 206, 201, 0.15); }
   .activity-icon.sync { background: rgba(253, 203, 110, 0.15); }
   .activity-icon.youtube { background: rgba(214, 48, 49, 0.15); }
+  .activity-icon.error { background: rgba(214, 48, 49, 0.2); color: var(--red); }
+
+  /* Error badge */
+  .error-badge {
+    background: var(--red);
+    color: white;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-weight: 600;
+  }
+
+  /* Backup button */
+  .backup-btn {
+    background: rgba(108, 92, 231, 0.15);
+    color: var(--accent);
+    border: 1px solid rgba(108, 92, 231, 0.3);
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+  .backup-btn:hover { background: rgba(108, 92, 231, 0.25); }
+
+  /* Insights bar chart */
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .bar-label { font-size: 11px; color: var(--text-dim); width: 50px; text-align: right; }
+  .bar-fill { height: 18px; border-radius: 4px; background: linear-gradient(90deg, var(--accent), var(--accent2)); min-width: 4px; transition: width 0.4s; }
+  .bar-value { font-size: 11px; color: var(--text); font-weight: 500; }
 
   .activity-info { flex: 1; min-width: 0; }
 
@@ -759,6 +790,49 @@
       </div>
     </div>
 
+    <!-- Recent Errors -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Recent Errors</h3>
+        <span class="badge" id="errorBadge" style="background:rgba(214,48,49,0.15);color:var(--red);">0</span>
+      </div>
+      <div class="card-body" id="errorBody">
+        <div class="empty-state" style="color:var(--green);">No errors — all systems healthy</div>
+      </div>
+    </div>
+
+    <!-- Customer Insights -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Customer Insights</h3>
+        <span class="badge" id="customerBadge">0 customers</span>
+      </div>
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchInsightTab('top')">Top Customers</button>
+        <button class="tab-btn" onclick="switchInsightTab('hours')">Peak Hours</button>
+        <button class="tab-btn" onclick="switchInsightTab('faqhits')">FAQ Hits</button>
+      </div>
+      <div class="card-body">
+        <div id="itab-top" class="tab-content active"></div>
+        <div id="itab-hours" class="tab-content"></div>
+        <div id="itab-faqhits" class="tab-content"></div>
+      </div>
+    </div>
+
+    <!-- Backup -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Backup & Export</h3>
+      </div>
+      <div class="card-body" style="text-align:center;padding:30px;">
+        <div style="margin-bottom:12px;color:var(--text-dim);font-size:13px;">
+          Download complete knowledge base as ZIP file
+        </div>
+        <button class="backup-btn" onclick="downloadBackup()">Download Backup</button>
+        <div id="backupStatus" style="margin-top:10px;font-size:11px;color:var(--text-dim);"></div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -835,6 +909,8 @@ async function loadDashboard() {
     'whatsapp-export': { icon: 'WA Export', color: 'var(--green)' },
     'youtube': { icon: 'YouTube', color: 'var(--red)' },
     'catalog-sync': { icon: 'Catalog Sync', color: 'var(--orange)' },
+    'faq-validator': { icon: 'FAQ Check', color: 'var(--orange)' },
+    'data-cleanup': { icon: 'Cleanup', color: 'var(--text-dim)' },
   };
 
   let todayHTML = `
@@ -899,7 +975,11 @@ async function loadDashboard() {
         detail = applied || `Video: ${d.video_id || d.video_url || ''}`;
       } else if (e.source === 'catalog-sync') {
         title = `Catalog synced`;
-        detail = `${d.products_synced || 0} products updated`;
+        const parts = [`${d.products_synced || 0} products`];
+        if (d.added && d.added.length) parts.push(`+${d.added.length} new`);
+        if (d.removed && d.removed.length) parts.push(`-${d.removed.length} removed`);
+        if (d.price_changes && d.price_changes.length) parts.push(`${d.price_changes.length} price changes`);
+        detail = parts.join(' | ');
       } else if (e.source === 'faq-validator') {
         title = `FAQ validation`;
         const deactivated = d.deactivated || 0;
@@ -1361,6 +1441,127 @@ function tickCountdowns() {
   renderScheduler();
 }
 
+// ---- ERRORS ----
+
+async function loadErrors() {
+  const data = await fetchJSON('/api/errors');
+  if (!data) return;
+
+  const errors = data.errors || [];
+  const summary = data.summary || {};
+
+  document.getElementById('errorBadge').textContent = summary.last_hour_errors || 0;
+  if (summary.last_hour_errors > 0) {
+    document.getElementById('errorBadge').style.background = 'rgba(214,48,49,0.3)';
+  } else {
+    document.getElementById('errorBadge').style.background = 'rgba(0,184,148,0.15)';
+    document.getElementById('errorBadge').style.color = 'var(--green)';
+  }
+
+  const body = document.getElementById('errorBody');
+  if (errors.length === 0) {
+    body.innerHTML = '<div class="empty-state" style="color:var(--green);">No errors — all systems healthy</div>';
+    return;
+  }
+
+  body.innerHTML = errors.slice(0, 15).map(e => `
+    <div class="activity-item">
+      <div class="activity-icon error">!</div>
+      <div class="activity-info">
+        <div class="title" style="color:var(--red);">${e.source}</div>
+        <div class="detail">${e.error}</div>
+        <div class="time">${e.time}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ---- CUSTOMER INSIGHTS ----
+
+async function loadInsights() {
+  const [customers, faqHits] = await Promise.all([
+    fetchJSON('/api/insights/customers'),
+    fetchJSON('/api/insights/faq-hits'),
+  ]);
+
+  if (customers) {
+    document.getElementById('customerBadge').textContent =
+      `${customers.unique_customers} customers | ${customers.total_messages} msgs`;
+
+    // Top customers tab
+    const topTab = document.getElementById('itab-top');
+    const topList = customers.top_customers || [];
+    if (topList.length) {
+      const maxCount = topList[0]?.messages || 1;
+      topTab.innerHTML = topList.map(c => `
+        <div class="bar-row">
+          <div class="bar-label">${c.name || '...' + c.phone_last4}</div>
+          <div class="bar-fill" style="width:${Math.max((c.messages / maxCount) * 200, 4)}px;"></div>
+          <div class="bar-value">${c.messages}</div>
+        </div>
+      `).join('');
+    } else {
+      topTab.innerHTML = '<div class="empty-state">No customer data yet</div>';
+    }
+
+    // Peak hours tab
+    const hoursTab = document.getElementById('itab-hours');
+    const hourly = customers.hourly_distribution || {};
+    const hourEntries = Object.entries(hourly).sort((a, b) => b[1] - a[1]);
+    if (hourEntries.length) {
+      const maxH = hourEntries[0]?.[1] || 1;
+      hoursTab.innerHTML = hourEntries.map(([h, c]) => {
+        const label = `${String(h).padStart(2, '0')}:00`;
+        return `
+          <div class="bar-row">
+            <div class="bar-label">${label}</div>
+            <div class="bar-fill" style="width:${Math.max((c / maxH) * 200, 4)}px;"></div>
+            <div class="bar-value">${c} msgs</div>
+          </div>`;
+      }).join('');
+    } else {
+      hoursTab.innerHTML = '<div class="empty-state">No hourly data yet</div>';
+    }
+  }
+
+  if (faqHits) {
+    const faqTab = document.getElementById('itab-faqhits');
+    const hits = faqHits.faq_hits || [];
+    if (hits.length) {
+      const maxHit = hits[0]?.hits || 1;
+      faqTab.innerHTML = hits.slice(0, 15).map(f => `
+        <div class="bar-row">
+          <div class="bar-label" style="width:auto;max-width:180px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${f.question}">${f.question}</div>
+          <div class="bar-fill" style="width:${Math.max((f.hits / maxHit) * 120, 4)}px;background:linear-gradient(90deg,var(--green),var(--accent2));"></div>
+          <div class="bar-value">${f.hits}x</div>
+        </div>
+      `).join('');
+    } else {
+      faqTab.innerHTML = '<div class="empty-state">No FAQ usage data yet — will track as customers ask questions</div>';
+    }
+  }
+}
+
+function switchInsightTab(tabName) {
+  const btn = event.target;
+  const card = btn.closest('.card');
+  card.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  card.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('itab-' + tabName).classList.add('active');
+}
+
+// ---- BACKUP ----
+
+function downloadBackup() {
+  document.getElementById('backupStatus').textContent = 'Downloading...';
+  window.location.href = BASE + '/api/backup';
+  setTimeout(() => {
+    document.getElementById('backupStatus').textContent = 'Download started!';
+    setTimeout(() => { document.getElementById('backupStatus').textContent = ''; }, 3000);
+  }, 1000);
+}
+
 // ---- INIT & AUTO-REFRESH ----
 
 async function init() {
@@ -1371,6 +1572,8 @@ async function init() {
     loadKnowledge(),
     loadScheduler(),
     loadBackfillStatus(),
+    loadErrors(),
+    loadInsights(),
   ]);
 
   // Countdown ticks every second (local, no API call)
@@ -1384,6 +1587,8 @@ async function init() {
       loadStorage(),
       loadScheduler(),
       loadBackfillStatus(),
+      loadErrors(),
+      loadInsights(),
     ]);
   }, 30000);
 }

@@ -1,6 +1,8 @@
 import hashlib
 import hmac
 import logging
+import time
+from collections import OrderedDict
 
 from fastapi import APIRouter, Request, Response, HTTPException
 
@@ -11,6 +13,29 @@ from learner.audio_transcriber import process_whatsapp_audio
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhook/whatsapp", tags=["whatsapp"])
+
+# Duplicate message protection — track last 1000 message IDs with timestamps
+_seen_messages: OrderedDict[str, float] = OrderedDict()
+_SEEN_MAX = 1000
+_SEEN_TTL = 300  # 5 minutes
+
+
+def _is_duplicate(message_id: str) -> bool:
+    """Check if message was already processed. Returns True if duplicate."""
+    now = time.time()
+    # Clean expired entries
+    expired = [k for k, t in _seen_messages.items() if now - t > _SEEN_TTL]
+    for k in expired:
+        _seen_messages.pop(k, None)
+
+    if message_id in _seen_messages:
+        return True
+
+    _seen_messages[message_id] = now
+    # Trim to max size
+    while len(_seen_messages) > _SEEN_MAX:
+        _seen_messages.popitem(last=False)
+    return False
 
 
 def verify_signature(payload: bytes, signature: str) -> bool:
@@ -60,6 +85,16 @@ async def receive_message(request: Request):
             for msg in messages:
                 sender = msg.get("from", "")
                 msg_type = msg.get("type", "")
+                msg_id = msg.get("id", "")
+
+                # Skip if no sender or message type
+                if not sender or not msg_type:
+                    continue
+
+                # Duplicate protection — skip already-processed messages
+                if msg_id and _is_duplicate(msg_id):
+                    logger.debug(f"Duplicate message {msg_id} from {sender}, skipping")
+                    continue
 
                 # Extract message text
                 if msg_type == "text":
@@ -82,8 +117,17 @@ async def receive_message(request: Request):
                             logger.info(f"Audio transcribed from {sender}: {text[:60]}...")
                     else:
                         text = ""
+                elif msg_type in ("image", "video", "document", "sticker", "location", "contacts"):
+                    # Unsupported media — send polite reply
+                    if settings.auto_reply_enabled:
+                        media_reply = (
+                            "Ji sir, abhi main sirf text aur audio messages samajh pata hun. "
+                            "Aap text mein bata dijiye, main turant help karunga!"
+                        )
+                        await send_text_message(to=sender, message=media_reply)
+                        logger.info(f"Unsupported media ({msg_type}) from {sender}, sent polite reply")
+                    continue
                 else:
-                    # For other media messages, skip
                     text = ""
 
                 if not text:

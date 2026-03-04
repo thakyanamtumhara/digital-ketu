@@ -108,6 +108,35 @@ def convert_catalog_to_knowledge(catalog_data: dict) -> dict:
     }
 
 
+def _compute_catalog_diff(old_products: list[dict], new_products: list[dict]) -> dict:
+    """Compare old vs new catalog and return diff report."""
+    old_by_id = {p["id"]: p for p in old_products}
+    new_by_id = {p["id"]: p for p in new_products}
+
+    added = [p["name"] for pid, p in new_by_id.items() if pid not in old_by_id]
+    removed = [p["name"] for pid, p in old_by_id.items() if pid not in new_by_id]
+
+    price_changes = []
+    for pid, new_p in new_by_id.items():
+        if pid in old_by_id:
+            old_p = old_by_id[pid]
+            old_bulk = old_p.get("bulk_price", 0)
+            new_bulk = new_p.get("bulk_price", 0)
+            if old_bulk != new_bulk:
+                price_changes.append({
+                    "product": new_p["name"],
+                    "old_price": old_bulk,
+                    "new_price": new_bulk,
+                })
+
+    return {
+        "added": added,
+        "removed": removed,
+        "price_changes": price_changes,
+        "has_changes": bool(added or removed or price_changes),
+    }
+
+
 async def sync_catalog() -> dict:
     """Full sync: fetch catalog from GitHub, update local knowledge files.
 
@@ -115,16 +144,31 @@ async def sync_catalog() -> dict:
     """
     catalog_data = await fetch_catalog_products()
     if not catalog_data:
+        from core.error_tracker import track_error
+        track_error("catalog-sync", "Could not fetch catalog from GitHub")
         return {"status": "error", "detail": "Could not fetch catalog from GitHub"}
 
     # Convert to knowledge format
     knowledge_products = convert_catalog_to_knowledge(catalog_data)
 
+    # Load existing products for diff comparison
+    products_path = KNOWLEDGE_DIR / "products.json"
+    old_products = []
+    try:
+        if products_path.exists():
+            with open(products_path, "r", encoding="utf-8") as f:
+                old_data = json.load(f)
+                old_products = old_data.get("catalog", [])
+    except Exception:
+        pass
+
+    # Compute diff
+    diff = _compute_catalog_diff(old_products, knowledge_products["catalog"])
+
     # Count products
     product_count = len(knowledge_products["catalog"])
 
     # Save to products.json
-    products_path = KNOWLEDGE_DIR / "products.json"
     with open(products_path, "w", encoding="utf-8") as f:
         json.dump(knowledge_products, f, indent=2, ensure_ascii=False)
 
@@ -150,4 +194,5 @@ async def sync_catalog() -> dict:
         "products_synced": product_count,
         "last_updated": catalog_data.get("lastUpdated", "unknown"),
         "categories": [cat["name"] for cat in catalog_data.get("categories", [])],
+        "diff": diff,
     }
