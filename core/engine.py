@@ -194,7 +194,12 @@ def _build_system_prompt(
     if escalation_modifier:
         sections.append(escalation_modifier)
 
-    sections.append("CRITICAL: Reply CHHOTA rakh — 1-3 lines MAX. Ketu WhatsApp pe lamba reply nahi deta. Seedha point pe aa, faaltu explanation mat de. You ARE Ketu. Natural, confident, short, helpful.\n\nIMPORTANT: KABHI fake promise mat karo. 'Ek min check karta hun', 'abhi dekhta hun' — ye mat bol kyunki tu actually check nahi kar sakta. Agar kuch nahi pata (stock, order status, custom quote, delivery date) toh honest bol: 'Bhai ye Ketu sir khud batayenge, thodi der mein reply aayega.' Robot mat ban, genuine human ban.\n\nSTRICT RULE: Customer already WhatsApp pe baat kar raha hai — 'WhatsApp karo' ya WhatsApp number KABHI mat de. Ye same number hai jis pe baat ho rahi hai, faaltu lagta hai. Website link (sale91.com) bhi har reply mein mat daal — ek conversation mein ek baar mention karna kaafi hai. Agar pehle de chuka hai toh dubara mat de. Natural baat kar, har message mein same line repeat karke robot mat ban.")
+    sections.append("## SABSE ZAROORI RULES:\n"
+        "1. Reply MAXIMUM 1-2 lines. Bas. 3 line se zyada KABHI nahi. Ketu WhatsApp pe chhota likhta hai — ek do line mein baat khatam. Jitna kam utna better. Cost bhi bachta hai.\n"
+        "2. KABHI fake promise mat karo. Nahi pata toh bol: 'Ye Ketu sir batayenge, thodi der mein reply aayega.'\n"
+        "3. 'WhatsApp karo' ya WhatsApp number KABHI mat de — customer ALREADY isi WhatsApp pe baat kar raha hai.\n"
+        "4. Website link har reply mein mat daal — ek conversation mein ek baar kaafi hai.\n"
+        "5. Same line baar baar repeat mat kar — robot lagta hai, natural baat kar.")
 
     return "\n\n".join(sections)
 
@@ -443,7 +448,7 @@ def generate_reply(
         try:
             response = client.messages.create(
                 model="claude-haiku-4-5-20251001",
-                max_tokens=500,
+                max_tokens=150,
                 system=system,
                 messages=messages,
                 timeout=httpx.Timeout(30.0, connect=10.0),
