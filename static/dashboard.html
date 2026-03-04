@@ -489,6 +489,100 @@
     align-items: center;
     gap: 12px;
   }
+
+  /* Next Sync Timers */
+  .sync-timers {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin-bottom: 25px;
+  }
+
+  .sync-card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 18px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .sync-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .sync-icon.catalog { background: rgba(253, 203, 110, 0.15); color: var(--orange); }
+  .sync-icon.youtube { background: rgba(214, 48, 49, 0.15); color: var(--red); }
+  .sync-icon.whatsapp { background: rgba(0, 184, 148, 0.15); color: var(--green); }
+  .sync-icon.refresh { background: rgba(108, 92, 231, 0.15); color: var(--accent); }
+
+  .sync-info { flex: 1; }
+
+  .sync-info .sync-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-bright);
+    margin-bottom: 2px;
+  }
+
+  .sync-info .sync-last {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .sync-countdown {
+    text-align: right;
+    min-width: 70px;
+  }
+
+  .sync-countdown .time-left {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sync-countdown .time-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .sync-countdown .time-left.running {
+    color: var(--orange);
+    animation: pulse 1.5s infinite;
+  }
+
+  .sync-countdown .time-left.on-demand {
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  .sync-progress {
+    width: 100%;
+    height: 3px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 2px;
+    margin-top: 8px;
+    overflow: hidden;
+  }
+
+  .sync-progress-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--accent2);
+    transition: width 1s linear;
+  }
 </style>
 </head>
 <body>
@@ -525,6 +619,60 @@
       <div class="strength-fill" id="strengthFill" style="width:0%"></div>
     </div>
     <div class="strength-stats" id="strengthStats"></div>
+  </div>
+
+  <!-- Next Sync Timers -->
+  <div style="margin-bottom:25px;">
+    <h3 style="font-size:15px;color:var(--text-bright);margin-bottom:12px;">Next Sync Schedule</h3>
+    <div class="sync-timers" id="syncTimers">
+      <div class="sync-card">
+        <div class="sync-icon catalog">CT</div>
+        <div class="sync-info">
+          <div class="sync-name">Catalog Sync</div>
+          <div class="sync-last" id="catalogLast">Loading...</div>
+          <div class="sync-progress"><div class="sync-progress-fill" id="catalogProgress" style="width:0%"></div></div>
+        </div>
+        <div class="sync-countdown">
+          <div class="time-left" id="catalogTime">--:--</div>
+          <div class="time-label">next sync</div>
+        </div>
+      </div>
+      <div class="sync-card">
+        <div class="sync-icon youtube">YT</div>
+        <div class="sync-info">
+          <div class="sync-name">YouTube Scan</div>
+          <div class="sync-last" id="youtubeLast">Loading...</div>
+          <div class="sync-progress"><div class="sync-progress-fill" id="youtubeProgress" style="width:0%"></div></div>
+        </div>
+        <div class="sync-countdown">
+          <div class="time-left" id="youtubeTime">--:--</div>
+          <div class="time-label">next scan</div>
+        </div>
+      </div>
+      <div class="sync-card">
+        <div class="sync-icon refresh">KR</div>
+        <div class="sync-info">
+          <div class="sync-name">Knowledge Refresh</div>
+          <div class="sync-last" id="knowledgeLast">Loading...</div>
+          <div class="sync-progress"><div class="sync-progress-fill" id="knowledgeProgress" style="width:0%"></div></div>
+        </div>
+        <div class="sync-countdown">
+          <div class="time-left" id="knowledgeTime">--:--</div>
+          <div class="time-label">next refresh</div>
+        </div>
+      </div>
+      <div class="sync-card">
+        <div class="sync-icon whatsapp">WA</div>
+        <div class="sync-info">
+          <div class="sync-name">WhatsApp Sync</div>
+          <div class="sync-last" id="whatsappLast">Waiting for wwbun trigger</div>
+        </div>
+        <div class="sync-countdown">
+          <div class="time-left on-demand" id="whatsappTime">On Demand</div>
+          <div class="time-label">via wwbun</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Today Summary -->
@@ -960,6 +1108,103 @@ function switchTab(tabName) {
   document.getElementById('tab-' + tabName).classList.add('active');
 }
 
+// ---- SCHEDULER / NEXT SYNC ----
+
+let _schedulerData = {};
+
+function formatCountdown(seconds) {
+  if (seconds == null || seconds < 0) return '--:--';
+  if (seconds === 0) return 'NOW';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
+  return `${s}s`;
+}
+
+function formatAgo(seconds) {
+  if (seconds == null) return 'Not yet';
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${h}h ${m}m ago`;
+}
+
+async function loadScheduler() {
+  const data = await fetchJSON('/api/scheduler/status');
+  if (!data) return;
+  _schedulerData = data;
+  renderScheduler();
+}
+
+function renderScheduler() {
+  const data = _schedulerData;
+
+  // Catalog
+  const catalog = data.catalog || {};
+  document.getElementById('catalogTime').textContent = formatCountdown(catalog.next_run_in);
+  document.getElementById('catalogTime').className = 'time-left' + (catalog.status === 'running' ? ' running' : '');
+  document.getElementById('catalogLast').textContent = catalog.last_run_ago != null
+    ? `Last sync: ${formatAgo(catalog.last_run_ago)} | Every ${catalog.interval_hours}h`
+    : `Waiting for first sync | Every ${catalog.interval_hours}h`;
+  if (catalog.interval_hours && catalog.next_run_in != null) {
+    const total = catalog.interval_hours * 3600;
+    const elapsed = total - catalog.next_run_in;
+    document.getElementById('catalogProgress').style.width = Math.min((elapsed / total) * 100, 100) + '%';
+  }
+
+  // YouTube
+  const yt = data.youtube || {};
+  document.getElementById('youtubeTime').textContent = formatCountdown(yt.next_run_in);
+  document.getElementById('youtubeTime').className = 'time-left' + (yt.status === 'running' ? ' running' : '');
+  document.getElementById('youtubeLast').textContent = yt.last_run_ago != null
+    ? `Last scan: ${formatAgo(yt.last_run_ago)} | Every ${yt.interval_hours}h`
+    : `Waiting for first scan | Every ${yt.interval_hours}h`;
+  if (yt.interval_hours && yt.next_run_in != null) {
+    const total = yt.interval_hours * 3600;
+    const elapsed = total - yt.next_run_in;
+    document.getElementById('youtubeProgress').style.width = Math.min((elapsed / total) * 100, 100) + '%';
+  }
+
+  // Knowledge Refresh
+  const kr = data.knowledge_refresh || {};
+  document.getElementById('knowledgeTime').textContent = formatCountdown(kr.next_run_in);
+  document.getElementById('knowledgeTime').className = 'time-left' + (kr.status === 'running' ? ' running' : '');
+  document.getElementById('knowledgeLast').textContent = kr.last_run_ago != null
+    ? `Last refresh: ${formatAgo(kr.last_run_ago)} | Every ${kr.interval_hours}h`
+    : `Waiting for first refresh | Every ${kr.interval_hours}h`;
+  if (kr.interval_hours && kr.next_run_in != null) {
+    const total = kr.interval_hours * 3600;
+    const elapsed = total - kr.next_run_in;
+    document.getElementById('knowledgeProgress').style.width = Math.min((elapsed / total) * 100, 100) + '%';
+  }
+
+  // WhatsApp (on-demand)
+  const wa = data.whatsapp || {};
+  if (wa.last_run_ago != null) {
+    document.getElementById('whatsappLast').textContent = `Last sync: ${formatAgo(wa.last_run_ago)}`;
+    document.getElementById('whatsappTime').textContent = 'On Demand';
+  }
+}
+
+// Local countdown ticker — updates every second without hitting API
+function tickCountdowns() {
+  for (const key of ['catalog', 'youtube', 'knowledge_refresh']) {
+    const entry = _schedulerData[key];
+    if (entry && entry.next_run_in != null && entry.next_run_in > 0) {
+      entry.next_run_in = Math.max(0, entry.next_run_in - 1);
+    }
+    if (entry && entry.last_run_ago != null) {
+      entry.last_run_ago += 1;
+    }
+  }
+  const wa = _schedulerData.whatsapp;
+  if (wa && wa.last_run_ago != null) wa.last_run_ago += 1;
+  renderScheduler();
+}
+
 // ---- INIT & AUTO-REFRESH ----
 
 async function init() {
@@ -968,14 +1213,19 @@ async function init() {
     loadDashboard(),
     loadStorage(),
     loadKnowledge(),
+    loadScheduler(),
   ]);
 
-  // Auto-refresh every 30 seconds
+  // Countdown ticks every second (local, no API call)
+  setInterval(tickCountdowns, 1000);
+
+  // Full refresh from API every 30 seconds
   autoRefreshInterval = setInterval(async () => {
     await Promise.all([
       checkHealth(),
       loadDashboard(),
       loadStorage(),
+      loadScheduler(),
     ]);
   }, 30000);
 }

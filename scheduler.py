@@ -39,6 +39,46 @@ YOUTUBE_CHECK_INTERVAL = 12 * 60 * 60  # 12 hours
 CATALOG_SYNC_INTERVAL = 6 * 60 * 60  # 6 hours
 KNOWLEDGE_REFRESH_INTERVAL = 6 * 60 * 60  # 6 hours
 
+# --- Next Sync Tracking ---
+_scheduler_state: dict[str, dict] = {
+    "youtube": {"last_run": None, "next_run": None, "interval": YOUTUBE_CHECK_INTERVAL, "status": "waiting"},
+    "catalog": {"last_run": None, "next_run": None, "interval": CATALOG_SYNC_INTERVAL, "status": "waiting"},
+    "knowledge_refresh": {"last_run": None, "next_run": None, "interval": KNOWLEDGE_REFRESH_INTERVAL, "status": "waiting"},
+    "whatsapp": {"last_run": None, "next_run": None, "interval": 0, "status": "on-demand"},
+}
+
+
+def _mark_run(task_name: str):
+    """Mark a task as just completed, compute next_run."""
+    now = time.time()
+    state = _scheduler_state[task_name]
+    state["last_run"] = now
+    state["status"] = "completed"
+    if state["interval"] > 0:
+        state["next_run"] = now + state["interval"]
+
+
+def get_scheduler_status() -> dict:
+    """Return current scheduler state with countdowns."""
+    now = time.time()
+    result = {}
+    for name, state in _scheduler_state.items():
+        entry = {
+            "interval_hours": round(state["interval"] / 3600, 1) if state["interval"] else None,
+            "status": state["status"],
+            "last_run_ago": None,
+            "next_run_in": None,
+        }
+        if state["last_run"]:
+            entry["last_run_ago"] = int(now - state["last_run"])
+        if state["next_run"] and state["next_run"] > now:
+            entry["next_run_in"] = int(state["next_run"] - now)
+        elif state["next_run"] and state["next_run"] <= now:
+            entry["next_run_in"] = 0
+            entry["status"] = "due"
+        result[name] = entry
+    return result
+
 
 def _load_processed_videos() -> set[str]:
     """Load set of already-processed YouTube video IDs."""
@@ -182,6 +222,7 @@ async def catalog_sync_loop():
     await asyncio.sleep(30)
 
     while True:
+        _scheduler_state["catalog"]["status"] = "running"
         try:
             result = await sync_catalog()
             if result.get("status") == "ok":
@@ -198,6 +239,7 @@ async def catalog_sync_loop():
         except Exception as e:
             logger.error(f"Catalog sync loop error: {e}")
 
+        _mark_run("catalog")
         await asyncio.sleep(CATALOG_SYNC_INTERVAL)
 
 
@@ -207,11 +249,13 @@ async def youtube_check_loop():
     await asyncio.sleep(60)
 
     while True:
+        _scheduler_state["youtube"]["status"] = "running"
         try:
             await check_youtube_channel()
         except Exception as e:
             logger.error(f"YouTube check loop error: {e}")
 
+        _mark_run("youtube")
         await asyncio.sleep(YOUTUBE_CHECK_INTERVAL)
 
 
@@ -219,11 +263,13 @@ async def knowledge_refresh_loop():
     """Background loop that refreshes knowledge cache periodically."""
     while True:
         await asyncio.sleep(KNOWLEDGE_REFRESH_INTERVAL)
+        _scheduler_state["knowledge_refresh"]["status"] = "running"
         try:
             invalidate_cache()
             logger.info("Knowledge cache refreshed")
         except Exception as e:
             logger.error(f"Knowledge refresh error: {e}")
+        _mark_run("knowledge_refresh")
 
 
 def start_scheduler():

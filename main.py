@@ -22,7 +22,7 @@ from learner.chat_learner import (
     apply_knowledge_updates,
 )
 from learner.youtube_learner import process_video
-from scheduler import start_scheduler, check_youtube_channel
+from scheduler import start_scheduler, check_youtube_channel, _mark_run, get_scheduler_status
 from learner.catalog_syncer import sync_catalog
 
 logging.basicConfig(
@@ -187,6 +187,8 @@ async def learn_from_whatsapp_export(req: LearnWhatsAppRequest):
 
     invalidate_cache()
 
+    _mark_run("whatsapp")
+
     log_activity(
         source="whatsapp-export",
         action="learned",
@@ -230,6 +232,8 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     result = apply_knowledge_updates(knowledge)
 
     invalidate_cache()
+
+    _mark_run("whatsapp")
 
     log_activity(
         source="wwbun-sync",
@@ -351,6 +355,15 @@ async def dashboard_storage():
     Shows file sizes, item counts, what's stored where.
     """
     return get_storage_stats()
+
+
+# --- Scheduler Status ---
+
+
+@app.get("/api/scheduler/status")
+async def scheduler_status():
+    """Next sync countdown for all scheduled tasks."""
+    return get_scheduler_status()
 
 
 # --- Dashboard UI ---
