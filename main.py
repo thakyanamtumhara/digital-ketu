@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from core.config import settings
 from core.engine import generate_reply
 from core.knowledge import load_knowledge, invalidate_cache
+from core.activity_log import log_activity, get_activity_log, get_today_summary, get_storage_stats
 from integrations.whatsapp.webhook import router as whatsapp_router
 from integrations.indiamart.handler import router as indiamart_router
 from integrations.youtube.handler import router as youtube_router
@@ -104,6 +105,17 @@ async def api_reply(req: ReplyRequest):
         customer_name=req.customer_name,
         conversation_history=req.conversation_history,
     )
+    log_activity(
+        source="api-reply",
+        action="replied",
+        details={
+            "customer_phone": req.customer_phone[-4:] if req.customer_phone else "unknown",
+            "customer_name": req.customer_name or "unknown",
+            "message_preview": req.message[:80],
+            "reply_preview": reply[:80],
+        },
+        items_count=1,
+    )
     return ReplyResponse(reply=reply)
 
 
@@ -172,6 +184,17 @@ async def learn_from_whatsapp_export(req: LearnWhatsAppRequest):
 
     invalidate_cache()
 
+    log_activity(
+        source="whatsapp-export",
+        action="learned",
+        details={
+            "messages_parsed": len(messages),
+            "ketu_name": req.ketu_name,
+            "updates_applied": result.get("applied", []),
+        },
+        items_count=result.get("count", 0),
+    )
+
     return {
         "status": "ok",
         "messages_parsed": len(messages),
@@ -205,6 +228,17 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
 
     invalidate_cache()
 
+    log_activity(
+        source="wwbun-sync",
+        action="learned",
+        details={
+            "total_messages": len(req.messages),
+            "manual_messages": len([m for m in req.messages if not m.get("is_ai_generated")]),
+            "updates_applied": result.get("applied", []),
+        },
+        items_count=result.get("count", 0),
+    )
+
     return {
         "status": "ok",
         "knowledge_extracted": knowledge,
@@ -225,8 +259,18 @@ async def learn_from_youtube(req: LearnYouTubeRequest):
     """
     result = process_video(req.video_url, req.video_title)
     if result.get("knowledge"):
-        apply_knowledge_updates(result["knowledge"])
+        applied = apply_knowledge_updates(result["knowledge"])
         invalidate_cache()
+        log_activity(
+            source="youtube",
+            action="learned",
+            details={
+                "video_url": req.video_url,
+                "video_title": req.video_title,
+                "updates_applied": applied.get("applied", []),
+            },
+            items_count=applied.get("count", 0),
+        )
     return result
 
 
@@ -253,7 +297,57 @@ async def sync_catalog_endpoint():
     result = await sync_catalog()
     if result.get("status") == "ok":
         invalidate_cache()
+        log_activity(
+            source="catalog-sync",
+            action="synced",
+            details={
+                "products_synced": result.get("products_synced", 0),
+            },
+            items_count=result.get("products_synced", 0),
+        )
     return result
+
+
+# --- Dashboard & Monitoring ---
+
+
+@app.get("/api/dashboard")
+async def dashboard():
+    """Live dashboard — today's summary + recent activity.
+
+    Shows what Digital Ketu learned today, from where, and how much.
+    """
+    return {
+        "today": get_today_summary(),
+        "recent_activity": get_activity_log(limit=20),
+    }
+
+
+@app.get("/api/dashboard/activity")
+async def dashboard_activity(
+    limit: int = 50,
+    source: str | None = None,
+    date: str | None = None,
+):
+    """Full activity log with filters.
+
+    Query params:
+    - limit: max entries (default 50)
+    - source: filter by source (wwbun-sync, whatsapp-export, youtube, catalog-sync, api-reply)
+    - date: filter by date (e.g., "04 Mar 2026")
+    """
+    return {
+        "entries": get_activity_log(limit=limit, source_filter=source, date_filter=date),
+    }
+
+
+@app.get("/api/dashboard/storage")
+async def dashboard_storage():
+    """Knowledge base storage stats.
+
+    Shows file sizes, item counts, what's stored where.
+    """
+    return get_storage_stats()
 
 
 # --- Run ---

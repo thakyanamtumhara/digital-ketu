@@ -19,6 +19,7 @@ import httpx
 
 from core.config import settings
 from core.knowledge import invalidate_cache
+from core.activity_log import log_activity
 from learner.youtube_learner import process_video
 from learner.chat_learner import apply_knowledge_updates
 from learner.catalog_syncer import sync_catalog
@@ -114,6 +115,16 @@ async def check_youtube_channel():
                     logger.info(f"Applied {applied['count']} updates from video: {title}")
                     invalidate_cache()
 
+                log_activity(
+                    source="youtube",
+                    action="learned",
+                    details={
+                        "video_id": video_id,
+                        "video_title": title,
+                        "updates_applied": applied.get("applied", []),
+                    },
+                    items_count=applied.get("count", 0),
+                )
                 new_learned += 1
 
             _save_processed_video(video_id)
@@ -175,6 +186,12 @@ async def catalog_sync_loop():
             result = await sync_catalog()
             if result.get("status") == "ok":
                 invalidate_cache()
+                log_activity(
+                    source="catalog-sync",
+                    action="synced",
+                    details={"products_synced": result.get("products_synced", 0)},
+                    items_count=result.get("products_synced", 0),
+                )
                 logger.info(f"Catalog synced: {result.get('products_synced')} products")
             else:
                 logger.warning(f"Catalog sync issue: {result}")
