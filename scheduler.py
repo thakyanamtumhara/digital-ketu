@@ -2,8 +2,9 @@
 
 Runs periodic tasks:
 1. YouTube channel check - every 12 hours (detect new videos, extract knowledge)
-2. Catalog repo sync - every 6 hours (fetch latest products/prices from GitHub)
-3. Knowledge refresh - every 6 hours (reload from updated JSON files)
+2. YouTube backfill - every 6 hours (process 5 old videos per batch until all done)
+3. Catalog repo sync - every 6 hours (fetch latest products/prices from GitHub)
+4. Knowledge refresh - every 6 hours (reload from updated JSON files)
 
 WhatsApp learning is triggered by wwbun calling /api/learn/wwbun-sync
 whenever Ketu sends manual messages. No polling needed from our side.
@@ -36,12 +37,18 @@ YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3"
 
 # Schedule intervals (in seconds)
 YOUTUBE_CHECK_INTERVAL = 12 * 60 * 60  # 12 hours
+YOUTUBE_BACKFILL_INTERVAL = 6 * 60 * 60  # 6 hours — process old videos in batches
+YOUTUBE_BACKFILL_BATCH_SIZE = 5  # Process 5 old videos per cycle
 CATALOG_SYNC_INTERVAL = 6 * 60 * 60  # 6 hours
 KNOWLEDGE_REFRESH_INTERVAL = 6 * 60 * 60  # 6 hours
+
+# Backfill state file — stores list of ALL channel video IDs for batch processing
+_backfill_state_file = LEARNED_DIR / "_backfill_state.json"
 
 # --- Next Sync Tracking ---
 _scheduler_state: dict[str, dict] = {
     "youtube": {"last_run": None, "next_run": None, "interval": YOUTUBE_CHECK_INTERVAL, "status": "waiting"},
+    "youtube_backfill": {"last_run": None, "next_run": None, "interval": YOUTUBE_BACKFILL_INTERVAL, "status": "waiting"},
     "catalog": {"last_run": None, "next_run": None, "interval": CATALOG_SYNC_INTERVAL, "status": "waiting"},
     "knowledge_refresh": {"last_run": None, "next_run": None, "interval": KNOWLEDGE_REFRESH_INTERVAL, "status": "waiting"},
     "whatsapp": {"last_run": None, "next_run": None, "interval": 0, "status": "on-demand"},
@@ -99,6 +106,216 @@ def _save_processed_video(video_id: str):
     processed.add(video_id)
     with open(_processed_videos_file, "w") as f:
         json.dump({"video_ids": list(processed)}, f)
+
+
+def _load_backfill_state() -> dict:
+    """Load backfill state — tracks which old videos are pending."""
+    if _backfill_state_file.exists():
+        try:
+            with open(_backfill_state_file, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"all_video_ids": [], "total": 0, "fetched": False}
+
+
+def _save_backfill_state(state: dict):
+    """Save backfill state."""
+    LEARNED_DIR.mkdir(exist_ok=True)
+    with open(_backfill_state_file, "w") as f:
+        json.dump(state, f)
+
+
+async def _fetch_all_channel_videos() -> list[dict]:
+    """Fetch ALL videos from channel using uploads playlist (with pagination).
+
+    Uses Channels API to get uploads playlist, then PlaylistItems API
+    with pageToken pagination to get every single video.
+    Returns list of {video_id, title} dicts.
+    """
+    if not settings.youtube_api_key or not settings.youtube_channel_id:
+        return []
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Step 1: Get uploads playlist ID
+        ch_resp = await client.get(
+            f"{YOUTUBE_API_URL}/channels",
+            params={
+                "key": settings.youtube_api_key,
+                "id": settings.youtube_channel_id,
+                "part": "contentDetails",
+            },
+        )
+        ch_resp.raise_for_status()
+        ch_data = ch_resp.json()
+
+        items = ch_data.get("items", [])
+        if not items:
+            logger.error("Channel not found or no contentDetails")
+            return []
+
+        uploads_playlist = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+        logger.info(f"Uploads playlist: {uploads_playlist}")
+
+        # Step 2: Paginate through ALL videos in uploads playlist
+        all_videos = []
+        page_token = None
+
+        while True:
+            params = {
+                "key": settings.youtube_api_key,
+                "playlistId": uploads_playlist,
+                "part": "snippet",
+                "maxResults": 50,  # Max allowed by API
+            }
+            if page_token:
+                params["pageToken"] = page_token
+
+            resp = await client.get(f"{YOUTUBE_API_URL}/playlistItems", params=params)
+            resp.raise_for_status()
+            data = resp.json()
+
+            for item in data.get("items", []):
+                vid_id = item["snippet"]["resourceId"]["videoId"]
+                title = item["snippet"]["title"]
+                all_videos.append({"video_id": vid_id, "title": title})
+
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
+        logger.info(f"Found {len(all_videos)} total videos on channel")
+        return all_videos
+
+
+async def backfill_youtube_channel(batch_size: int | None = None) -> dict:
+    """Process old YouTube videos in batches.
+
+    First run: fetches ALL video IDs from channel and saves them.
+    Each run: picks next batch of unprocessed videos and learns from them.
+    Returns status with progress info.
+    """
+    if not settings.youtube_api_key or not settings.youtube_channel_id:
+        return {"status": "not_configured"}
+
+    if batch_size is None:
+        batch_size = YOUTUBE_BACKFILL_BATCH_SIZE
+
+    state = _load_backfill_state()
+    processed = _load_processed_videos()
+
+    # First time: fetch all video IDs from channel
+    if not state.get("fetched"):
+        logger.info("Backfill: Fetching all channel videos for the first time...")
+        try:
+            all_videos = await _fetch_all_channel_videos()
+            state = {
+                "all_video_ids": [v for v in all_videos],
+                "total": len(all_videos),
+                "fetched": True,
+            }
+            _save_backfill_state(state)
+            logger.info(f"Backfill: Saved {len(all_videos)} video IDs for processing")
+        except Exception as e:
+            logger.error(f"Backfill: Failed to fetch channel videos: {e}")
+            return {"status": "error", "detail": str(e)}
+
+    # Find unprocessed videos
+    all_videos = state.get("all_video_ids", [])
+    pending = [v for v in all_videos if v["video_id"] not in processed]
+
+    if not pending:
+        logger.info("Backfill complete! All videos processed.")
+        return {
+            "status": "complete",
+            "total": state["total"],
+            "processed": len(processed),
+            "remaining": 0,
+        }
+
+    # Process next batch
+    batch = pending[:batch_size]
+    learned = 0
+
+    for video in batch:
+        video_id = video["video_id"]
+        title = video["title"]
+
+        logger.info(f"Backfill: Processing [{len(processed) + 1}/{state['total']}] {title}")
+
+        try:
+            result = process_video(
+                video_url=f"https://www.youtube.com/watch?v={video_id}",
+                video_title=title,
+            )
+
+            if result.get("status") == "ok" and result.get("knowledge"):
+                knowledge = result["knowledge"]
+                mapped_updates = _map_youtube_knowledge(knowledge)
+                applied = apply_knowledge_updates(mapped_updates)
+
+                if applied.get("count", 0) > 0:
+                    logger.info(f"Backfill: Applied {applied['count']} updates from: {title}")
+                    invalidate_cache()
+
+                log_activity(
+                    source="youtube",
+                    action="learned",
+                    details={
+                        "video_id": video_id,
+                        "video_title": title,
+                        "backfill": True,
+                        "updates_applied": applied.get("applied", []),
+                    },
+                    items_count=applied.get("count", 0),
+                )
+                learned += 1
+
+            _save_processed_video(video_id)
+
+        except Exception as e:
+            logger.error(f"Backfill: Error processing {title}: {e}")
+            _save_processed_video(video_id)  # Mark as processed to avoid retry loop
+
+    remaining = len(pending) - len(batch)
+    logger.info(f"Backfill: Processed {len(batch)} videos, {remaining} remaining")
+
+    return {
+        "status": "in_progress" if remaining > 0 else "complete",
+        "total": state["total"],
+        "processed_this_batch": len(batch),
+        "learned_this_batch": learned,
+        "processed_total": state["total"] - remaining,
+        "remaining": remaining,
+    }
+
+
+def get_backfill_status() -> dict:
+    """Get current backfill progress without running anything."""
+    state = _load_backfill_state()
+    processed = _load_processed_videos()
+
+    if not state.get("fetched"):
+        return {
+            "status": "not_started",
+            "total": 0,
+            "processed": len(processed),
+            "remaining": 0,
+            "progress_pct": 0,
+        }
+
+    total = state.get("total", 0)
+    all_videos = state.get("all_video_ids", [])
+    pending = [v for v in all_videos if v["video_id"] not in processed]
+    done = total - len(pending)
+
+    return {
+        "status": "complete" if len(pending) == 0 else "in_progress",
+        "total": total,
+        "processed": done,
+        "remaining": len(pending),
+        "progress_pct": round((done / total) * 100, 1) if total > 0 else 0,
+    }
 
 
 async def check_youtube_channel():
@@ -259,6 +476,30 @@ async def youtube_check_loop():
         await asyncio.sleep(YOUTUBE_CHECK_INTERVAL)
 
 
+async def youtube_backfill_loop():
+    """Background loop that processes old YouTube videos in batches."""
+    # Wait 2 minutes after startup (let other things initialize first)
+    await asyncio.sleep(120)
+
+    while True:
+        _scheduler_state["youtube_backfill"]["status"] = "running"
+        try:
+            result = await backfill_youtube_channel()
+            if result.get("status") == "complete":
+                logger.info("YouTube backfill complete — all videos processed!")
+                _mark_run("youtube_backfill")
+                _scheduler_state["youtube_backfill"]["status"] = "complete"
+                return  # Stop the loop — all done!
+            elif result.get("status") == "in_progress":
+                remaining = result.get("remaining", 0)
+                logger.info(f"YouTube backfill: {remaining} videos remaining")
+        except Exception as e:
+            logger.error(f"YouTube backfill loop error: {e}")
+
+        _mark_run("youtube_backfill")
+        await asyncio.sleep(YOUTUBE_BACKFILL_INTERVAL)
+
+
 async def knowledge_refresh_loop():
     """Background loop that refreshes knowledge cache periodically."""
     while True:
@@ -277,8 +518,10 @@ def start_scheduler():
     loop = asyncio.get_event_loop()
     loop.create_task(catalog_sync_loop())
     loop.create_task(youtube_check_loop())
+    loop.create_task(youtube_backfill_loop())
     loop.create_task(knowledge_refresh_loop())
     logger.info(
         "Background scheduler started — "
-        "Catalog sync every 6h, YouTube check every 12h, knowledge refresh every 6h"
+        "Catalog sync every 6h, YouTube check every 12h, "
+        "YouTube backfill every 6h (5 old videos/batch), knowledge refresh every 6h"
     )

@@ -22,7 +22,14 @@ from learner.chat_learner import (
     apply_knowledge_updates,
 )
 from learner.youtube_learner import process_video
-from scheduler import start_scheduler, check_youtube_channel, _mark_run, get_scheduler_status
+from scheduler import (
+    start_scheduler,
+    check_youtube_channel,
+    backfill_youtube_channel,
+    get_backfill_status,
+    _mark_run,
+    get_scheduler_status,
+)
 from learner.catalog_syncer import sync_catalog
 
 logging.basicConfig(
@@ -290,6 +297,28 @@ async def scan_youtube_channel_endpoint():
     """
     await check_youtube_channel()
     return {"status": "scan_complete"}
+
+
+@app.post("/api/learn/youtube-backfill")
+async def youtube_backfill_endpoint(batch_size: int = 5):
+    """Manually trigger YouTube backfill — process old videos in batch.
+
+    First call fetches ALL video IDs from channel.
+    Each call processes `batch_size` unprocessed videos (default 5).
+    Auto-runs every 6 hours in background, but you can trigger manually too.
+
+    Query params:
+    - batch_size: number of videos to process this run (default 5, max 20)
+    """
+    batch_size = min(batch_size, 20)  # Cap at 20 to avoid API overload
+    result = await backfill_youtube_channel(batch_size=batch_size)
+    return result
+
+
+@app.get("/api/learn/youtube-backfill/status")
+async def youtube_backfill_status():
+    """Check YouTube backfill progress — how many videos done, how many left."""
+    return get_backfill_status()
 
 
 @app.post("/api/learn/catalog-sync")

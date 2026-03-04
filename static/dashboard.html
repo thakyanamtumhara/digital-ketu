@@ -662,6 +662,18 @@
         </div>
       </div>
       <div class="sync-card">
+        <div class="sync-icon youtube" style="background:rgba(253,203,110,0.15);color:var(--orange);">BF</div>
+        <div class="sync-info">
+          <div class="sync-name">YouTube Backfill</div>
+          <div class="sync-last" id="backfillLast">Loading...</div>
+          <div class="sync-progress"><div class="sync-progress-fill" id="backfillProgress" style="width:0%;background:var(--orange);"></div></div>
+        </div>
+        <div class="sync-countdown">
+          <div class="time-left" id="backfillTime">--:--</div>
+          <div class="time-label" id="backfillLabel">next batch</div>
+        </div>
+      </div>
+      <div class="sync-card">
         <div class="sync-icon whatsapp">WA</div>
         <div class="sync-info">
           <div class="sync-name">WhatsApp Sync</div>
@@ -1206,6 +1218,44 @@ async function loadScheduler() {
   renderScheduler();
 }
 
+async function loadBackfillStatus() {
+  const data = await fetchJSON('/api/learn/youtube-backfill/status');
+  if (!data) return;
+
+  const total = data.total || 0;
+  const done = data.processed || 0;
+  const remaining = data.remaining || 0;
+  const pct = data.progress_pct || 0;
+
+  document.getElementById('backfillProgress').style.width = pct + '%';
+
+  if (data.status === 'not_started') {
+    document.getElementById('backfillLast').textContent = 'Not started yet — will begin automatically';
+    document.getElementById('backfillTime').textContent = 'WAIT';
+    document.getElementById('backfillTime').className = 'time-left on-demand';
+    document.getElementById('backfillLabel').textContent = 'starting soon';
+  } else if (data.status === 'complete') {
+    document.getElementById('backfillLast').textContent = `All ${total} videos processed!`;
+    document.getElementById('backfillTime').textContent = 'DONE';
+    document.getElementById('backfillTime').className = 'time-left';
+    document.getElementById('backfillTime').style.color = 'var(--green)';
+    document.getElementById('backfillLabel').textContent = 'complete';
+  } else {
+    document.getElementById('backfillLast').textContent = `${done}/${total} done | ${remaining} remaining | 5 per batch`;
+    // Show countdown from scheduler state
+    const bf = _schedulerData.youtube_backfill || {};
+    if (bf.next_run_in != null) {
+      document.getElementById('backfillTime').textContent = formatCountdown(bf.next_run_in);
+      document.getElementById('backfillTime').className = 'time-left' + (bf.status === 'running' ? ' running' : '');
+    } else {
+      document.getElementById('backfillTime').textContent = `${pct}%`;
+      document.getElementById('backfillTime').className = 'time-left';
+      document.getElementById('backfillTime').style.color = 'var(--orange)';
+    }
+    document.getElementById('backfillLabel').textContent = 'next batch';
+  }
+}
+
 function renderScheduler() {
   const data = _schedulerData;
 
@@ -1258,7 +1308,7 @@ function renderScheduler() {
 
 // Local countdown ticker — updates every second without hitting API
 function tickCountdowns() {
-  for (const key of ['catalog', 'youtube', 'knowledge_refresh']) {
+  for (const key of ['catalog', 'youtube', 'youtube_backfill', 'knowledge_refresh']) {
     const entry = _schedulerData[key];
     if (entry && entry.next_run_in != null && entry.next_run_in > 0) {
       entry.next_run_in = Math.max(0, entry.next_run_in - 1);
@@ -1281,6 +1331,7 @@ async function init() {
     loadStorage(),
     loadKnowledge(),
     loadScheduler(),
+    loadBackfillStatus(),
   ]);
 
   // Countdown ticks every second (local, no API call)
@@ -1293,6 +1344,7 @@ async function init() {
       loadDashboard(),
       loadStorage(),
       loadScheduler(),
+      loadBackfillStatus(),
     ]);
   }, 30000);
 }
