@@ -10,6 +10,7 @@ from core.config import settings
 from core.engine import generate_reply
 from integrations.whatsapp.sender import send_text_message
 from learner.audio_transcriber import process_whatsapp_audio
+from learner.realtime_learner import buffer_conversation
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhook/whatsapp", tags=["whatsapp"])
@@ -156,5 +157,13 @@ async def receive_message(request: Request):
                 # Send reply
                 await send_text_message(to=sender, message=reply)
                 logger.info(f"Replied to {sender}: {reply[:50]}...")
+
+                # Buffer for realtime learning (non-blocking)
+                buffer_conversation(
+                    customer_message=text,
+                    ai_reply=reply,
+                    customer_name=name,
+                    customer_phone=sender,
+                )
 
     return {"status": "ok"}

@@ -911,6 +911,9 @@ async function loadDashboard() {
     'catalog-sync': { icon: 'Catalog Sync', color: 'var(--orange)' },
     'faq-validator': { icon: 'FAQ Check', color: 'var(--orange)' },
     'data-cleanup': { icon: 'Cleanup', color: 'var(--text-dim)' },
+    'correction-learner': { icon: 'Corrections', color: 'var(--green)' },
+    'voice-learner': { icon: 'Voice Notes', color: 'var(--accent2)' },
+    'realtime-learner': { icon: 'Auto-Learn', color: 'var(--accent)' },
   };
 
   let todayHTML = `
@@ -948,6 +951,9 @@ async function loadDashboard() {
       else if (e.source === 'catalog-sync') { iconClass = 'sync'; emoji = 'CT'; }
       else if (e.source === 'faq-validator') { iconClass = 'sync'; emoji = 'FQ'; }
       else if (e.source === 'data-cleanup') { iconClass = 'sync'; emoji = 'CL'; }
+      else if (e.source === 'correction-learner') { iconClass = 'learn'; emoji = 'CX'; }
+      else if (e.source === 'voice-learner') { iconClass = 'learn'; emoji = 'VC'; }
+      else if (e.source === 'realtime-learner') { iconClass = 'learn'; emoji = 'RT'; }
       else { iconClass = 'reply'; emoji = '??'; }
 
       let title = '';
@@ -990,6 +996,19 @@ async function loadDashboard() {
       } else if (e.source === 'data-cleanup') {
         title = `Data cleanup (${d.retention_days || 90}-day retention)`;
         detail = `${d.activity_logs_deleted || 0} old logs + ${d.learned_files_deleted || 0} old files deleted`;
+      } else if (e.source === 'correction-learner') {
+        title = `Ketu corrected AI reply`;
+        detail = d.what_went_wrong || `"${(d.ketu_correction || '').substring(0, 60)}..."`;
+      } else if (e.source === 'voice-learner') {
+        title = `Learned from voice note`;
+        detail = d.transcript_preview || (d.updates_applied || []).join(', ') || 'Processing...';
+      } else if (e.source === 'realtime-learner') {
+        title = e.action === 'auto-faq' ? 'Auto-added FAQ from patterns' : 'Quality check on AI replies';
+        const issues = d.issues_found || 0;
+        const topics = (d.hot_topics || []).join(', ');
+        detail = e.action === 'auto-faq'
+          ? (d.faqs_added || []).join(', ')
+          : `${issues} issues found` + (topics ? ` | Hot: ${topics}` : '');
       } else {
         title = e.action || e.source;
         detail = JSON.stringify(d).substring(0, 80);

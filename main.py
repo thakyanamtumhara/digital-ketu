@@ -40,6 +40,11 @@ from learner.faq_validator import (
     reactivate_faq,
 )
 from core.error_tracker import get_recent_errors, get_error_summary
+from learner.realtime_learner import (
+    learn_from_correction,
+    learn_from_voice_note,
+    get_realtime_stats,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -430,6 +435,128 @@ async def sync_catalog_endpoint():
             items_count=result.get("products_synced", 0),
         )
     return result
+
+
+# --- Correction Learning ---
+
+
+class CorrectionRequest(BaseModel):
+    customer_message: str
+    ai_reply: str
+    ketu_correction: str
+    customer_phone: str = ""
+    customer_name: str = ""
+
+
+@app.post("/api/learn/correction")
+async def learn_correction(req: CorrectionRequest):
+    """Learn when Ketu overrides an AI reply.
+
+    wwbun calls this when Ketu manually edits/replaces a Digital Ketu reply.
+    This is the most powerful learning signal — Ketu directly shows
+    how the AI should have replied.
+
+    Send:
+    - customer_message: what the customer asked
+    - ai_reply: what Digital Ketu replied (wrong/incomplete)
+    - ketu_correction: what Ketu actually sent instead
+    """
+    result = learn_from_correction(
+        customer_message=req.customer_message,
+        ai_reply=req.ai_reply,
+        ketu_correction=req.ketu_correction,
+        customer_phone=req.customer_phone,
+        customer_name=req.customer_name,
+    )
+
+    if result.get("status") == "learned":
+        log_activity(
+            source="correction-learner",
+            action="learned",
+            details={
+                "customer_message": req.customer_message[:80],
+                "ai_reply": req.ai_reply[:80],
+                "ketu_correction": req.ketu_correction[:80],
+                "what_went_wrong": result.get("what_went_wrong", ""),
+                "updates_applied": result.get("updates_applied", []),
+            },
+            items_count=result.get("count", 0),
+        )
+
+    return result
+
+
+# --- Voice Note Learning ---
+
+
+class VoiceNoteRequest(BaseModel):
+    audio_url: str = ""
+    media_id: str = ""
+    context: str = ""
+    language: str = "hi"
+
+
+@app.post("/api/learn/voice-note")
+async def learn_voice_note(req: VoiceNoteRequest):
+    """Learn from Ketu's voice notes.
+
+    Transcribes the voice note and extracts:
+    - Product knowledge shared verbally
+    - Ketu's speaking style and phrases
+    - Business info mentioned casually
+    - New FAQs from verbal explanations
+
+    Send either:
+    - media_id: WhatsApp media ID (will download from Meta API)
+    - audio_url: Direct URL to audio file
+    """
+    from learner.audio_transcriber import download_whatsapp_media
+
+    audio_bytes = None
+
+    if req.media_id:
+        audio_bytes = await download_whatsapp_media(req.media_id)
+    elif req.audio_url:
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(req.audio_url)
+                resp.raise_for_status()
+                audio_bytes = resp.content
+        except Exception as e:
+            return {"status": "error", "detail": f"Failed to download audio: {e}"}
+
+    if not audio_bytes:
+        return {"status": "error", "detail": "No audio data — provide media_id or audio_url"}
+
+    result = await learn_from_voice_note(
+        audio_bytes=audio_bytes,
+        context=req.context,
+        language=req.language,
+    )
+
+    if result.get("status") == "ok":
+        log_activity(
+            source="voice-learner",
+            action="learned",
+            details={
+                "transcript_preview": result.get("transcript", "")[:100],
+                "context": req.context,
+                "updates_applied": result.get("updates_applied", []),
+            },
+            items_count=result.get("count", 0),
+        )
+
+    return result
+
+
+# --- Realtime Learner Stats ---
+
+
+@app.get("/api/learn/realtime/stats")
+async def realtime_learner_stats():
+    """Get realtime learner statistics — buffer size, learning progress."""
+    return get_realtime_stats()
 
 
 # --- FAQ Validation ---
