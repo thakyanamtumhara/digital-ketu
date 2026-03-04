@@ -444,4 +444,9 @@ def apply_knowledge_updates(updates: dict) -> dict:
         except Exception as e:
             logger.error(f"Prompt evolution error: {e}")
 
+    # Auto-persist to GitHub so knowledge survives deploys
+    if applied:
+        from core.git_persist import persist_knowledge_files
+        persist_knowledge_files(source="knowledge-update")
+
     return {"applied": applied, "count": len(applied)}

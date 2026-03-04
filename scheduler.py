@@ -103,6 +103,14 @@ def _save_processed_video(video_id: str):
     with open(_processed_videos_file, "w") as f:
         json.dump({"video_ids": list(processed)}, f)
 
+    # Persist to GitHub so we don't re-process videos after deploy
+    from core.git_persist import persist_single_file
+    persist_single_file(
+        "knowledge/learned/_processed_videos.json",
+        _processed_videos_file,
+        source="processed-videos-update",
+    )
+
 
 def _load_backfill_state() -> dict:
     """Load backfill state — tracks which old videos are pending."""
@@ -120,6 +128,14 @@ def _save_backfill_state(state: dict):
     LEARNED_DIR.mkdir(exist_ok=True)
     with open(_backfill_state_file, "w") as f:
         json.dump(state, f)
+
+    # Persist to GitHub so backfill progress survives deploys
+    from core.git_persist import persist_single_file
+    persist_single_file(
+        "knowledge/learned/_backfill_state.json",
+        _backfill_state_file,
+        source="backfill-state-update",
+    )
 
 
 async def _fetch_all_channel_videos() -> list[dict]:

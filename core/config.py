@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     youtube_api_key: str = ""
     youtube_channel_id: str = ""
 
+    # GitHub Auto-Persist (saves learned knowledge back to repo)
+    github_token: str = ""
+    github_repo: str = "thakyanamtumhara/digital-ketu"
+    github_branch: str = "main"
+
     # Server
     port: int = 8000
     auto_reply_enabled: bool = True

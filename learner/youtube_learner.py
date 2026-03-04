@@ -111,6 +111,14 @@ def process_video(video_url: str, video_title: str = "") -> dict:
             ensure_ascii=False,
         )
 
+    # Auto-persist YouTube learned file to GitHub
+    from core.git_persist import persist_single_file
+    persist_single_file(
+        f"knowledge/learned/yt_{filename}.json",
+        output_path,
+        source=f"youtube-{filename}",
+    )
+
     return {
         "status": "ok",
         "video_url": video_url,
