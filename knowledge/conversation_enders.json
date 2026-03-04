@@ -1,0 +1,19 @@
+{
+  "description": "Patterns where Ketu does NOT reply — conversation is naturally done. Learned from real WhatsApp chats where Ketu stayed silent after customer's message.",
+  "hardcoded_enders": [
+    "ok", "okay", "okk", "okkk", "okayy", "k", "kk", "kkk",
+    "thanks", "thank you", "thankyou", "thnx", "thnks", "ty",
+    "got it", "noted", "sure", "fine", "alright", "right",
+    "great", "good", "nice", "cool", "done", "yes", "yep", "ya",
+    "theek hai", "thik hai", "theek", "thik", "teek hai",
+    "accha", "acha", "achha", "ok ji", "okay ji", "ji",
+    "shukriya", "dhanyawad", "dhanyavaad",
+    "samajh gaya", "samajh gaye", "samjh gya", "samjha",
+    "haan", "ha", "haa", "hmm", "hm", "hmmmm",
+    "bilkul", "zaroor", "sahi hai", "sahi",
+    "badhiya", "bohot accha", "bahut accha"
+  ],
+  "learned_enders": [],
+  "learned_non_enders": [],
+  "learning_log": []
+}

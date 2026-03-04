@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from core.config import settings, init_knowledge_dir, KNOWLEDGE_DIR
-from core.engine import generate_reply, get_customer_insights, get_faq_hit_rates
+from core.engine import generate_reply, get_customer_insights, get_faq_hit_rates, invalidate_ender_cache
 from core.knowledge import load_knowledge, invalidate_cache
 from core.activity_log import log_activity, get_activity_log, get_today_summary, get_storage_stats
 from integrations.whatsapp.webhook import router as whatsapp_router
@@ -23,6 +23,7 @@ from learner.chat_learner import (
     extract_knowledge_from_messages,
     extract_knowledge_from_wwbun_messages,
     apply_knowledge_updates,
+    learn_conversation_enders,
 )
 from learner.youtube_learner import process_video
 from scheduler import (
@@ -345,12 +346,22 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     )
     result = await asyncio.to_thread(apply_knowledge_updates, knowledge)
 
+    # Learn conversation-ending patterns (when Ketu doesn't reply)
+    ender_result = await asyncio.to_thread(
+        learn_conversation_enders,
+        messages=req.messages,
+        owner_user_id=req.owner_user_id,
+    )
+
     invalidate_cache()
 
     _mark_run("whatsapp")
 
     filter_stats = knowledge.get("filter_stats", {})
     quality_messages = knowledge.get("quality_messages", [])
+
+    # Invalidate ender cache so new patterns take effect immediately
+    invalidate_ender_cache()
 
     log_activity(
         source="wwbun-sync",
@@ -363,6 +374,11 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
             "too_short_skipped": filter_stats.get("too_short", 0),
             "quality_messages_preview": quality_messages[:5],
             "updates_applied": result.get("applied", []),
+            "conversation_enders": {
+                "new_enders": ender_result.get("new_enders", 0),
+                "new_non_enders": ender_result.get("new_non_enders", 0),
+                "examples": ender_result.get("examples", []),
+            },
         },
         items_count=result.get("count", 0),
     )
@@ -373,6 +389,7 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         "quality_messages": quality_messages,
         "knowledge_extracted": {k: v for k, v in knowledge.items() if k not in ("filter_stats", "quality_messages")},
         "updates_applied": result,
+        "conversation_enders": ender_result,
     }
 
 

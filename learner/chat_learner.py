@@ -568,3 +568,159 @@ def apply_knowledge_updates(updates: dict) -> dict:
 
 
     # _save_knowledge_to_db_direct removed — each section now saves to DB immediately
+
+
+def learn_conversation_enders(messages: list[dict], owner_user_id: str) -> dict:
+    """Learn conversation-ending patterns from real chat behavior.
+
+    Scans wwbun messages to find patterns where:
+    - Customer sent a message (the potential "ender")
+    - Ketu did NOT reply after it (conversation ended naturally)
+
+    These patterns become learned enders — Digital Ketu will stop replying
+    when it sees similar messages, saving cost and being more natural.
+
+    Also detects false positives: messages that LOOK like enders but Ketu
+    actually did reply to (learned_non_enders).
+    """
+    if not messages or len(messages) < 2:
+        return {"status": "not_enough_messages", "learned": 0}
+
+    ENDERS_FILE = KNOWLEDGE_DIR / "conversation_enders.json"
+
+    # Load existing enders knowledge
+    try:
+        from core.database import is_db_available, load_knowledge_from_db, save_knowledge
+        enders_data = None
+        if is_db_available():
+            enders_data = load_knowledge_from_db("conversation_enders")
+        if not enders_data:
+            with open(ENDERS_FILE, "r", encoding="utf-8") as f:
+                enders_data = json.load(f)
+    except Exception:
+        enders_data = {
+            "hardcoded_enders": [],
+            "learned_enders": [],
+            "learned_non_enders": [],
+            "learning_log": [],
+        }
+
+    existing_learned = set(e.lower() if isinstance(e, str) else e.get("pattern", "").lower()
+                          for e in enders_data.get("learned_enders", []))
+    existing_non_enders = set(e.lower() if isinstance(e, str) else e.get("pattern", "").lower()
+                              for e in enders_data.get("learned_non_enders", []))
+
+    new_enders = []
+    new_non_enders = []
+
+    # Walk through messages looking for conversation gaps
+    for i in range(len(messages) - 1):
+        msg = messages[i]
+        next_msg = messages[i + 1]
+
+        # We want: customer message followed by another customer message (Ketu didn't reply)
+        # or: customer message that was the last in the conversation
+        is_customer_msg = msg.get("sender_id") != owner_user_id
+        next_is_customer = next_msg.get("sender_id") != owner_user_id
+        next_is_owner = next_msg.get("sender_id") == owner_user_id
+
+        if not is_customer_msg:
+            continue
+
+        content = msg.get("content", "").strip()
+        if not content or len(content) > 50:  # Only short messages can be enders
+            continue
+
+        content_lower = content.lower().rstrip("!.,?").strip()
+
+        # Pattern 1: Customer said something, then ANOTHER customer msg came (Ketu stayed silent)
+        # This means Ketu chose not to reply — it's a conversation ender
+        if next_is_customer and content_lower not in existing_learned:
+            # Don't learn question-like messages as enders
+            if "?" not in content and not any(w in content_lower.split() for w in
+                    ["kya", "kab", "kaise", "kitna", "kitne", "kaha", "price", "rate",
+                     "sample", "order", "send", "bhej", "batao", "bata", "how", "what", "when"]):
+                new_enders.append({
+                    "pattern": content_lower,
+                    "original": content,
+                    "context": f"Customer said this, Ketu didn't reply",
+                })
+
+        # Pattern 2: Customer said something that LOOKS like an ender, but Ketu DID reply
+        # This is a false positive — add to non-enders list
+        hardcoded = set(enders_data.get("hardcoded_enders", []))
+        if next_is_owner and content_lower in hardcoded and content_lower not in existing_non_enders:
+            new_non_enders.append({
+                "pattern": content_lower,
+                "original": content,
+                "ketu_replied": next_msg.get("content", "")[:80],
+                "context": "Looked like ender but Ketu replied",
+            })
+
+    # Also check the last message in the batch
+    last_msg = messages[-1]
+    if last_msg.get("sender_id") != owner_user_id:
+        content = last_msg.get("content", "").strip()
+        content_lower = content.lower().rstrip("!.,?").strip()
+        if content and len(content) <= 50 and content_lower not in existing_learned:
+            if "?" not in content:
+                new_enders.append({
+                    "pattern": content_lower,
+                    "original": content,
+                    "context": "Last message in conversation — Ketu didn't reply",
+                })
+
+    # Deduplicate
+    seen = set()
+    unique_enders = []
+    for e in new_enders:
+        if e["pattern"] not in seen and e["pattern"] not in existing_non_enders:
+            seen.add(e["pattern"])
+            unique_enders.append(e)
+
+    # Save updates
+    if unique_enders or new_non_enders:
+        from datetime import datetime, timezone, timedelta
+        ist = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(ist).strftime("%d %b %Y, %I:%M %p IST")
+
+        for e in unique_enders:
+            e["learned_at"] = now
+            enders_data.setdefault("learned_enders", []).append(e)
+
+        for e in new_non_enders:
+            e["learned_at"] = now
+            enders_data.setdefault("learned_non_enders", []).append(e)
+            # Remove from hardcoded if Ketu actually replies to it
+            if e["pattern"] in set(enders_data.get("hardcoded_enders", [])):
+                enders_data["hardcoded_enders"] = [
+                    h for h in enders_data["hardcoded_enders"] if h.lower() != e["pattern"]
+                ]
+
+        enders_data.setdefault("learning_log", []).append({
+            "timestamp": now,
+            "new_enders": len(unique_enders),
+            "new_non_enders": len(new_non_enders),
+            "examples": [e["pattern"] for e in unique_enders[:5]],
+        })
+
+        # Save to DB first, then file
+        try:
+            from core.database import is_db_available, save_knowledge
+            if is_db_available():
+                save_knowledge("conversation_enders", enders_data)
+        except Exception:
+            pass
+
+        with open(ENDERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(enders_data, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"[Enders] Learned {len(unique_enders)} new enders, {len(new_non_enders)} non-enders")
+
+    return {
+        "status": "ok",
+        "new_enders": len(unique_enders),
+        "new_non_enders": len(new_non_enders),
+        "examples": [e["pattern"] for e in unique_enders[:10]],
+        "non_ender_examples": [e["pattern"] for e in new_non_enders[:5]],
+    }

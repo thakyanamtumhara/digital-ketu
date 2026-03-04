@@ -163,28 +163,27 @@ def get_conversation_history(phone: str) -> list:
     return _conversations.get(phone, [])
 
 
-def _is_conversation_ender(message: str, last_ai_message: str = "") -> bool:
-    """Detect if customer is just acknowledging/ending the conversation.
+# Cached ender patterns (loaded once from knowledge base + hardcoded)
+_ender_patterns: set | None = None
+_non_ender_patterns: set | None = None
 
-    If the customer says "okay", "thanks", "theek hai" etc. after we gave them
-    info (address, price, details), there's no need to reply. Ketu doesn't
-    keep replying after the conversation is naturally done.
 
-    Returns True if we should NOT reply.
+def _load_ender_patterns() -> tuple[set, set]:
+    """Load conversation ender patterns from knowledge base (DB → file → hardcoded fallback).
+
+    Returns (enders_set, non_enders_set).
+    Caches result in memory — call invalidate_ender_cache() to reload.
     """
-    msg = message.strip().lower()
+    global _ender_patterns, _non_ender_patterns
+    if _ender_patterns is not None:
+        return _ender_patterns, _non_ender_patterns
 
-    # Remove common punctuation
-    msg_clean = msg.rstrip("!.,?").strip()
-
-    # Short acknowledgement patterns (Hindi + English)
-    enders = {
-        # English
+    # Hardcoded defaults (always present)
+    hardcoded = {
         "ok", "okay", "okk", "okkk", "okayy", "k", "kk", "kkk",
         "thanks", "thank you", "thankyou", "thnx", "thnks", "ty",
         "got it", "noted", "sure", "fine", "alright", "right",
         "great", "good", "nice", "cool", "done", "yes", "yep", "ya",
-        # Hindi / Hinglish
         "theek hai", "thik hai", "theek", "thik", "teek hai",
         "accha", "acha", "achha", "ok ji", "okay ji", "ji",
         "shukriya", "dhanyawad", "dhanyavaad",
@@ -193,6 +192,74 @@ def _is_conversation_ender(message: str, last_ai_message: str = "") -> bool:
         "bilkul", "zaroor", "sahi hai", "sahi",
         "badhiya", "bohot accha", "bahut accha",
     }
+
+    learned = set()
+    non_enders = set()
+
+    # Try loading from DB first, then file
+    enders_data = None
+    try:
+        from core.database import is_db_available, load_knowledge_from_db
+        if is_db_available():
+            enders_data = load_knowledge_from_db("conversation_enders")
+    except Exception:
+        pass
+
+    if not enders_data:
+        try:
+            enders_file = KNOWLEDGE_DIR / "conversation_enders.json"
+            with open(enders_file, "r", encoding="utf-8") as f:
+                enders_data = json.load(f)
+        except Exception:
+            pass
+
+    if enders_data:
+        # Merge hardcoded from knowledge file
+        for e in enders_data.get("hardcoded_enders", []):
+            hardcoded.add(e.lower() if isinstance(e, str) else e)
+
+        # Add learned enders
+        for e in enders_data.get("learned_enders", []):
+            pattern = e.get("pattern", e) if isinstance(e, dict) else e
+            learned.add(pattern.lower())
+
+        # Non-enders (false positives Ketu replied to — override hardcoded)
+        for e in enders_data.get("learned_non_enders", []):
+            pattern = e.get("pattern", e) if isinstance(e, dict) else e
+            non_enders.add(pattern.lower())
+
+    # Final set: hardcoded + learned - non_enders
+    _ender_patterns = (hardcoded | learned) - non_enders
+    _non_ender_patterns = non_enders
+
+    logger.info(f"[Enders] Loaded {len(_ender_patterns)} patterns ({len(learned)} learned, {len(non_enders)} non-enders)")
+    return _ender_patterns, _non_ender_patterns
+
+
+def invalidate_ender_cache():
+    """Clear cached ender patterns — call after learning new enders."""
+    global _ender_patterns, _non_ender_patterns
+    _ender_patterns = None
+    _non_ender_patterns = None
+
+
+def _is_conversation_ender(message: str, last_ai_message: str = "") -> bool:
+    """Detect if customer is just acknowledging/ending the conversation.
+
+    If the customer says "okay", "thanks", "theek hai" etc. after we gave them
+    info (address, price, details), there's no need to reply. Ketu doesn't
+    keep replying after the conversation is naturally done.
+
+    Uses both hardcoded patterns and learned patterns from real chat behavior.
+    Returns True if we should NOT reply.
+    """
+    msg = message.strip().lower()
+
+    # Remove common punctuation
+    msg_clean = msg.rstrip("!.,?").strip()
+
+    # Load ender patterns (hardcoded + learned from knowledge base)
+    enders, _ = _load_ender_patterns()
 
     if msg_clean in enders:
         return True
