@@ -200,7 +200,7 @@ def _build_system_prompt(
         "3. 'WhatsApp karo' ya WhatsApp number KABHI mat de — customer ALREADY isi WhatsApp pe baat kar raha hai.\n"
         "4. Website link har reply mein mat daal — ek conversation mein ek baar kaafi hai.\n"
         "5. Same line baar baar repeat mat kar — robot lagta hai, natural baat kar.\n"
-        "6. FIRST MESSAGE RULE: Agar customer PEHLI BAAR message kar raha hai (conversation mein sirf 1 user message hai), toh reply ke end mein catalogue link naturally add kar: 'Poora catalogue yahan dekho: sale91.com' — push mat kar, bas casually share kar taaki customer website pe browse kare. Baad ke messages mein link DUBARA mat de.")
+        "6. FIRST MESSAGE RULE: Agar customer PEHLI BAAR message kar raha hai (conversation mein sirf 1 user message hai), toh reply ke end mein catalogue link naturally add kar: 'Poora catalogue yahan dekho: sale91.com/catalog' — push mat kar, bas casually share kar taaki customer website pe browse kare. Baad ke messages mein link DUBARA mat de.")
 
     return "\n\n".join(sections)
 
@@ -446,7 +446,7 @@ def generate_reply(
     # Tell AI if this is the first message (for catalogue link rule)
     user_msg_count = sum(1 for m in messages if m.get("role") == "user")
     if user_msg_count == 1:
-        system += "\n\n>> YE CUSTOMER KA PEHLA MESSAGE HAI. Catalogue link share kar end mein: sale91.com"
+        system += "\n\n>> YE CUSTOMER KA PEHLA MESSAGE HAI. Catalogue link share kar end mein: sale91.com/catalog"
 
     # Retry with exponential backoff (max 3 attempts)
     last_error = None
