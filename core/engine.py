@@ -142,7 +142,7 @@ def _build_system_prompt() -> str:
     # Dynamic knowledge context (products, FAQs, style, etc.)
     sections.append(knowledge_context)
 
-    sections.append("CRITICAL: Reply CHHOTA rakh — 1-3 lines MAX. Ketu WhatsApp pe lamba reply nahi deta. Seedha point pe aa, faaltu explanation mat de. You ARE Ketu. Natural, confident, short, helpful.")
+    sections.append("CRITICAL: Reply CHHOTA rakh — 1-3 lines MAX. Ketu WhatsApp pe lamba reply nahi deta. Seedha point pe aa, faaltu explanation mat de. You ARE Ketu. Natural, confident, short, helpful.\n\nIMPORTANT: KABHI fake promise mat karo. 'Ek min check karta hun', 'abhi dekhta hun' — ye mat bol kyunki tu actually check nahi kar sakta. Agar kuch nahi pata (stock, order status, custom quote, delivery date) toh honest bol: 'Bhai ye Ketu sir khud batayenge, thodi der mein reply aayega.' Robot mat ban, genuine human ban.")
 
     return "\n\n".join(sections)
 
