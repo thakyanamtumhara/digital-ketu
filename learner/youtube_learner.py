@@ -139,42 +139,11 @@ def _get_transcript_official(video_id: str) -> str | None:
         return None
 
 
-def _get_transcript_unofficial(video_id: str) -> str | None:
-    """Fallback: get transcript using unofficial youtube-transcript-api library.
-
-    This scrapes YouTube directly (no API key needed).
-    Works but can trigger 429 rate limits if used too much.
-    """
-    try:
-        from youtube_transcript_api import YouTubeTranscriptApi
-
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        try:
-            transcript = transcript_list.find_transcript(["hi", "hi-IN"])
-        except Exception:
-            try:
-                transcript = transcript_list.find_transcript(["en"])
-            except Exception:
-                transcript = transcript_list.find_generated_transcript(["hi", "en"])
-
-        entries = transcript.fetch()
-        return " ".join(entry.text for entry in entries)
-
-    except Exception as e:
-        error_str = str(e).lower()
-        if "429" in error_str or "too many" in error_str:
-            logger.warning(f"YouTube RATE LIMITED (unofficial) for {video_id} — must stop fetching!")
-            raise
-        logger.error(f"Unofficial transcript fetch error for {video_id}: {e}")
-        return None
-
-
 def get_transcript(video_url: str) -> str | None:
-    """Get transcript from a YouTube video URL.
+    """Get transcript from a YouTube video URL using official Captions API only.
 
-    Strategy:
-    1. Try official YouTube Captions API (OAuth 2.0) — proper, no scraping
-    2. Fallback to unofficial youtube-transcript-api — if OAuth not configured
+    Requires OAuth 2.0 credentials (YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN).
+    No unofficial scraping — fully compliant with YouTube Terms of Service.
     """
     # Extract video ID from URL
     video_id = None
@@ -192,17 +161,14 @@ def get_transcript(video_url: str) -> str | None:
         logger.error(f"Could not extract video ID from: {video_url}")
         return None
 
-    # Try official API first (if OAuth configured)
-    if settings.youtube_client_id and settings.youtube_client_secret and settings.youtube_refresh_token:
-        logger.info(f"Using official YouTube Captions API for {video_id}")
-        transcript = _get_transcript_official(video_id)
-        if transcript:
-            return transcript
-        logger.info(f"Official API returned no captions for {video_id}, trying unofficial fallback...")
+    # Official API only — no scraping
+    if not settings.youtube_client_id or not settings.youtube_client_secret or not settings.youtube_refresh_token:
+        logger.warning(f"YouTube OAuth not configured — cannot fetch transcript for {video_id}. "
+                       "Set YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN.")
+        return None
 
-    # Fallback to unofficial scraping
-    logger.info(f"Using unofficial transcript API for {video_id}")
-    return _get_transcript_unofficial(video_id)
+    logger.info(f"Using official YouTube Captions API for {video_id}")
+    return _get_transcript_official(video_id)
 
 
 def extract_knowledge_from_transcript(transcript: str, video_title: str = "") -> dict:

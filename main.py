@@ -17,7 +17,6 @@ from core.engine import generate_reply, get_customer_insights, get_faq_hit_rates
 from core.knowledge import load_knowledge, invalidate_cache
 from core.activity_log import log_activity, get_activity_log, get_today_summary, get_storage_stats
 from integrations.whatsapp.webhook import router as whatsapp_router
-from integrations.indiamart.handler import router as indiamart_router
 from integrations.youtube.handler import router as youtube_router
 from learner.chat_learner import (
     parse_whatsapp_export,
@@ -122,7 +121,6 @@ app.add_middleware(
 
 # Mount integration routers
 app.include_router(whatsapp_router)
-app.include_router(indiamart_router)
 app.include_router(youtube_router)
 
 
