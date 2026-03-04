@@ -709,6 +709,7 @@
         <div class="sync-info">
           <div class="sync-name">WhatsApp Sync</div>
           <div class="sync-last" id="whatsappLast">Waiting for wwbun trigger</div>
+          <div class="sync-last" id="whatsappSyncDetail" style="font-size:10px;color:var(--accent2);margin-top:2px;"></div>
         </div>
         <div class="sync-countdown">
           <div class="time-left on-demand" id="whatsappTime">On Demand</div>
@@ -766,6 +767,67 @@
       </div>
       <div class="card-body" id="activityFeed">
         <div class="empty-state">Loading...</div>
+      </div>
+    </div>
+
+    <!-- WhatsApp Chat Data (Live Sync Stats) -->
+    <div class="card full-width">
+      <div class="card-header">
+        <h3>WhatsApp Chat Data</h3>
+        <span class="badge" id="wwbunBadge" style="background:rgba(0,206,201,0.15);color:var(--accent2);">Loading</span>
+      </div>
+      <div class="card-body">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:16px;">
+          <div style="background:rgba(0,206,201,0.08);border-radius:8px;padding:14px;text-align:center;">
+            <div style="font-size:24px;font-weight:700;color:var(--accent2);" id="wwbunTodaySyncs">0</div>
+            <div style="font-size:11px;color:var(--text-dim);">Syncs Today</div>
+          </div>
+          <div style="background:rgba(108,92,231,0.08);border-radius:8px;padding:14px;text-align:center;">
+            <div style="font-size:24px;font-weight:700;color:var(--accent);" id="wwbunTodayMsgs">0</div>
+            <div style="font-size:11px;color:var(--text-dim);">Messages Today</div>
+          </div>
+          <div style="background:rgba(0,184,148,0.08);border-radius:8px;padding:14px;text-align:center;">
+            <div style="font-size:24px;font-weight:700;color:var(--green);" id="wwbunTodayQuality">0</div>
+            <div style="font-size:11px;color:var(--text-dim);">Quality Messages Today</div>
+          </div>
+          <div style="background:rgba(253,203,110,0.08);border-radius:8px;padding:14px;text-align:center;">
+            <div style="font-size:24px;font-weight:700;color:var(--orange);" id="wwbunTodayKnowledge">0</div>
+            <div style="font-size:11px;color:var(--text-dim);">Knowledge Learned Today</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:16px;">
+          <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:18px;font-weight:600;color:var(--text-bright);" id="wwbunTotalSyncs">0</div>
+            <div style="font-size:10px;color:var(--text-dim);">Total Syncs</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:18px;font-weight:600;color:var(--text-bright);" id="wwbunTotalMsgs">0</div>
+            <div style="font-size:10px;color:var(--text-dim);">Total Messages</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:18px;font-weight:600;color:var(--text-bright);" id="wwbunTotalQuality">0</div>
+            <div style="font-size:10px;color:var(--text-dim);">Total Quality</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:18px;font-weight:600;color:var(--text-bright);" id="wwbunTotalJunk">0</div>
+            <div style="font-size:10px;color:var(--text-dim);">Junk Filtered</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:18px;font-weight:600;color:var(--text-bright);" id="wwbunTotalEnders">0</div>
+            <div style="font-size:10px;color:var(--text-dim);">Enders Learned</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:18px;font-weight:600;color:var(--text-bright);" id="wwbunTotalKnowledge">0</div>
+            <div style="font-size:10px;color:var(--text-dim);">Total Knowledge</div>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <span style="font-size:12px;color:var(--text-dim);font-weight:600;">Recent Quality Messages (used for learning):</span>
+          <span style="font-size:11px;color:var(--text-dim);" id="wwbunLastSync">-</span>
+        </div>
+        <div id="wwbunRecentList" style="max-height:200px;overflow-y:auto;">
+          <div class="empty-state" style="font-size:12px;">No WhatsApp syncs yet — will appear when wwbun sends chat data</div>
+        </div>
       </div>
     </div>
 
@@ -1636,6 +1698,17 @@ function renderScheduler() {
     document.getElementById('whatsappLast').textContent = `Last sync: ${formatAgo(wa.last_run_ago)}`;
     document.getElementById('whatsappTime').textContent = 'On Demand';
   }
+
+  // Also update the detail line from wwbun stats
+  try {
+    const ws = await fetchJSON('/api/wwbun/stats');
+    if (ws) {
+      const det = document.getElementById('whatsappSyncDetail');
+      if (ws.total_syncs > 0) {
+        det.textContent = `${ws.today_messages || 0} msgs today | ${ws.today_quality || 0} quality | ${ws.total_syncs} total syncs`;
+      }
+    }
+  } catch(e) {}
 }
 
 // Local countdown ticker — updates every second without hitting API
@@ -1941,6 +2014,61 @@ async function loadCosts() {
   breakdownEl.innerHTML = html;
 }
 
+// ---- WHATSAPP CHAT DATA (WWBUN SYNC STATS) ----
+
+async function loadWwbunStats() {
+  const data = await fetchJSON('/api/wwbun/stats');
+  if (!data) return;
+
+  // Today's stats
+  document.getElementById('wwbunTodaySyncs').textContent = data.today_syncs || 0;
+  document.getElementById('wwbunTodayMsgs').textContent = data.today_messages || 0;
+  document.getElementById('wwbunTodayQuality').textContent = data.today_quality || 0;
+  document.getElementById('wwbunTodayKnowledge').textContent = data.today_knowledge || 0;
+
+  // Totals
+  document.getElementById('wwbunTotalSyncs').textContent = data.total_syncs || 0;
+  document.getElementById('wwbunTotalMsgs').textContent = data.total_messages_received || 0;
+  document.getElementById('wwbunTotalQuality').textContent = data.total_quality_messages || 0;
+  document.getElementById('wwbunTotalJunk').textContent = (data.total_junk_filtered || 0) + (data.total_too_short_filtered || 0);
+  document.getElementById('wwbunTotalEnders').textContent = data.total_enders_learned || 0;
+  document.getElementById('wwbunTotalKnowledge').textContent = data.total_knowledge_applied || 0;
+
+  // Badge
+  const badge = document.getElementById('wwbunBadge');
+  const todayMsgs = data.today_messages || 0;
+  if (todayMsgs > 0) {
+    badge.textContent = todayMsgs + ' msgs today';
+    badge.style.background = 'rgba(0,184,148,0.15)';
+    badge.style.color = 'var(--green)';
+  } else if (data.total_syncs > 0) {
+    badge.textContent = data.total_messages_received + ' total msgs';
+  } else {
+    badge.textContent = 'No syncs yet';
+  }
+
+  // Last sync time
+  const lastSync = document.getElementById('wwbunLastSync');
+  lastSync.textContent = data.last_sync_time ? 'Last sync: ' + data.last_sync_time : '';
+
+  // Recent quality messages
+  const listEl = document.getElementById('wwbunRecentList');
+  const recent = data.recent_quality_messages || [];
+  if (recent.length === 0) {
+    listEl.innerHTML = '<div class="empty-state" style="font-size:12px;">No WhatsApp syncs yet — will appear when wwbun sends chat data</div>';
+    return;
+  }
+
+  let html = '';
+  for (const m of [...recent].reverse()) {
+    html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:8px 10px;margin-bottom:5px;font-size:12px;">' +
+      '<span style="color:var(--text-dim);margin-right:8px;">' + (m.time || '') + '</span>' +
+      '<span style="color:var(--text);">"' + (m.text || '').substring(0, 100) + '"</span>' +
+      '</div>';
+  }
+  listEl.innerHTML = html;
+}
+
 // ---- AUDIO TRANSCRIPTION STATS ----
 
 async function loadAudioStats() {
@@ -1991,6 +2119,7 @@ async function init() {
     loadConversations(),
     loadCosts(),
     loadAudioStats(),
+    loadWwbunStats(),
   ]);
 
   // Countdown ticks every second (local, no API call)
@@ -2008,6 +2137,7 @@ async function init() {
       loadInsights(),
       loadCosts(),
       loadAudioStats(),
+      loadWwbunStats(),
     ]);
   }, 30000);
 }

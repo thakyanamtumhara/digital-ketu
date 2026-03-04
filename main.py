@@ -327,6 +327,140 @@ class LearnWwbunRequest(BaseModel):
     owner_user_id: str
 
 
+# --- WhatsApp Chat Sync Stats (persistent, survives deploys) ---
+_wwbun_stats = {
+    "total_syncs": 0,
+    "total_messages_received": 0,
+    "total_quality_messages": 0,
+    "total_junk_filtered": 0,
+    "total_too_short_filtered": 0,
+    "total_knowledge_applied": 0,
+    "total_enders_learned": 0,
+    "today_date": "",
+    "today_syncs": 0,
+    "today_messages": 0,
+    "today_quality": 0,
+    "today_knowledge": 0,
+    "last_sync_time": "",
+    "last_sync_details": {},
+    "recent_quality_messages": [],  # Last 20 quality message previews
+}
+_wwbun_stats_loaded = False
+
+
+def _load_wwbun_stats():
+    global _wwbun_stats, _wwbun_stats_loaded
+    if _wwbun_stats_loaded:
+        return
+    _wwbun_stats_loaded = True
+    try:
+        from core.database import is_db_available, kv_get
+        if is_db_available():
+            saved = kv_get("wwbun_sync_stats")
+            if saved and isinstance(saved, dict):
+                _wwbun_stats.update(saved)
+    except Exception:
+        pass
+
+
+def _save_wwbun_stats():
+    try:
+        from core.database import is_db_available, kv_set
+        if is_db_available():
+            kv_set("wwbun_sync_stats", _wwbun_stats)
+    except Exception:
+        pass
+
+
+def _track_wwbun_sync(
+    total_messages: int,
+    quality_count: int,
+    junk_count: int,
+    short_count: int,
+    knowledge_count: int,
+    enders_learned: int,
+    quality_previews: list,
+    details: dict,
+):
+    """Track a wwbun sync event for dashboard stats."""
+    _load_wwbun_stats()
+
+    from datetime import datetime, timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now = datetime.now(ist)
+    today = now.strftime("%d %b %Y")
+
+    # Reset daily counters if new day
+    if _wwbun_stats["today_date"] != today:
+        _wwbun_stats["today_date"] = today
+        _wwbun_stats["today_syncs"] = 0
+        _wwbun_stats["today_messages"] = 0
+        _wwbun_stats["today_quality"] = 0
+        _wwbun_stats["today_knowledge"] = 0
+
+    # Update totals
+    _wwbun_stats["total_syncs"] += 1
+    _wwbun_stats["total_messages_received"] += total_messages
+    _wwbun_stats["total_quality_messages"] += quality_count
+    _wwbun_stats["total_junk_filtered"] += junk_count
+    _wwbun_stats["total_too_short_filtered"] += short_count
+    _wwbun_stats["total_knowledge_applied"] += knowledge_count
+    _wwbun_stats["total_enders_learned"] += enders_learned
+
+    # Update today's counters
+    _wwbun_stats["today_syncs"] += 1
+    _wwbun_stats["today_messages"] += total_messages
+    _wwbun_stats["today_quality"] += quality_count
+    _wwbun_stats["today_knowledge"] += knowledge_count
+
+    # Last sync info
+    _wwbun_stats["last_sync_time"] = now.strftime("%I:%M %p, %d %b")
+    _wwbun_stats["last_sync_details"] = details
+
+    # Recent quality messages (for live preview)
+    for msg in quality_previews[:5]:
+        _wwbun_stats["recent_quality_messages"].append({
+            "text": msg[:120] if isinstance(msg, str) else str(msg)[:120],
+            "time": now.strftime("%I:%M %p"),
+        })
+    _wwbun_stats["recent_quality_messages"] = _wwbun_stats["recent_quality_messages"][-20:]
+
+    _save_wwbun_stats()
+
+
+@app.get("/api/wwbun/stats")
+async def wwbun_sync_stats():
+    """WhatsApp Chat Sync live stats — messages synced, quality, junk, knowledge extracted."""
+    _load_wwbun_stats()
+
+    from datetime import datetime, timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    today = datetime.now(ist).strftime("%d %b %Y")
+    if _wwbun_stats["today_date"] != today:
+        _wwbun_stats["today_date"] = today
+        _wwbun_stats["today_syncs"] = 0
+        _wwbun_stats["today_messages"] = 0
+        _wwbun_stats["today_quality"] = 0
+        _wwbun_stats["today_knowledge"] = 0
+
+    return {
+        "total_syncs": _wwbun_stats["total_syncs"],
+        "total_messages_received": _wwbun_stats["total_messages_received"],
+        "total_quality_messages": _wwbun_stats["total_quality_messages"],
+        "total_junk_filtered": _wwbun_stats["total_junk_filtered"],
+        "total_too_short_filtered": _wwbun_stats["total_too_short_filtered"],
+        "total_knowledge_applied": _wwbun_stats["total_knowledge_applied"],
+        "total_enders_learned": _wwbun_stats["total_enders_learned"],
+        "today_syncs": _wwbun_stats["today_syncs"],
+        "today_messages": _wwbun_stats["today_messages"],
+        "today_quality": _wwbun_stats["today_quality"],
+        "today_knowledge": _wwbun_stats["today_knowledge"],
+        "last_sync_time": _wwbun_stats["last_sync_time"],
+        "last_sync_details": _wwbun_stats["last_sync_details"],
+        "recent_quality_messages": _wwbun_stats["recent_quality_messages"][-10:],
+    }
+
+
 @app.post("/api/learn/wwbun-sync")
 async def learn_from_wwbun(req: LearnWwbunRequest):
     """Learn from wwbun database messages.
@@ -381,6 +515,22 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
             },
         },
         items_count=result.get("count", 0),
+    )
+
+    # Track persistent wwbun sync stats for dashboard
+    _track_wwbun_sync(
+        total_messages=len(req.messages),
+        quality_count=filter_stats.get("kept", 0),
+        junk_count=filter_stats.get("junk", 0),
+        short_count=filter_stats.get("too_short", 0),
+        knowledge_count=result.get("count", 0),
+        enders_learned=ender_result.get("new_enders", 0),
+        quality_previews=quality_messages,
+        details={
+            "filter_stats": filter_stats,
+            "updates_applied": result.get("applied", [])[:5],
+            "enders": ender_result.get("examples", [])[:3],
+        },
     )
 
     return {
