@@ -40,7 +40,7 @@ _JUNK_EXACT = {
     "👍", "👍🏻", "🙏", "🙏🏻", "❤️", "😊", "😂", "🤣", "👌", "✅", "🔥",
 }
 
-# Patterns — WhatsApp system messages & media
+# Patterns — WhatsApp system messages, media & automated welcome messages
 _JUNK_PATTERNS = [
     r"^<media omitted>$",
     r"^<image omitted>$",
@@ -57,6 +57,15 @@ _JUNK_PATTERNS = [
     r"^\d{10,13}$",  # Just a phone number
     r"^https?://maps\.google",  # Google Maps links (location sharing)
     r"^https?://wa\.me/",  # WhatsApp links
+    # Welcome / automated template messages — no learning value
+    r"welcome\s*(to|sir|ji|bhai|!)",
+    r"swagat\s*hai",
+    r"thank\s*(you|u)\s*(for\s*)?(contact|reach|enquir|interest)",
+    r"thanks?\s*(for\s*)?(your\s*)?(contact|reach|enquir|interest)",
+    r"dhanyawad.*(?:sampark|enquiry|interest)",
+    r"aapka\s*(?:swagat|welcome)",
+    r"namaste.*(?:welcome|swagat|enquiry)",
+    r"hello.*(?:welcome|thank.*contact|thank.*enquir)",
 ]
 _JUNK_COMPILED = [re.compile(p, re.IGNORECASE) for p in _JUNK_PATTERNS]
 
