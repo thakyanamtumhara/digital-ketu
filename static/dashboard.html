@@ -1023,14 +1023,30 @@ async function loadKnowledge() {
     }).join('');
   }
 
-  // FAQs tab
+  // FAQs tab — newest first, with date/time
   const faqsTab = document.getElementById('tab-faqs');
-  const faqs = (data.faq && data.faq.faqs) || [];
-  faqsTab.innerHTML = faqs.map(f => `
-    <div class="knowledge-section" style="margin-bottom:10px;">
-      <div style="font-size:12px;color:var(--text-bright);margin-bottom:3px;">Q: ${f.question}</div>
+  const faqsList = (data.faq && data.faq.faqs) || [];
+  // Sort: FAQs with added_at first (newest on top), then original FAQs
+  const sortedFaqs = [...faqsList].sort((a, b) => {
+    if (a.added_at && !b.added_at) return -1;
+    if (!a.added_at && b.added_at) return 1;
+    if (a.added_at && b.added_at) {
+      return new Date(b.added_at.replace(/ IST$/, '')) - new Date(a.added_at.replace(/ IST$/, ''));
+    }
+    return 0;
+  });
+  faqsTab.innerHTML = sortedFaqs.map(f => {
+    const badge = f.added_at
+      ? `<span style="font-size:10px;color:var(--accent2);margin-left:8px;background:rgba(0,206,201,0.1);padding:2px 6px;border-radius:4px;">${f.added_at}</span>`
+      : `<span style="font-size:10px;color:var(--text-dim);margin-left:8px;">Base FAQ</span>`;
+    const source = f.source === 'auto_learned'
+      ? `<span style="font-size:10px;color:var(--orange);margin-left:6px;">Auto-learned</span>`
+      : '';
+    return `<div class="knowledge-section" style="margin-bottom:10px;">
+      <div style="font-size:12px;color:var(--text-bright);margin-bottom:3px;">Q: ${f.question}${badge}${source}</div>
       <div style="font-size:12px;color:var(--text-dim);">A: ${f.answer}</div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   // Style tab
   const styleTab = document.getElementById('tab-style');

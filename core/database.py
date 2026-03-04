@@ -355,6 +355,61 @@ def kv_get(key: str, default=None):
 
 # --- Seed DB from JSON files ---
 
+# --- Data Cleanup ---
+
+def cleanup_old_activity_logs(days: int = 90) -> int:
+    """Delete activity log entries older than N days. Returns count deleted."""
+    rows = _execute(
+        "DELETE FROM activity_log WHERE timestamp < NOW() - INTERVAL '%s days' RETURNING id",
+        (days,),
+        fetch=True,
+    )
+    count = len(rows) if rows else 0
+    if count:
+        logger.info(f"[DB] Cleaned up {count} activity logs older than {days} days")
+    return count
+
+
+def cleanup_old_learned_files(days: int = 90, keep_patterns: list[str] | None = None) -> int:
+    """Delete learned files not updated in N days, except those matching keep_patterns.
+
+    keep_patterns: list of LIKE patterns to keep (e.g., ['catalog_%'] for permanent files).
+    Returns count deleted.
+    """
+    keep_patterns = keep_patterns or ["catalog_%"]
+
+    query = "DELETE FROM learned_files WHERE updated_at < NOW() - INTERVAL '%s days'"
+    params: list = [days]
+
+    for pattern in keep_patterns:
+        query += " AND filename NOT LIKE %s"
+        params.append(pattern)
+
+    query += " RETURNING filename"
+    rows = _execute(query, params, fetch=True)
+    count = len(rows) if rows else 0
+    if count:
+        deleted_files = [r["filename"] for r in rows]
+        logger.info(f"[DB] Cleaned up {count} learned files older than {days} days: {deleted_files}")
+    return count
+
+
+def get_cleanup_stats() -> dict:
+    """Get counts of records eligible for cleanup."""
+    activity_rows = _execute(
+        "SELECT COUNT(*) as cnt FROM activity_log WHERE timestamp < NOW() - INTERVAL '90 days'",
+        fetch=True,
+    )
+    learned_rows = _execute(
+        "SELECT COUNT(*) as cnt FROM learned_files WHERE updated_at < NOW() - INTERVAL '90 days' AND filename NOT LIKE 'catalog_%'",
+        fetch=True,
+    )
+    return {
+        "activity_logs_eligible": activity_rows[0]["cnt"] if activity_rows else 0,
+        "learned_files_eligible": learned_rows[0]["cnt"] if learned_rows else 0,
+    }
+
+
 def seed_from_json_files(knowledge_dir):
     """One-time seed: load existing JSON files into DB.
 

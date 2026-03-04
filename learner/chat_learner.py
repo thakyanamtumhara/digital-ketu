@@ -343,11 +343,14 @@ def apply_knowledge_updates(updates: dict) -> dict:
             q = faq.get("question", "")
             a = faq.get("answer", "")
             if q and a and q.lower() not in existing_questions:
+                from datetime import datetime, timezone, timedelta
+                ist = timezone(timedelta(hours=5, minutes=30))
                 faq_data["faqs"].append({
                     "question": q,
                     "answer": a,
                     "keywords": faq.get("keywords", []),
                     "source": "auto_learned",
+                    "added_at": datetime.now(ist).strftime("%d %b %Y, %I:%M %p IST"),
                 })
                 applied.append(f"New FAQ: {q}")
 

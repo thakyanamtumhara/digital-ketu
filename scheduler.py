@@ -38,6 +38,8 @@ YOUTUBE_BACKFILL_INTERVAL = 6 * 60 * 60  # 6 hours — process old videos in bat
 YOUTUBE_BACKFILL_BATCH_SIZE = 5  # Process 5 old videos per cycle
 CATALOG_SYNC_INTERVAL = 6 * 60 * 60  # 6 hours
 KNOWLEDGE_REFRESH_INTERVAL = 6 * 60 * 60  # 6 hours
+DATA_CLEANUP_INTERVAL = 24 * 60 * 60  # 24 hours — daily cleanup
+DATA_RETENTION_DAYS = 90  # Keep raw data for 90 days
 
 # Backfill state file — stores list of ALL channel video IDs for batch processing
 _backfill_state_file = LEARNED_DIR / "_backfill_state.json"
@@ -49,6 +51,7 @@ _scheduler_state: dict[str, dict] = {
     "catalog": {"last_run": None, "next_run": None, "interval": CATALOG_SYNC_INTERVAL, "status": "waiting"},
     "knowledge_refresh": {"last_run": None, "next_run": None, "interval": KNOWLEDGE_REFRESH_INTERVAL, "status": "waiting"},
     "whatsapp": {"last_run": None, "next_run": None, "interval": 0, "status": "on-demand"},
+    "data_cleanup": {"last_run": None, "next_run": None, "interval": DATA_CLEANUP_INTERVAL, "status": "waiting"},
 }
 
 
@@ -574,6 +577,56 @@ async def knowledge_refresh_loop():
         _mark_run("knowledge_refresh")
 
 
+async def data_cleanup_loop():
+    """Background loop that cleans up old data (90-day retention).
+
+    Runs daily. Deletes:
+    - Activity logs older than 90 days
+    - Learned files older than 90 days (except catalog files)
+    Knowledge (prompt, FAQs, patterns) is PERMANENT — never deleted.
+    """
+    # Wait 5 minutes after startup
+    await asyncio.sleep(300)
+
+    while True:
+        _scheduler_state["data_cleanup"]["status"] = "running"
+        try:
+            from core.database import is_db_available, cleanup_old_activity_logs, cleanup_old_learned_files
+
+            if is_db_available():
+                activity_deleted = cleanup_old_activity_logs(days=DATA_RETENTION_DAYS)
+                learned_deleted = cleanup_old_learned_files(
+                    days=DATA_RETENTION_DAYS,
+                    keep_patterns=["catalog_%"],  # Never delete catalog files
+                )
+
+                if activity_deleted or learned_deleted:
+                    log_activity(
+                        source="data-cleanup",
+                        action="cleaned",
+                        details={
+                            "retention_days": DATA_RETENTION_DAYS,
+                            "activity_logs_deleted": activity_deleted,
+                            "learned_files_deleted": learned_deleted,
+                        },
+                        items_count=activity_deleted + learned_deleted,
+                    )
+                    logger.info(
+                        f"Data cleanup: {activity_deleted} old activity logs, "
+                        f"{learned_deleted} old learned files deleted (>{DATA_RETENTION_DAYS} days)"
+                    )
+                else:
+                    logger.info(f"Data cleanup: nothing to clean (all within {DATA_RETENTION_DAYS} days)")
+            else:
+                logger.info("Data cleanup skipped — no DB available")
+
+        except Exception as e:
+            logger.error(f"Data cleanup error: {e}")
+
+        _mark_run("data_cleanup")
+        await asyncio.sleep(DATA_CLEANUP_INTERVAL)
+
+
 def start_scheduler():
     """Start all background tasks. Call this from FastAPI lifespan."""
     loop = asyncio.get_event_loop()
@@ -581,8 +634,10 @@ def start_scheduler():
     loop.create_task(youtube_check_loop())
     loop.create_task(youtube_backfill_loop())
     loop.create_task(knowledge_refresh_loop())
+    loop.create_task(data_cleanup_loop())
     logger.info(
         "Background scheduler started — "
         "Catalog sync every 6h, YouTube check every 12h, "
-        "YouTube backfill every 6h (5 old videos/batch), knowledge refresh every 6h"
+        "YouTube backfill every 6h (5 old videos/batch), knowledge refresh every 6h, "
+        f"data cleanup daily ({DATA_RETENTION_DAYS}-day retention)"
     )

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request, Response, HTTPException
 from core.config import settings
 from core.engine import generate_reply
 from integrations.whatsapp.sender import send_text_message
+from learner.audio_transcriber import process_whatsapp_audio
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhook/whatsapp", tags=["whatsapp"])
@@ -71,8 +72,18 @@ async def receive_message(request: Request):
                         text = interactive.get("list_reply", {}).get("title", "")
                     else:
                         text = ""
+                elif msg_type == "audio":
+                    # Transcribe audio using Whisper
+                    audio_info = msg.get("audio", {})
+                    media_id = audio_info.get("id", "")
+                    if media_id and settings.openai_api_key:
+                        text = await process_whatsapp_audio(media_id) or ""
+                        if text:
+                            logger.info(f"Audio transcribed from {sender}: {text[:60]}...")
+                    else:
+                        text = ""
                 else:
-                    # For media messages, acknowledge
+                    # For other media messages, skip
                     text = ""
 
                 if not text:

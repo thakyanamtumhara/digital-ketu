@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     whatsapp_verify_token: str = "digital-ketu-verify"
     whatsapp_app_secret: str = ""
 
+    # OpenAI (Whisper audio transcription)
+    openai_api_key: str = ""
+
     # YouTube
     youtube_api_key: str = ""
     youtube_channel_id: str = ""
