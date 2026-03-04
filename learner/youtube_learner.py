@@ -45,6 +45,10 @@ def get_transcript(video_url: str) -> str | None:
         return " ".join(entry.text for entry in entries)
 
     except Exception as e:
+        error_str = str(e).lower()
+        if "429" in error_str or "too many" in error_str:
+            logger.warning(f"YouTube RATE LIMITED for {video_url} — must stop fetching!")
+            raise  # Re-raise so scheduler can detect and activate cooldown
         logger.error(f"Transcript fetch error for {video_url}: {e}")
         return None
 

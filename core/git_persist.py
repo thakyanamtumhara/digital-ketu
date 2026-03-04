@@ -80,6 +80,8 @@ def _persist_file(repo_path: str, local_path: Path, message: str):
         resp = httpx.put(url, headers=_get_headers(), json=payload, timeout=30)
         if resp.status_code in (200, 201):
             logger.info(f"[GitPersist] Saved {repo_path} to GitHub")
+        elif resp.status_code == 404 and "Branch" in resp.text and "not found" in resp.text:
+            logger.debug(f"[GitPersist] Skipped {repo_path} — branch '{settings.github_branch}' not found (DB is primary, this is just backup)")
         else:
             logger.error(f"[GitPersist] Failed {repo_path}: {resp.status_code} {resp.text[:200]}")
     except Exception as e:

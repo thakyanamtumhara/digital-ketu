@@ -33,13 +33,29 @@ _processed_videos_file = LEARNED_DIR / "_processed_videos.json"
 YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3"
 
 # Schedule intervals (in seconds)
-YOUTUBE_CHECK_INTERVAL = 12 * 60 * 60  # 12 hours
-YOUTUBE_BACKFILL_INTERVAL = 6 * 60 * 60  # 6 hours — process old videos in batches
-YOUTUBE_BACKFILL_BATCH_SIZE = 5  # Process 5 old videos per cycle
+YOUTUBE_CHECK_INTERVAL = 24 * 60 * 60  # 24 hours — check for new videos once a day
+YOUTUBE_BACKFILL_INTERVAL = 24 * 60 * 60  # 24 hours — process old videos once a day
+YOUTUBE_BACKFILL_BATCH_SIZE = 3  # Process only 3 old videos per cycle
 CATALOG_SYNC_INTERVAL = 6 * 60 * 60  # 6 hours
 KNOWLEDGE_REFRESH_INTERVAL = 6 * 60 * 60  # 6 hours
 DATA_CLEANUP_INTERVAL = 24 * 60 * 60  # 24 hours — daily cleanup
 DATA_RETENTION_DAYS = 90  # Keep raw data for 90 days
+
+# --- YouTube Safety Gates ---
+# Delay between each video transcript fetch (seconds) — prevents rate limiting
+YOUTUBE_PER_VIDEO_DELAY = 30  # 30 seconds between each video
+# Max YouTube API calls per day — hard safety limit
+YOUTUBE_DAILY_QUOTA_LIMIT = 5  # Max 5 transcript fetches per day — very conservative
+# Cooldown after a 429 error (seconds) — stop all YouTube for this long
+YOUTUBE_RATE_LIMIT_COOLDOWN = 6 * 60 * 60  # 6 hours cooldown after rate limit hit
+
+# Track daily YouTube usage — loaded from DB on startup to survive deploys
+_youtube_daily_state = {
+    "date": None,  # Current date string
+    "api_calls": 0,  # Transcript fetches today
+    "rate_limited_until": 0,  # Timestamp — don't call YouTube until this time
+}
+_youtube_state_loaded = False  # Whether we've loaded from DB yet
 
 # Backfill state file — stores list of ALL channel video IDs for batch processing
 _backfill_state_file = LEARNED_DIR / "_backfill_state.json"
@@ -48,11 +64,95 @@ _backfill_state_file = LEARNED_DIR / "_backfill_state.json"
 _scheduler_state: dict[str, dict] = {
     "youtube": {"last_run": None, "next_run": None, "interval": YOUTUBE_CHECK_INTERVAL, "status": "waiting"},
     "youtube_backfill": {"last_run": None, "next_run": None, "interval": YOUTUBE_BACKFILL_INTERVAL, "status": "waiting"},
+    "youtube_quota": {"daily_limit": YOUTUBE_DAILY_QUOTA_LIMIT, "per_video_delay_sec": YOUTUBE_PER_VIDEO_DELAY, "status": "active"},
     "catalog": {"last_run": None, "next_run": None, "interval": CATALOG_SYNC_INTERVAL, "status": "waiting"},
     "knowledge_refresh": {"last_run": None, "next_run": None, "interval": KNOWLEDGE_REFRESH_INTERVAL, "status": "waiting"},
     "whatsapp": {"last_run": None, "next_run": None, "interval": 0, "status": "on-demand"},
     "data_cleanup": {"last_run": None, "next_run": None, "interval": DATA_CLEANUP_INTERVAL, "status": "waiting"},
 }
+
+
+def _load_youtube_daily_state():
+    """Load YouTube daily state from DB — survives deploys."""
+    global _youtube_state_loaded
+    if _youtube_state_loaded:
+        return
+
+    from core.database import is_db_available, kv_get
+    if is_db_available():
+        saved = kv_get("_youtube_daily_state", {})
+        if saved and isinstance(saved, dict):
+            _youtube_daily_state["date"] = saved.get("date")
+            _youtube_daily_state["api_calls"] = saved.get("api_calls", 0)
+            _youtube_daily_state["rate_limited_until"] = saved.get("rate_limited_until", 0)
+            logger.info(
+                f"YouTube quota loaded from DB: {_youtube_daily_state['api_calls']} calls today "
+                f"(date: {_youtube_daily_state['date']}, limit: {YOUTUBE_DAILY_QUOTA_LIMIT})"
+            )
+    _youtube_state_loaded = True
+
+
+def _save_youtube_daily_state():
+    """Save YouTube daily state to DB — survives deploys."""
+    from core.database import is_db_available, kv_set
+    if is_db_available():
+        kv_set("_youtube_daily_state", {
+            "date": _youtube_daily_state["date"],
+            "api_calls": _youtube_daily_state["api_calls"],
+            "rate_limited_until": _youtube_daily_state["rate_limited_until"],
+        })
+
+
+def _youtube_can_fetch() -> tuple[bool, str]:
+    """Safety gate: check if we're allowed to fetch from YouTube right now.
+    Returns (allowed, reason). Loads state from DB on first call.
+    """
+    import datetime
+
+    # Load from DB on first call (survives deploys!)
+    _load_youtube_daily_state()
+
+    now = time.time()
+    today = datetime.date.today().isoformat()
+
+    # Gate 1: Rate limit cooldown — if YouTube returned 429, wait
+    if _youtube_daily_state["rate_limited_until"] > now:
+        remaining = int((_youtube_daily_state["rate_limited_until"] - now) / 60)
+        return False, f"Rate limit cooldown active — {remaining} minutes remaining"
+
+    # Gate 2: Daily quota limit — max transcript fetches per day
+    if _youtube_daily_state["date"] != today:
+        # New day — reset counter
+        _youtube_daily_state["date"] = today
+        _youtube_daily_state["api_calls"] = 0
+        _save_youtube_daily_state()
+
+    if _youtube_daily_state["api_calls"] >= YOUTUBE_DAILY_QUOTA_LIMIT:
+        return False, f"Daily quota reached ({YOUTUBE_DAILY_QUOTA_LIMIT} fetches/day). Resets tomorrow."
+
+    return True, "ok"
+
+
+def _youtube_record_fetch():
+    """Record a successful YouTube transcript fetch. Saves to DB."""
+    import datetime
+    today = datetime.date.today().isoformat()
+    if _youtube_daily_state["date"] != today:
+        _youtube_daily_state["date"] = today
+        _youtube_daily_state["api_calls"] = 0
+    _youtube_daily_state["api_calls"] += 1
+    _save_youtube_daily_state()
+    logger.info(f"YouTube quota: {_youtube_daily_state['api_calls']}/{YOUTUBE_DAILY_QUOTA_LIMIT} fetches today")
+
+
+def _youtube_record_rate_limit():
+    """Record a 429 rate limit — activate cooldown. Saves to DB."""
+    _youtube_daily_state["rate_limited_until"] = time.time() + YOUTUBE_RATE_LIMIT_COOLDOWN
+    _save_youtube_daily_state()
+    logger.warning(
+        f"YouTube rate limit hit! Cooldown activated for "
+        f"{YOUTUBE_RATE_LIMIT_COOLDOWN // 3600} hours. No YouTube calls until cooldown expires."
+    )
 
 
 def _mark_run(task_name: str):
@@ -67,20 +167,43 @@ def _mark_run(task_name: str):
 
 def get_scheduler_status() -> dict:
     """Return current scheduler state with countdowns."""
+    import datetime
+
+    # Load YouTube state from DB if not loaded yet
+    _load_youtube_daily_state()
+
     now = time.time()
     result = {}
     for name, state in _scheduler_state.items():
+        if name == "youtube_quota":
+            # Special handling for quota display
+            today = datetime.date.today().isoformat()
+            calls_today = _youtube_daily_state["api_calls"] if _youtube_daily_state["date"] == today else 0
+            cooldown_remaining = 0
+            if _youtube_daily_state["rate_limited_until"] > now:
+                cooldown_remaining = int((_youtube_daily_state["rate_limited_until"] - now) / 60)
+
+            result[name] = {
+                "daily_limit": YOUTUBE_DAILY_QUOTA_LIMIT,
+                "calls_today": calls_today,
+                "remaining_today": max(0, YOUTUBE_DAILY_QUOTA_LIMIT - calls_today),
+                "per_video_delay_sec": YOUTUBE_PER_VIDEO_DELAY,
+                "rate_limit_cooldown_minutes": cooldown_remaining,
+                "status": "rate_limited" if cooldown_remaining > 0 else ("quota_reached" if calls_today >= YOUTUBE_DAILY_QUOTA_LIMIT else "active"),
+            }
+            continue
+
         entry = {
-            "interval_hours": round(state["interval"] / 3600, 1) if state["interval"] else None,
+            "interval_hours": round(state["interval"] / 3600, 1) if state.get("interval") else None,
             "status": state["status"],
             "last_run_ago": None,
             "next_run_in": None,
         }
-        if state["last_run"]:
+        if state.get("last_run"):
             entry["last_run_ago"] = int(now - state["last_run"])
-        if state["next_run"] and state["next_run"] > now:
+        if state.get("next_run") and state["next_run"] > now:
             entry["next_run_in"] = int(state["next_run"] - now)
-        elif state["next_run"] and state["next_run"] <= now:
+        elif state.get("next_run") and state["next_run"] <= now:
             entry["next_run_in"] = 0
             entry["status"] = "due"
         result[name] = entry
@@ -227,6 +350,9 @@ async def _fetch_all_channel_videos() -> list[dict]:
             if not page_token:
                 break
 
+            # Delay between pages to avoid hitting YouTube API rate limits
+            await asyncio.sleep(5)
+
         logger.info(f"Found {len(all_videos)} total videos on channel")
         return all_videos
 
@@ -276,11 +402,23 @@ async def backfill_youtube_channel(batch_size: int | None = None) -> dict:
             "remaining": 0,
         }
 
+    # Safety gate check before starting batch
+    allowed, reason = _youtube_can_fetch()
+    if not allowed:
+        logger.info(f"Backfill: Skipped — {reason}")
+        return {"status": "rate_limited", "reason": reason, "remaining": len(pending)}
+
     # Process next batch
     batch = pending[:batch_size]
     learned = 0
 
     for video in batch:
+        # Safety gate check before EACH video
+        allowed, reason = _youtube_can_fetch()
+        if not allowed:
+            logger.info(f"Backfill: Stopping mid-batch — {reason}")
+            break
+
         video_id = video["video_id"]
         title = video["title"]
 
@@ -293,6 +431,14 @@ async def backfill_youtube_channel(batch_size: int | None = None) -> dict:
                 video_url=f"https://www.youtube.com/watch?v={video_id}",
                 video_title=title,
             )
+
+            # Check for rate limit in result
+            if result.get("status") == "rate_limited":
+                _youtube_record_rate_limit()
+                logger.warning(f"Backfill: Rate limited on {title} — stopping batch")
+                break
+
+            _youtube_record_fetch()
 
             if result.get("status") == "ok" and result.get("knowledge"):
                 knowledge = result["knowledge"]
@@ -319,8 +465,17 @@ async def backfill_youtube_channel(batch_size: int | None = None) -> dict:
             _save_processed_video(video_id)
 
         except Exception as e:
+            error_str = str(e).lower()
+            if "429" in error_str or "too many" in error_str or "rate" in error_str:
+                _youtube_record_rate_limit()
+                logger.warning(f"Backfill: Rate limited on {title} — stopping batch")
+                break
             logger.error(f"Backfill: Error processing {title}: {e}")
             # Don't mark as processed — will retry on next backfill run
+
+        # Delay between videos to be gentle on YouTube
+        logger.info(f"Backfill: Waiting {YOUTUBE_PER_VIDEO_DELAY}s before next video...")
+        await asyncio.sleep(YOUTUBE_PER_VIDEO_DELAY)
 
     remaining = len(pending) - len(batch)
     logger.info(f"Backfill: Processed {len(batch)} videos, {remaining} remaining")
@@ -369,6 +524,12 @@ async def check_youtube_channel():
         logger.info("YouTube API not configured, skipping channel check")
         return
 
+    # Safety gate check
+    allowed, reason = _youtube_can_fetch()
+    if not allowed:
+        logger.info(f"YouTube check: Skipped — {reason}")
+        return
+
     logger.info("Checking YouTube channel for new videos...")
     processed = _load_processed_videos()
 
@@ -380,11 +541,17 @@ async def check_youtube_channel():
             "part": "snippet",
             "order": "date",
             "type": "video",
-            "maxResults": 5,
+            "maxResults": 3,  # Reduced from 5 — only check 3 most recent
         }
 
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(url, params=params)
+
+            # Handle rate limit response
+            if response.status_code == 429:
+                _youtube_record_rate_limit()
+                return
+
             response.raise_for_status()
             data = response.json()
 
@@ -398,6 +565,12 @@ async def check_youtube_channel():
             if video_id in processed:
                 continue
 
+            # Safety gate check before each video
+            allowed, reason = _youtube_can_fetch()
+            if not allowed:
+                logger.info(f"YouTube check: Stopping — {reason}")
+                break
+
             logger.info(f"New video found: {title} ({video_id})")
 
             # Process video in thread — avoid blocking event loop
@@ -406,6 +579,13 @@ async def check_youtube_channel():
                 video_url=f"https://www.youtube.com/watch?v={video_id}",
                 video_title=title,
             )
+
+            # Check for rate limit in result
+            if result.get("status") == "rate_limited":
+                _youtube_record_rate_limit()
+                break
+
+            _youtube_record_fetch()
 
             if result.get("status") == "ok" and result.get("knowledge"):
                 knowledge = result["knowledge"]
@@ -433,12 +613,19 @@ async def check_youtube_channel():
             _save_processed_video(video_id)
             logger.info(f"Processed video: {title}")
 
+            # Delay between videos to be gentle on YouTube
+            await asyncio.sleep(YOUTUBE_PER_VIDEO_DELAY)
+
         if new_learned > 0:
             logger.info(f"Learned from {new_learned} new video(s)")
         else:
             logger.info("No new videos to learn from")
 
     except Exception as e:
+        error_str = str(e).lower()
+        if "429" in error_str or "too many" in error_str or "rate" in error_str:
+            _youtube_record_rate_limit()
+            return
         logger.error(f"YouTube channel check failed: {e}")
         from core.error_tracker import track_error
         track_error("youtube-check", str(e))
@@ -651,7 +838,9 @@ def start_scheduler():
     loop.create_task(data_cleanup_loop())
     logger.info(
         "Background scheduler started — "
-        "Catalog sync every 6h, YouTube check every 12h, "
-        "YouTube backfill every 6h (5 old videos/batch), knowledge refresh every 6h, "
-        f"data cleanup daily ({DATA_RETENTION_DAYS}-day retention)"
+        "Catalog sync every 6h, YouTube check every 24h, "
+        f"YouTube backfill every 24h ({YOUTUBE_BACKFILL_BATCH_SIZE} videos/batch), "
+        f"YouTube safety: {YOUTUBE_DAILY_QUOTA_LIMIT} fetches/day max, "
+        f"{YOUTUBE_PER_VIDEO_DELAY}s delay between videos, "
+        f"knowledge refresh every 6h, data cleanup daily ({DATA_RETENTION_DAYS}-day retention)"
     )

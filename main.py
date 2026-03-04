@@ -398,17 +398,20 @@ async def scan_youtube_channel_endpoint():
 
 
 @app.post("/api/learn/youtube-backfill")
-async def youtube_backfill_endpoint(batch_size: int = 5):
+async def youtube_backfill_endpoint(batch_size: int = 3):
     """Manually trigger YouTube backfill — process old videos in batch.
 
     First call fetches ALL video IDs from channel.
-    Each call processes `batch_size` unprocessed videos (default 5).
-    Auto-runs every 6 hours in background, but you can trigger manually too.
+    Each call processes `batch_size` unprocessed videos (default 3).
+    Auto-runs every 24 hours in background, but you can trigger manually too.
+
+    Safety: Max 5 transcript fetches per day (survives redeploys).
+    30-second delay between each video. 6-hour cooldown on rate limit.
 
     Query params:
-    - batch_size: number of videos to process this run (default 5, max 20)
+    - batch_size: number of videos to process this run (default 3, max 5)
     """
-    batch_size = min(batch_size, 20)  # Cap at 20 to avoid API overload
+    batch_size = min(batch_size, 5)  # Hard cap at 5 to protect YouTube channel
     result = await backfill_youtube_channel(batch_size=batch_size)
     return result
 
