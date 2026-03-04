@@ -726,6 +726,36 @@
     <div class="today-grid" id="todayGrid"></div>
   </div>
 
+  <!-- Cost Tracking -->
+  <div style="margin-bottom:25px;">
+    <h3 style="font-size:15px;color:var(--text-bright);margin-bottom:12px;">
+      API Costs <span style="font-weight:400;color:var(--text-dim);font-size:13px;">(Claude + Whisper)</span>
+    </h3>
+    <div class="today-grid" id="costGrid">
+      <div class="today-card">
+        <div class="source-name">Today</div>
+        <div class="source-count" id="costToday" style="color:var(--accent2);">--</div>
+        <div class="source-detail" id="costTodayDetail">Loading...</div>
+      </div>
+      <div class="today-card">
+        <div class="source-name">This Week</div>
+        <div class="source-count" id="costWeek" style="color:var(--accent);">--</div>
+        <div class="source-detail" id="costWeekDetail">Loading...</div>
+      </div>
+      <div class="today-card">
+        <div class="source-name">This Month</div>
+        <div class="source-count" id="costMonth" style="color:var(--orange);">--</div>
+        <div class="source-detail" id="costMonthDetail">Loading...</div>
+      </div>
+      <div class="today-card">
+        <div class="source-name">Per Reply</div>
+        <div class="source-count" id="costPerReply" style="color:var(--green);">--</div>
+        <div class="source-detail" id="costPerReplyDetail">avg cost per WhatsApp reply</div>
+      </div>
+    </div>
+    <div id="costBreakdown" style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;"></div>
+  </div>
+
   <div class="grid">
 
     <!-- Live Activity Feed -->
@@ -1825,6 +1855,60 @@ function downloadBackup() {
   }, 1000);
 }
 
+// ---- COST TRACKING ----
+
+async function loadCosts() {
+  const data = await fetchJSON('/api/costs');
+  if (!data) return;
+
+  const t = data.today || {};
+  const w = data.week || {};
+  const m = data.month || {};
+  const pr = data.per_reply || {};
+
+  // Today
+  document.getElementById('costToday').textContent = '\u20B9' + (t.cost_inr || 0).toFixed(2);
+  document.getElementById('costTodayDetail').textContent =
+    t.total_calls + ' API calls | $' + (t.cost_usd || 0).toFixed(4);
+
+  // Week
+  document.getElementById('costWeek').textContent = '\u20B9' + (w.cost_inr || 0).toFixed(2);
+  document.getElementById('costWeekDetail').textContent =
+    w.total_calls + ' calls | $' + (w.cost_usd || 0).toFixed(4);
+
+  // Month
+  document.getElementById('costMonth').textContent = '\u20B9' + (m.cost_inr || 0).toFixed(2);
+  document.getElementById('costMonthDetail').textContent =
+    m.total_calls + ' calls | $' + (m.cost_usd || 0).toFixed(4);
+
+  // Per reply
+  document.getElementById('costPerReply').textContent = '\u20B9' + (pr.avg_cost_inr || 0).toFixed(4);
+  document.getElementById('costPerReplyDetail').textContent =
+    pr.replies_today + ' replies today | $' + (pr.avg_cost_usd || 0).toFixed(4) + '/reply';
+
+  // Source breakdown
+  const sources = t.by_source || {};
+  const breakdownEl = document.getElementById('costBreakdown');
+  let html = '';
+  const sourceLabels = {
+    'whatsapp-reply': 'WhatsApp Replies',
+    'youtube-analysis': 'YouTube Analysis',
+    'whatsapp-learning': 'WA Learning',
+    'wwbun-learning': 'wwbun Learning',
+    'realtime-analysis': 'Realtime Analysis',
+    'correction-analysis': 'Corrections',
+    'voice-analysis': 'Voice Notes',
+  };
+  for (const [src, info] of Object.entries(sources)) {
+    const label = sourceLabels[src] || src;
+    html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px 12px;font-size:12px;">' +
+      '<span style="color:var(--text-dim);">' + label + '</span>' +
+      '<span style="float:right;color:var(--accent2);">' + info.calls + ' calls | $' + (info.cost_usd || 0).toFixed(4) + '</span>' +
+      '</div>';
+  }
+  breakdownEl.innerHTML = html;
+}
+
 // ---- INIT & AUTO-REFRESH ----
 
 async function init() {
@@ -1838,6 +1922,7 @@ async function init() {
     loadErrors(),
     loadInsights(),
     loadConversations(),
+    loadCosts(),
   ]);
 
   // Countdown ticks every second (local, no API call)
@@ -1853,6 +1938,7 @@ async function init() {
       loadBackfillStatus(),
       loadErrors(),
       loadInsights(),
+      loadCosts(),
     ]);
   }, 30000);
 }

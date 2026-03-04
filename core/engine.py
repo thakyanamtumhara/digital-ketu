@@ -7,6 +7,7 @@ import httpx
 
 from core.config import settings, KNOWLEDGE_DIR
 from core.knowledge import format_context
+from core.cost_tracker import track_api_cost
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +229,15 @@ def generate_reply(
             )
 
             reply = response.content[0].text
+
+            # Track API cost
+            track_api_cost(
+                model=response.model,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+                source="whatsapp-reply",
+                customer_phone=customer_phone[-4:] if customer_phone else "",
+            )
 
             # Store conversation history
             if customer_phone:

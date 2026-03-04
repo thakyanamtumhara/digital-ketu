@@ -198,6 +198,15 @@ Return ONLY valid JSON."""
         )
 
         result_text = response.content[0].text
+
+        # Track API cost
+        from core.cost_tracker import track_api_cost
+        track_api_cost(
+            model=response.model,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            source="youtube-analysis",
+        )
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
         if json_match:
             return json.loads(json_match.group())

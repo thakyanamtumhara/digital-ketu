@@ -40,6 +40,7 @@ from learner.faq_validator import (
     reactivate_faq,
 )
 from core.error_tracker import get_recent_errors, get_error_summary
+from core.cost_tracker import get_cost_summary
 from learner.realtime_learner import (
     learn_from_correction,
     learn_from_voice_note,
@@ -829,6 +830,17 @@ async def last_reply_to_customer(phone: str):
 async def realtime_learner_stats():
     """Get realtime learner statistics — buffer size, learning progress."""
     return get_realtime_stats()
+
+
+@app.get("/api/costs")
+async def api_costs():
+    """API cost tracking — today, this week, this month.
+
+    Shows cost breakdown by source (replies, learning, YouTube analysis),
+    by model (Haiku vs Sonnet), and per-reply average cost.
+    Costs shown in both USD and INR.
+    """
+    return get_cost_summary()
 
 
 @app.get("/api/rate-limit/stats")

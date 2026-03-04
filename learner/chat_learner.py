@@ -231,6 +231,16 @@ Return ONLY valid JSON. If nothing new found, return empty arrays/objects."""
         )
 
         result_text = response.content[0].text
+
+        # Track API cost
+        from core.cost_tracker import track_api_cost
+        track_api_cost(
+            model=response.model,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            source="whatsapp-learning",
+        )
+
         # Try to parse JSON from response
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
         if json_match:
@@ -324,6 +334,16 @@ Return ONLY valid JSON."""
         )
 
         result_text = response.content[0].text
+
+        # Track API cost
+        from core.cost_tracker import track_api_cost
+        track_api_cost(
+            model=response.model,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            source="wwbun-learning",
+        )
+
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
         if json_match:
             result = json.loads(json_match.group())

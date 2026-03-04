@@ -144,6 +144,16 @@ Return ONLY valid JSON. If nothing notable, return empty arrays."""
         )
 
         result_text = response.content[0].text
+
+        # Track API cost
+        from core.cost_tracker import track_api_cost
+        track_api_cost(
+            model=response.model,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            source="realtime-analysis",
+        )
+
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
 
         if json_match:
@@ -271,6 +281,16 @@ Return ONLY valid JSON."""
         )
 
         result_text = response.content[0].text
+
+        # Track API cost
+        from core.cost_tracker import track_api_cost
+        track_api_cost(
+            model=response.model,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            source="correction-analysis",
+        )
+
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
 
         if not json_match:
@@ -418,6 +438,16 @@ Return ONLY valid JSON. Focus on NEW info not already known."""
         response = await asyncio.to_thread(_call_claude)
 
         result_text = response.content[0].text
+
+        # Track API cost
+        from core.cost_tracker import track_api_cost
+        track_api_cost(
+            model=response.model,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            source="voice-analysis",
+        )
+
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
 
         if not json_match:
