@@ -18,6 +18,8 @@ from learner.chat_learner import (
     apply_knowledge_updates,
 )
 from learner.youtube_learner import process_video
+from scheduler import start_scheduler, check_youtube_channel
+from learner.catalog_syncer import sync_catalog
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,7 +33,11 @@ async def lifespan(app: FastAPI):
     # Startup: load knowledge base
     logger.info("Loading knowledge base...")
     load_knowledge()
-    logger.info("Digital Ketu is ready!")
+
+    # Start background scheduler (YouTube auto-check, knowledge refresh)
+    start_scheduler()
+
+    logger.info("Digital Ketu is ready! Auto-learning scheduler active.")
     yield
     # Shutdown
     logger.info("Digital Ketu shutting down")
@@ -220,6 +226,32 @@ async def learn_from_youtube(req: LearnYouTubeRequest):
     result = process_video(req.video_url, req.video_title)
     if result.get("knowledge"):
         apply_knowledge_updates(result["knowledge"])
+        invalidate_cache()
+    return result
+
+
+@app.post("/api/learn/youtube-scan")
+async def scan_youtube_channel_endpoint():
+    """Manually trigger YouTube channel scan for new videos.
+
+    This runs the same check that the background scheduler does every 12 hours.
+    Finds new videos, extracts transcripts, learns knowledge automatically.
+    """
+    await check_youtube_channel()
+    return {"status": "scan_complete"}
+
+
+@app.post("/api/learn/catalog-sync")
+async def sync_catalog_endpoint():
+    """Manually trigger catalog sync from GitHub repo.
+
+    Fetches latest products.json from github.com/thakyanamtumhara/catalog
+    and updates Digital Ketu's product knowledge with latest prices, colors, etc.
+
+    This also runs automatically every 6 hours via the background scheduler.
+    """
+    result = await sync_catalog()
+    if result.get("status") == "ok":
         invalidate_cache()
     return result
 

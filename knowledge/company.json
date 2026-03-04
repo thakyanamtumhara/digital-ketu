@@ -1,64 +1,98 @@
 {
   "name": "Own Knitted Blank Wears",
   "brand": "Sale91",
+  "also_known_as": ["BulkPlainTShirt.com", "sale91.com"],
   "tagline": "Own Knitted Blank Wears",
+  "business_type": "B2B Wholesale Manufacturer (Factory Direct) — NOT a retailer",
   "websites": {
-    "primary": "sale91.com",
-    "secondary": "bulkplaintshirt.com"
+    "primary": "bulkplaintshirt.com",
+    "secondary": "sale91.com",
+    "catalog": "https://www.bulkplaintshirt.com/catalog"
   },
-  "email": "sales.dushirts@gmail.com",
+  "contact": {
+    "whatsapp": "https://wa.me/919336695049",
+    "phone": "+91-9336695049",
+    "email": "sales.dushirts@gmail.com"
+  },
   "locations": {
     "factory": {
       "city": "Tiruppur",
       "state": "Tamil Nadu",
-      "description": "Manufacturing unit — India's textile hub, we knit our own fabric in-house"
+      "description": "Fabric knitting, dyeing, processing, and stock storage — India's textile hub",
+      "visits": "No visits allowed (manufacturing only)"
     },
     "warehouse": {
       "city": "Delhi",
       "area": "Khanpur, South Delhi",
-      "description": "Ready stock warehouse for fast dispatch"
+      "description": "Main dispatch hub — ready stock warehouse",
+      "google_maps": "https://maps.app.goo.gl/dGpvUxcMLg5MJmtS9",
+      "visiting_hours": {
+        "mon_sat": "10 AM to 6 PM",
+        "sunday": "11 AM to 4 PM",
+        "note": "Kindly visit for 5-10 minutes only as we are busy with dispatch"
+      }
     }
   },
   "usp": [
-    "Direct factory rate — no middleman",
+    "Direct factory — no middleman, we knit our own fabric",
     "Manufacturing in Tiruppur — India's textile capital",
-    "We knit our own fabric in-house — not a trader/reseller",
-    "1 lakh+ t-shirts always ready in stock",
-    "Bio-washed, Pre-shrunk, Combed Ring-spun Cotton",
-    "Lowest MOQ — as low as 10 pieces for ready stock"
+    "Vertically integrated — yarn to garment (knitting, dyeing, processing, stitching)",
+    "Dispatch within Minutes — massive ready stock",
+    "MOQ just 10 pieces — mix and match any color/size/item",
+    "20+ product categories, all plain/blank",
+    "No shrinkage, No color bleeding guaranteed",
+    "Zero-contact blind dropshipping available"
   ],
   "target_customers": [
-    "Custom printing businesses (DTG, DTF, Screen Print, Heat Transfer)",
-    "Clothing brands needing blank/plain apparel",
-    "Corporate bulk buyers",
-    "Exporters needing quality blank t-shirts"
+    "Custom printing businesses (DTG, DTF, Screen Print, Heat Transfer, Embroidery)",
+    "D2C streetwear brands and clothing brands",
+    "Online sellers / resellers (Instagram, Amazon, Flipkart, Meesho)",
+    "Corporate bulk buyers / gifting companies",
+    "College fest / event merchandise",
+    "Uniform suppliers",
+    "Dropshippers"
   ],
   "payment_terms": {
-    "first_order": "50% COD available (+3% COD charge)",
-    "repeat_orders": "Prepaid only",
-    "online_discount": "Rs 3/piece discount for online purchase via sale91.com",
-    "modes": ["Bank Transfer (NEFT/IMPS)", "UPI", "COD (first order only)"]
+    "policy": "100% Prepaid — No COD",
+    "modes": ["UPI", "Bank Transfer (NEFT/IMPS)", "Online Payment"],
+    "website_discount": "Extra Rs 2/piece discount on website orders (bulkplaintshirt.com)"
   },
   "shipping": {
     "pan_india": true,
-    "export": true,
-    "export_modes": ["Courier", "Sea transport"],
-    "dispatch_time": "24-48 hours for ready stock items",
+    "dispatch_speed": "Within minutes of payment confirmation",
     "delivery_time": {
-      "delhi_ncr": "1-2 days",
-      "north_india": "2-4 days",
-      "south_india": "3-5 days",
-      "other": "4-7 days"
+      "delhi_ncr": "1-2 hours (via Porter/Rapido)",
+      "pan_india": "1-3 days (via Courier/Transport/Train)"
     },
-    "free_shipping_note": "Shipping charges depend on quantity and location"
+    "shipping_calculator": "https://www.bulkplaintshirt.com/calc/shipping-calculator.html",
+    "self_pickup": "Available at Delhi warehouse during visiting hours"
   },
   "gst": {
     "registered": true,
-    "note": "GST invoice provided with every order"
+    "rate": "5% GST added at invoicing",
+    "note": "All listed prices are exclusive of GST"
+  },
+  "dropshipping": {
+    "available": true,
+    "type": "Zero-contact blind dropshipping",
+    "description": "We ship directly to your customer — no Sale91 branding or invoice attached",
+    "setup_fee": "No setup fee, no monthly fee, no hidden charges",
+    "guide_video": "https://youtu.be/0dUN-e1U7AQ"
+  },
+  "returns": {
+    "policy": "Replacement only for genuine manufacturing defects (holes, tears, stitching defects)",
+    "guarantee": "No shrinkage, No color bleeding",
+    "note": "Contact on WhatsApp with photos of defective piece"
   },
   "social": {
     "youtube": "Sale91 channel",
-    "whatsapp_business": true,
+    "whatsapp": "https://wa.me/919336695049",
+    "whatsapp_catalog": "https://wa.me/c/919336695049",
     "indiamart": true
+  },
+  "ordering": {
+    "website": "Visit bulkplaintshirt.com/catalog → select items → checkout → pay → dispatched within minutes",
+    "whatsapp": "Message on wa.me/919336695049 → share order list → pay → dispatched immediately",
+    "warehouse_pickup": "Visit Khanpur warehouse → browse → buy → pick up on spot"
   }
 }

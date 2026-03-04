@@ -2,103 +2,123 @@
   "faqs": [
     {
       "question": "Minimum order kitna hai?",
-      "answer": "Ji, minimum 10 pieces se order kar sakte hain ready stock items ke liye. Custom orders ke liye MOQ vary karta hai.",
-      "keywords": ["moq", "minimum", "kitna", "kam se kam", "least"]
+      "answer": "Ji, minimum 10 pieces se order kar sakte hain — mix and match allowed. Koi bhi product, color, size mix kar sakte ho. Jaise 3 black oversized + 4 white round neck + 3 hoodie = 10 pieces valid hai.",
+      "keywords": ["moq", "minimum", "kitna", "kam se kam", "least", "order"]
     },
     {
       "question": "GSM kya hota hai?",
-      "answer": "GSM matlab Grams per Square Meter — fabric ki thickness batata hai. 180 GSM light hota hai everyday ke liye, 200 GSM premium printing ke liye best, 220 GSM heavy premium hai.",
+      "answer": "GSM matlab Grams per Square Meter — fabric ki thickness. 180 GSM regular tee jaisa, 210 H&M/Zara jaisa premium, 240 GSM streetwear gold standard (thick, heavy), 320 hoodie/sweatshirt, 430 sabse heavy hoodie India mein.",
       "keywords": ["gsm", "thickness", "weight", "mota", "patla"]
     },
     {
       "question": "Bio-washed kya hota hai?",
-      "answer": "Bio-washed matlab enzyme treatment hota hai — fabric ko extra soft aur smooth banata hai. Washing ke baad bhi quality same rehti hai.",
-      "keywords": ["bio-wash", "bio wash", "enzyme", "soft"]
-    },
-    {
-      "question": "Combed cotton kya hai?",
-      "answer": "Combed cotton mein shorter fibers nikal diye jaate hain, sirf premium long fibers rehte hain. Isse fabric zyada soft, smooth aur durable hoti hai.",
-      "keywords": ["combed", "cotton", "ring spun", "yarn"]
+      "answer": "Biowash matlab enzyme treatment — fabric extra soft, smooth aur pre-shrunk ho jati hai. Washing ke baad shrink nahi hogi, color nahi jaayega. Quality guarantee hai humari.",
+      "keywords": ["bio-wash", "bio wash", "enzyme", "soft", "biowash"]
     },
     {
       "question": "Delivery time kya hai?",
-      "answer": "Delhi NCR mein 1-2 din, North India 2-4 din, South India 3-5 din. Ready stock items 24-48 ghante mein dispatch. Priority dispatch bhi available hai.",
-      "keywords": ["delivery", "shipping", "time", "days", "kitne din", "kab"]
+      "answer": "Delhi NCR mein 1-2 GHANTE mein (Porter/Rapido se). PAN India 1-3 din. Hum 'Dispatch within Minutes' ke liye famous hain — payment confirm hote hi dispatch.",
+      "keywords": ["delivery", "shipping", "time", "days", "kitne din", "kab", "dispatch"]
     },
     {
       "question": "COD available hai?",
-      "answer": "Ji, first order pe 50% COD available hai (+3% COD charge). Second order onwards prepaid hota hai. Online payment pe Rs 3/piece discount milta hai.",
+      "answer": "Nahi ji, hum 100% prepaid karte hain. COD available nahi hai. UPI, Bank Transfer, ya Online Payment se pay karo. Website pe order karo toh extra Rs 2/piece discount milta hai.",
       "keywords": ["cod", "cash on delivery", "payment", "pay"]
     },
     {
       "question": "Custom printing karte ho?",
-      "answer": "Hum blank/plain t-shirts banate hain — printing businesses ke liye. Aap apna printing khud kar sakte ho (DTG, DTF, Screen Print). Humari t-shirts printing ke liye optimized hain.",
-      "keywords": ["print", "custom", "dtg", "dtf", "screen", "design"]
+      "answer": "Hum plain/blank banate hain — printing businesses ke liye. Screen print, DTG, DTF, sublimation, embroidery, heat press — sab ke liye optimized hai fabric. Aap apna printing karo, humse blank lo.",
+      "keywords": ["print", "custom", "dtg", "dtf", "screen", "design", "embroidery"]
     },
     {
-      "question": "Export karte ho?",
-      "answer": "Ji bilkul, hum export karte hain courier aur sea transport dono se. Many countries mein supply karte hain. Quantity bata do, rates share kar denge.",
-      "keywords": ["export", "international", "abroad", "foreign", "country"]
+      "question": "GST include hai price mein?",
+      "answer": "Nahi ji, sab prices GST exclusive hain. 5% GST invoicing ke time add hota hai. GST invoice har order ke saath milta hai.",
+      "keywords": ["gst", "invoice", "bill", "tax", "include"]
     },
     {
-      "question": "GST invoice milega?",
-      "answer": "Ji sir, har order ke saath GST invoice provide karte hain. Hum registered manufacturer hain.",
-      "keywords": ["gst", "invoice", "bill", "tax"]
+      "question": "Oversized t-shirt ka rate kya hai?",
+      "answer": "Oversized 180 GSM Rs 165, 210 GSM Rs 175, 240 GSM Rs 180 (bulk rate). Sample rate thoda zyada hota hai. 240 GSM sabse popular hai streetwear brands ke liye — 12 colors available. Sab dispatch within minutes.",
+      "keywords": ["oversized", "drop shoulder", "boxy", "baggy", "oversize"]
     },
     {
-      "question": "Oversized available hai?",
-      "answer": "Ji, oversized t-shirts available hain. 200 GSM Rs 130 se aur 220 GSM Rs 145 se. Drop shoulder, boxy fit — trending style. Ready stock hai.",
-      "keywords": ["oversized", "drop shoulder", "boxy", "baggy"]
+      "question": "Round neck ka rate batao?",
+      "answer": "True Biowash Round Neck Rs 140, Biowash Rs 130, Non Bio Rs 102 (sabse sasta). Sab 180 GSM. True Biowash mein 13 colors hain — printing ke liye best. Sublimation tee Rs 115.",
+      "keywords": ["round neck", "t-shirt", "tshirt", "rate", "price"]
     },
     {
       "question": "Hoodie ka rate kya hai?",
-      "answer": "Plain hoodie 320 GSM Rs 310 se, heavy 430 GSM Rs 410 se. 100% cotton fleece, bio-washed. Kangaroo pocket, adjustable hood. Ready stock.",
+      "answer": "Hoodie 320 GSM Black Rs 295, Colors Rs 325. Zip Hoodie Rs 325. 430 GSM Dropshoulder Rs 380, Colors Rs 418. Sab cotton brushed fleece, ready stock.",
       "keywords": ["hoodie", "hoody", "hood", "winter"]
     },
     {
       "question": "Sweatshirt available hai?",
-      "answer": "Ji, plain sweatshirt 320 GSM Rs 280 se start. Crew neck, no hood, clean look. 100% cotton fleece. Winter ke liye perfect.",
+      "answer": "Ji, sweatshirt 320 GSM Rs 225 se start (Black, Navy, Grey, Army Green). Dusri range Rs 240 (Maroon, White, Off-white). Crew neck, fleece. Varsity Jacket bhi hai Rs 335.",
       "keywords": ["sweatshirt", "sweat shirt", "crew neck"]
     },
     {
       "question": "Polo t-shirt hai?",
-      "answer": "Ji sir, polo t-shirt 220 GSM Rs 150 se. 100% cotton pique fabric. Corporate wear aur casual dono ke liye perfect.",
+      "answer": "Ji sir, Premium Polo Rs 220 — 100% Cotton Honeycomb, 4 colors. Cotton Polo Rs 180 — 6 colors. Dono 220 GSM. Corporate/casual dono ke liye perfect.",
       "keywords": ["polo", "collar", "corporate"]
     },
     {
       "question": "Acid wash available hai?",
-      "answer": "Haan ji, acid wash t-shirts available hain — regular fit Rs 155 se aur oversized Rs 175 se. Vintage look, trending hai. MOQ 25 pieces.",
+      "answer": "Haan ji, AcidWash Oversize 240 GSM Rs 220 bulk. French Terry fabric, vintage look. Abhi sirf Black mein available hai.",
       "keywords": ["acid", "wash", "vintage", "distressed"]
     },
     {
-      "question": "Bulk discount milega?",
-      "answer": "Bilkul! 500+ pieces pe Rs 2/piece discount. Online purchase pe Rs 3/piece discount (koi bhi quantity). 1000+ ke liye special rates — WhatsApp pe baat karo.",
-      "keywords": ["bulk", "discount", "wholesale", "offer", "deal"]
-    },
-    {
       "question": "Sample order kaise karu?",
-      "answer": "5-10 pieces order karo as sample, same factory rate pe milega. First order pe COD bhi available hai. sale91.com pe order karo ya WhatsApp pe baat karo.",
+      "answer": "1 piece bhi order kar sakte ho sample ke liye — Sample Price pe milega. 10+ pieces pe Bulk Price laga. bulkplaintshirt.com pe order karo ya WhatsApp karo wa.me/919336695049.",
       "keywords": ["sample", "try", "test", "check"]
     },
     {
-      "question": "Factory kahan hai?",
-      "answer": "Humari factory Tiruppur, Tamil Nadu mein hai — India ka textile hub. Delhi mein warehouse hai Khanpur, South Delhi mein. Factory se direct supply, koi middleman nahi.",
-      "keywords": ["factory", "location", "where", "kahan", "address"]
+      "question": "Factory/warehouse kahan hai?",
+      "answer": "Factory Tiruppur, Tamil Nadu mein hai (manufacturing — visit allowed nahi). Delhi mein warehouse hai Khanpur, South Delhi — yahan aa ke pick up bhi kar sakte ho. Mon-Sat 10AM-6PM, Sunday 11AM-4PM.",
+      "keywords": ["factory", "location", "where", "kahan", "address", "warehouse", "visit"]
     },
     {
       "question": "Return policy kya hai?",
-      "answer": "Agar koi defect ya quality issue ho toh replacement available hai. Delivery ke 48 ghante mein report karo with photos. Humara quality check strict hai, rarely issues aate hain.",
+      "answer": "Manufacturing defect (hole, tear, stitching issue) pe replacement milta hai. WhatsApp pe photo bhejo defect ki. No shrinkage, No color bleeding — yeh humari guarantee hai.",
       "keywords": ["return", "refund", "exchange", "defect", "quality issue"]
     },
     {
-      "question": "White t-shirt ka rate?",
-      "answer": "White round neck 180 GSM Rs 89, 200 GSM Rs 99, 220 GSM Rs 115. Oversized 200 GSM Rs 130. Sab bio-washed, combed cotton. Ready stock hai.",
-      "keywords": ["white", "safed"]
+      "question": "Dropshipping karte ho?",
+      "answer": "Haan ji! Zero-contact blind dropshipping. Hum directly tumhare customer ko dispatch karte hain — Sale91 ka koi branding/invoice nahi lagta. No setup fee, no monthly charge. WhatsApp pe order do.",
+      "keywords": ["dropship", "dropshipping", "blind", "resell"]
     },
     {
-      "question": "Black t-shirt ka rate?",
-      "answer": "Black round neck 180 GSM Rs 95, 200 GSM Rs 110, 220 GSM Rs 125. Oversized 200 GSM Rs 140. Color items slightly zyada hota hai. Ready stock.",
-      "keywords": ["black", "kala"]
+      "question": "Kids t-shirt available hai?",
+      "answer": "Ji, Kids Round Neck 180 GSM Rs 110 bulk. 5 colors — Black, White, Red, Baby Pink, Mustard Yellow. Sizes 20 se 34 (age 2-12 years). True Biowash, Supercombed cotton.",
+      "keywords": ["kids", "children", "bacche", "baby", "child"]
+    },
+    {
+      "question": "Shorts available hai?",
+      "answer": "Haan ji, Shorts 240 GSM Rs 205 bulk. 100% Cotton, heavyweight. 4 colors — Black, Off-white, Lavender, Beige. Zipper pockets, XS se XL.",
+      "keywords": ["shorts", "bottom", "bottomwear"]
+    },
+    {
+      "question": "Website pe discount milta hai?",
+      "answer": "Ji, bulkplaintshirt.com pe order karo toh extra Rs 2/piece discount. Automatic apply hota hai. Plus dispatch within minutes.",
+      "keywords": ["website", "discount", "online", "offer"]
+    },
+    {
+      "question": "Sublimation ke liye kaun sa tshirt?",
+      "answer": "Sublimation ke liye sirf ek option hai — Sublimation T-Shirt 200 GSM Rs 115. Cotton-feel polyester hai, white color only. Full sublimation print ke liye yahi best hai.",
+      "keywords": ["sublimation", "polyester", "full print"]
+    },
+    {
+      "question": "Printing ke liye kaun sa tshirt best hai?",
+      "answer": "DTG/Screen Print ke liye 100% cotton — Oversize 240 GSM ya True Biowash RN best. DTF sab pe chalta hai. Sublimation ke liye Sublimation Tee. Embroidery ke liye heavy GSM — Polo, Hoodie, Oversize 240. HTV bhi sab pe chalega.",
+      "keywords": ["printing", "best", "dtg", "screen", "dtf", "embroidery"]
+    },
+    {
+      "question": "Varsity Jacket hai?",
+      "answer": "Ji, Varsity Jacket 320 GSM Rs 335 bulk. Black body, White sleeves — classic baseball style. Cotton brushed fleece. Ready stock.",
+      "keywords": ["varsity", "jacket", "baseball"]
+    },
+    {
+      "question": "Boxy Fit kya hai?",
+      "answer": "Boxy Fit matlab square silhouette — wider chest, slightly shorter length. Streetwear trend hai. 180 GSM Rs 175 bulk. Black aur White mein available. Drop-shoulder hai.",
+      "keywords": ["boxy", "box", "square", "fit"]
     }
   ]
 }
