@@ -821,6 +821,17 @@
       </div>
     </div>
 
+    <!-- WhatsApp Conversations (Review & Correct) -->
+    <div class="card full-width">
+      <div class="card-header">
+        <h3>WhatsApp Conversations</h3>
+        <span class="badge" id="convoBadge" style="background:rgba(0,184,148,0.15);color:var(--green);">Loading</span>
+      </div>
+      <div class="card-body" id="convoBody" style="max-height:600px;">
+        <div class="empty-state">Loading conversations...</div>
+      </div>
+    </div>
+
     <!-- Backup -->
     <div class="card">
       <div class="card-header">
@@ -1248,12 +1259,13 @@ async function loadYouTubeVideos() {
   const tab = document.getElementById('tab-ytvideos');
   tab.innerHTML = '<div class="empty-state">Loading YouTube data...</div>';
 
-  const [learnedData, backfillData] = await Promise.all([
+  const [learnedData, backfillData, activityData] = await Promise.all([
     fetchJSON('/api/learned-files'),
     fetchJSON('/api/learn/youtube-backfill/status'),
+    fetchJSON('/api/dashboard/activity?source=youtube&limit=100'),
   ]);
 
-  if (!learnedData && !backfillData) {
+  if (!learnedData && !backfillData && !activityData) {
     tab.innerHTML = '<div class="empty-state">Could not load YouTube data</div>';
     return;
   }
@@ -1280,43 +1292,91 @@ async function loadYouTubeVideos() {
     </div>`;
   }
 
-  // Learned files list
+  // Build video list from activity log (confirmed processed) + learned files (detailed)
+  const activityEntries = (activityData && activityData.entries) || [];
+  const ytActivity = activityEntries.filter(e => e.source === 'youtube');
+
+  // Learned files with rich data
   const files = (learnedData && learnedData.files) || [];
-  const ytFiles = files.filter(f => f.file && f.file.startsWith('yt_'));
+  const learnedMap = {};
+  files.filter(f => f.file && f.file.startsWith('yt_')).forEach(f => {
+    const vid = f.file.replace('yt_', '').replace('.json', '');
+    learnedMap[vid] = f;
+  });
 
-  if (ytFiles.length) {
-    html += `<div class="knowledge-section"><h4 style="margin-bottom:10px;">Learned Videos (${ytFiles.length})</h4>`;
-    html += ytFiles.slice(0, 50).map(f => {
-      const videoId = f.file.replace('yt_', '').replace('.json', '');
-      const title = f.title || 'Untitled';
-      const updated = f.updated_at ? new Date(f.updated_at).toLocaleDateString('en-IN', {day:'numeric',month:'short'}) : '';
-      const keyPoints = (f.key_points || []).slice(0, 3);
+  // Merge: use activity log as base (confirmed processed), enrich with learned file data
+  const videoList = [];
+  const seenIds = new Set();
 
-      // Tags for what was extracted
+  for (const e of ytActivity) {
+    const d = e.details || {};
+    const videoId = d.video_id || '';
+    if (!videoId || seenIds.has(videoId)) continue;
+    seenIds.add(videoId);
+    const learned = learnedMap[videoId] || {};
+    videoList.push({
+      videoId,
+      title: d.video_title || learned.title || 'Untitled',
+      time: e.time || '',
+      date: e.date || '',
+      isBackfill: d.backfill || false,
+      updatesApplied: d.updates_applied || [],
+      keyPoints: learned.key_points || [],
+      hasProduct: learned.has_product_info || false,
+      hasPricing: learned.has_pricing || false,
+      hasFaqs: learned.has_faqs || false,
+      hasLearnedFile: !!learnedMap[videoId],
+    });
+  }
+
+  // Add any learned files not in activity
+  for (const [vid, f] of Object.entries(learnedMap)) {
+    if (!seenIds.has(vid)) {
+      videoList.push({
+        videoId: vid,
+        title: f.title || 'Untitled',
+        time: '',
+        date: f.updated_at ? new Date(f.updated_at).toLocaleDateString('en-IN', {day:'numeric',month:'short'}) : '',
+        isBackfill: false,
+        updatesApplied: [],
+        keyPoints: f.key_points || [],
+        hasProduct: f.has_product_info || false,
+        hasPricing: f.has_pricing || false,
+        hasFaqs: f.has_faqs || false,
+        hasLearnedFile: true,
+      });
+    }
+  }
+
+  if (videoList.length) {
+    html += `<div class="knowledge-section"><h4 style="margin-bottom:10px;">Processed Videos (${videoList.length})</h4>`;
+    html += videoList.slice(0, 60).map(v => {
       let tags = '';
-      if (f.has_product_info) tags += '<span style="background:rgba(0,206,201,0.12);color:var(--accent2);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">Product</span>';
-      if (f.has_pricing) tags += '<span style="background:rgba(0,184,148,0.12);color:var(--green);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">Pricing</span>';
-      if (f.has_faqs) tags += '<span style="background:rgba(253,203,110,0.12);color:var(--orange);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">FAQ</span>';
+      if (v.hasProduct) tags += '<span style="background:rgba(0,206,201,0.12);color:var(--accent2);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">Product</span>';
+      if (v.hasPricing) tags += '<span style="background:rgba(0,184,148,0.12);color:var(--green);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">Pricing</span>';
+      if (v.hasFaqs) tags += '<span style="background:rgba(253,203,110,0.12);color:var(--orange);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">FAQ</span>';
+      if (v.isBackfill) tags += '<span style="background:rgba(108,92,231,0.12);color:var(--accent);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">Backfill</span>';
 
-      let pointsHTML = '';
-      if (keyPoints.length) {
-        pointsHTML = '<div style="margin-top:5px;padding-left:4px;">' +
-          keyPoints.map(p => `<div style="font-size:11px;color:var(--text-dim);padding:1px 0;">- ${p}</div>`).join('') +
-          '</div>';
+      const updates = v.updatesApplied.slice(0, 2);
+      let detailHTML = '';
+      if (v.keyPoints.length) {
+        detailHTML = '<div style="margin-top:4px;">' + v.keyPoints.slice(0, 2).map(p => `<div style="font-size:11px;color:var(--text-dim);padding:1px 0;">- ${p}</div>`).join('') + '</div>';
+      } else if (updates.length) {
+        detailHTML = '<div style="margin-top:4px;">' + updates.map(u => `<div style="font-size:11px;color:var(--text-dim);padding:1px 0;">- ${u}</div>`).join('') + '</div>';
       }
 
-      return `<div style="padding:10px 12px;margin-bottom:6px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;">
+      return `<div style="padding:10px 12px;margin-bottom:5px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
           <span style="background:rgba(214,48,49,0.15);color:var(--red);padding:3px 8px;border-radius:4px;font-weight:600;font-size:11px;">YT</span>
-          <span style="color:var(--text-bright);font-size:12px;font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${title}</span>
-          <span style="color:var(--text-dim);font-size:10px;white-space:nowrap;">${updated}</span>
+          <span style="color:var(--text-bright);font-size:12px;font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${v.title}</span>
+          <span style="color:var(--text-dim);font-size:10px;white-space:nowrap;">${v.date} ${v.time}</span>
         </div>
-        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${tags || '<span style="font-size:10px;color:var(--text-dim);">Processing...</span>'}</div>
-        ${pointsHTML}
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${tags || '<span style="font-size:10px;color:var(--green);">Processed</span>'}</div>
+        ${detailHTML}
       </div>`;
     }).join('');
-    if (ytFiles.length > 50) {
-      html += `<div style="text-align:center;padding:8px;color:var(--text-dim);font-size:12px;">+ ${ytFiles.length - 50} more videos</div>`;
+    if (videoList.length > 60) {
+      html += `<div style="text-align:center;padding:8px;color:var(--text-dim);font-size:12px;">+ ${videoList.length - 60} more videos</div>`;
     }
     html += '</div>';
   } else {
@@ -1657,6 +1717,118 @@ function switchInsightTab(tabName) {
   document.getElementById('itab-' + tabName).classList.add('active');
 }
 
+// ---- WHATSAPP CONVERSATIONS ----
+
+async function loadConversations() {
+  const data = await fetchJSON('/api/conversations/recent?limit=30');
+  if (!data) return;
+
+  const convos = data.conversations || [];
+  document.getElementById('convoBadge').textContent = convos.length + ' recent';
+
+  const body = document.getElementById('convoBody');
+  if (!convos.length) {
+    body.innerHTML = '<div class="empty-state">No AI conversations yet — will appear when customers message on WhatsApp</div>';
+    return;
+  }
+
+  body.innerHTML = convos.map((c, i) => {
+    const phone = c.customer_phone ? '...' + c.customer_phone.slice(-4) : '';
+    const name = c.customer_name || phone || 'Customer';
+    const correctedTag = c.corrected ? '<span style="background:rgba(0,184,148,0.15);color:var(--green);padding:2px 6px;border-radius:4px;font-size:10px;margin-left:6px;">Corrected</span>' : '';
+
+    return `<div style="padding:12px;margin-bottom:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:10px;" id="convo-${i}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <span style="font-size:12px;font-weight:600;color:var(--text-bright);">${name}${correctedTag}</span>
+        <span style="font-size:10px;color:var(--text-dim);">${c.date || ''} ${c.time || ''}</span>
+      </div>
+      <div style="background:rgba(0,206,201,0.06);border-left:3px solid var(--accent2);padding:8px 12px;border-radius:0 6px 6px 0;margin-bottom:6px;">
+        <div style="font-size:10px;color:var(--accent2);margin-bottom:3px;">CUSTOMER</div>
+        <div style="font-size:12px;color:var(--text);">${c.customer_message || ''}</div>
+      </div>
+      <div style="background:rgba(108,92,231,0.06);border-left:3px solid var(--accent);padding:8px 12px;border-radius:0 6px 6px 0;position:relative;" id="reply-box-${i}">
+        <div style="font-size:10px;color:var(--accent);margin-bottom:3px;">AI REPLY</div>
+        <div style="font-size:12px;color:var(--text);" id="reply-text-${i}">${c.ai_reply || ''}</div>
+        ${c.corrected ? '' : `<button onclick="startEdit(${i})" style="position:absolute;top:8px;right:8px;background:rgba(253,203,110,0.15);color:var(--orange);border:1px solid rgba(253,203,110,0.3);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;">Edit</button>`}
+      </div>
+      <div id="edit-area-${i}" style="display:none;margin-top:8px;">
+        <textarea id="edit-input-${i}" style="width:100%;min-height:60px;background:rgba(0,0,0,0.3);border:1px solid var(--orange);border-radius:6px;color:var(--text);padding:8px;font-size:12px;resize:vertical;font-family:inherit;"></textarea>
+        <div style="display:flex;gap:8px;margin-top:6px;">
+          <button onclick="submitCorrection(${i})" style="background:var(--green);color:white;border:none;padding:6px 14px;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600;">Save & Learn</button>
+          <button onclick="cancelEdit(${i})" style="background:rgba(255,255,255,0.1);color:var(--text-dim);border:none;padding:6px 14px;border-radius:6px;font-size:11px;cursor:pointer;">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Store data for edit
+  window._convoData = convos;
+}
+
+function startEdit(idx) {
+  const c = window._convoData[idx];
+  document.getElementById('edit-input-' + idx).value = c.ai_reply;
+  document.getElementById('edit-area-' + idx).style.display = 'block';
+  document.getElementById('edit-input-' + idx).focus();
+}
+
+function cancelEdit(idx) {
+  document.getElementById('edit-area-' + idx).style.display = 'none';
+}
+
+async function submitCorrection(idx) {
+  const c = window._convoData[idx];
+  const corrected = document.getElementById('edit-input-' + idx).value.trim();
+  if (!corrected || corrected === c.ai_reply) {
+    cancelEdit(idx);
+    return;
+  }
+
+  // Show loading
+  const btn = document.querySelector(`#edit-area-${idx} button`);
+  const origText = btn.textContent;
+  btn.textContent = 'Learning...';
+  btn.disabled = true;
+
+  try {
+    const r = await fetch(BASE + '/api/learn/correction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customer_message: c.customer_message,
+        ai_reply: c.ai_reply,
+        ketu_correction: corrected,
+        customer_phone: c.customer_phone || '',
+        customer_name: c.customer_name || '',
+      }),
+    });
+    const result = await r.json();
+
+    if (result.status === 'learned') {
+      // Update UI
+      document.getElementById('reply-text-' + idx).innerHTML = `<span style="text-decoration:line-through;color:var(--text-dim);">${c.ai_reply}</span><br><span style="color:var(--green);font-weight:500;">${corrected}</span>`;
+      document.getElementById('edit-area-' + idx).style.display = 'none';
+      // Remove edit button
+      const editBtn = document.querySelector(`#reply-box-${idx} button`);
+      if (editBtn) editBtn.remove();
+      // Show success
+      const box = document.getElementById('convo-' + idx);
+      box.style.borderColor = 'rgba(0,184,148,0.3)';
+      const tag = document.createElement('span');
+      tag.style.cssText = 'background:rgba(0,184,148,0.15);color:var(--green);padding:2px 8px;border-radius:4px;font-size:10px;display:inline-block;margin-top:6px;';
+      tag.textContent = 'Learned: ' + (result.what_went_wrong || 'Correction applied');
+      document.getElementById('reply-box-' + idx).appendChild(tag);
+    } else {
+      alert('Error: ' + (result.detail || 'Could not learn from correction'));
+    }
+  } catch (e) {
+    alert('Network error: ' + e.message);
+  }
+
+  btn.textContent = origText;
+  btn.disabled = false;
+}
+
 // ---- BACKUP ----
 
 function downloadBackup() {
@@ -1680,6 +1852,7 @@ async function init() {
     loadBackfillStatus(),
     loadErrors(),
     loadInsights(),
+    loadConversations(),
   ]);
 
   // Countdown ticks every second (local, no API call)
