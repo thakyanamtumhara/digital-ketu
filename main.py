@@ -416,6 +416,35 @@ async def youtube_backfill_status():
     return get_backfill_status()
 
 
+@app.get("/api/learned-files")
+async def list_learned_files_endpoint():
+    """List all learned files (YouTube videos, WhatsApp exports, etc.)."""
+    from core.database import is_db_available, list_learned_files, count_learned_files
+    if is_db_available():
+        files = list_learned_files()
+        return {
+            "total": count_learned_files(),
+            "files": files,
+        }
+
+    # Fallback to local files
+    learned_dir = KNOWLEDGE_DIR / "learned"
+    if not learned_dir.exists():
+        return {"total": 0, "files": []}
+
+    files = []
+    for f in sorted(learned_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+        if not f.name.startswith("_"):
+            files.append({"file": f.name, "size": f.stat().st_size})
+    return {"total": len(files), "files": files}
+
+
+@app.get("/api/youtube/backfill-status")
+async def youtube_backfill_status_short():
+    """Shortcut for YouTube backfill status."""
+    return get_backfill_status()
+
+
 @app.post("/api/learn/catalog-sync")
 async def sync_catalog_endpoint():
     """Manually trigger catalog sync from GitHub repo.
