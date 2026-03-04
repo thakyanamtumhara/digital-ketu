@@ -389,8 +389,18 @@ def apply_knowledge_updates(updates: dict) -> dict:
     if updates.get("prompt_evolution"):
         evolution = updates["prompt_evolution"]
         try:
-            with open(PROMPT_FILE, "r", encoding="utf-8") as f:
-                prompt_data = json.load(f)
+            # Load from DB first (source of truth), fallback to file
+            prompt_data = None
+            try:
+                from core.database import is_db_available, load_knowledge_from_db
+                if is_db_available():
+                    prompt_data = load_knowledge_from_db("prompt")
+            except Exception:
+                pass
+
+            if not prompt_data:
+                with open(PROMPT_FILE, "r", encoding="utf-8") as f:
+                    prompt_data = json.load(f)
 
             # Collect all existing values for dedup
             all_traits = set(

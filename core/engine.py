@@ -27,7 +27,22 @@ _faq_hit_counts: dict[str, int] = {}  # question_prefix -> hit count
 
 
 def _load_prompt_config() -> dict:
-    """Load the evolving prompt configuration from prompt.json."""
+    """Load the evolving prompt configuration — DB first, then JSON file fallback.
+
+    DB is the source of truth for version and evolved data (survives deploys).
+    JSON file is the fallback when DB is unavailable.
+    """
+    # Try DB first (has the latest evolved version)
+    try:
+        from core.database import is_db_available, load_knowledge_from_db
+        if is_db_available():
+            db_prompt = load_knowledge_from_db("prompt")
+            if db_prompt:
+                return db_prompt
+    except Exception as e:
+        logger.warning(f"DB prompt load failed, falling back to file: {e}")
+
+    # Fallback to JSON file
     try:
         with open(PROMPT_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
