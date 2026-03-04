@@ -152,13 +152,19 @@ def get_storage_stats() -> dict:
 
     # Learned files
     if use_db:
+        from core.database import load_learned_file
         db_learned = list_learned_files()
         for f in db_learned:
+            # Calculate size from DB content
+            content = load_learned_file(f["file"])
+            size_bytes = len(content.encode("utf-8")) if content else 0
+            size_kb = round(size_bytes / 1024, 1)
             stats["learned_files"].append({
                 "file": f["file"],
-                "size_kb": 0,
+                "size_kb": size_kb,
                 "modified": f.get("updated_at", ""),
             })
+            stats["total_size_kb"] += size_bytes
     elif learned_dir.exists():
         for f in learned_dir.iterdir():
             if f.name.startswith("_"):
