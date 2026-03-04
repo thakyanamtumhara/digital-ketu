@@ -64,7 +64,18 @@ def generate_reply(
 
     # Use provided history or fetch from in-memory store
     if conversation_history:
-        messages = conversation_history
+        # Map roles from wwbun format to Claude API format
+        # wwbun sends "customer"/"owner" but Claude needs "user"/"assistant"
+        messages = []
+        for msg in conversation_history:
+            role = msg.get("role", "user")
+            if role in ("customer", "user"):
+                role = "user"
+            elif role in ("owner", "assistant", "ai"):
+                role = "assistant"
+            else:
+                role = "user"
+            messages.append({"role": role, "content": msg.get("content", "")})
     elif customer_phone:
         messages = get_conversation_history(customer_phone)
     else:
@@ -80,7 +91,7 @@ def generate_reply(
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-haiku-4-5-20251001",
             max_tokens=300,
             system=system,
             messages=messages,
