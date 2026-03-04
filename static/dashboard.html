@@ -870,6 +870,9 @@ async function loadDashboard() {
       else if (e.source === 'whatsapp-export') { iconClass = 'learn'; emoji = 'WA'; }
       else if (e.source === 'youtube') { iconClass = 'youtube'; emoji = 'YT'; }
       else if (e.source === 'catalog-sync') { iconClass = 'sync'; emoji = 'CT'; }
+      else if (e.source === 'faq-validator') { iconClass = 'sync'; emoji = 'FQ'; }
+      else if (e.source === 'data-cleanup') { iconClass = 'sync'; emoji = 'CL'; }
+      else { iconClass = 'reply'; emoji = '??'; }
 
       let title = '';
       let detail = '';
@@ -884,7 +887,7 @@ async function loadDashboard() {
         const short = d.too_short_skipped || 0;
         title = `Learned from ${kept} quality messages (${junk + short} filtered out)`;
         const preview = (d.quality_messages_preview || []).slice(0, 2).map(m => `"${m.substring(0, 40)}..."`).join(', ');
-        detail = preview || (d.updates_applied || []).slice(0, 2).join(', ') || 'Processing...';
+        detail = preview || (d.updates_applied || []).slice(0, 2).join(', ') || 'No new knowledge found in this batch';
       } else if (e.source === 'whatsapp-export') {
         title = `Learned from WA export (${d.messages_parsed || 0} msgs)`;
         detail = (d.updates_applied || []).slice(0, 2).join(', ') || 'Processing...';
@@ -897,6 +900,19 @@ async function loadDashboard() {
       } else if (e.source === 'catalog-sync') {
         title = `Catalog synced`;
         detail = `${d.products_synced || 0} products updated`;
+      } else if (e.source === 'faq-validator') {
+        title = `FAQ validation`;
+        const deactivated = d.deactivated || 0;
+        const priceWarn = d.price_warnings || 0;
+        detail = deactivated || priceWarn
+          ? `${deactivated} deactivated, ${priceWarn} price warnings`
+          : 'All FAQs verified — no issues found';
+      } else if (e.source === 'data-cleanup') {
+        title = `Data cleanup (${d.retention_days || 90}-day retention)`;
+        detail = `${d.activity_logs_deleted || 0} old logs + ${d.learned_files_deleted || 0} old files deleted`;
+      } else {
+        title = e.action || e.source;
+        detail = JSON.stringify(d).substring(0, 80);
       }
 
       return `
