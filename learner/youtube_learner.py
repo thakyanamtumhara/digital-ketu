@@ -2,17 +2,180 @@ import json
 import logging
 import re
 
+import httpx
 from anthropic import Anthropic
 
 from core.config import settings, KNOWLEDGE_DIR
 
 logger = logging.getLogger(__name__)
 
+YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+
+def _get_oauth_access_token() -> str | None:
+    """Exchange refresh token for a fresh access token (official OAuth 2.0).
+
+    Returns access_token string or None if OAuth not configured.
+    """
+    if not settings.youtube_client_id or not settings.youtube_client_secret or not settings.youtube_refresh_token:
+        return None
+
+    try:
+        resp = httpx.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "client_id": settings.youtube_client_id,
+                "client_secret": settings.youtube_client_secret,
+                "refresh_token": settings.youtube_refresh_token,
+                "grant_type": "refresh_token",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        token_data = resp.json()
+        return token_data.get("access_token")
+    except Exception as e:
+        logger.error(f"OAuth token refresh failed: {e}")
+        return None
+
+
+def _get_transcript_official(video_id: str) -> str | None:
+    """Get transcript using official YouTube Captions API (OAuth 2.0).
+
+    Steps:
+    1. List available caption tracks for the video
+    2. Pick Hindi first, then English
+    3. Download the caption track in SRT format
+    4. Parse SRT → plain text
+
+    This is the official, Google-approved method. No scraping.
+    Costs: captions.list = 50 quota units, captions.download = 200 quota units.
+    """
+    access_token = _get_oauth_access_token()
+    if not access_token:
+        return None
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    try:
+        # Step 1: List caption tracks
+        resp = httpx.get(
+            f"{YOUTUBE_API_URL}/captions",
+            params={"videoId": video_id, "part": "snippet"},
+            headers=headers,
+            timeout=15,
+        )
+
+        if resp.status_code == 403:
+            logger.warning(f"Captions API forbidden for {video_id} — may need to enable YouTube Data API v3")
+            return None
+        if resp.status_code == 429:
+            logger.warning(f"YouTube API rate limited (official) for {video_id}")
+            raise Exception("429 Too Many Requests (official API)")
+
+        resp.raise_for_status()
+        captions_data = resp.json()
+        tracks = captions_data.get("items", [])
+
+        if not tracks:
+            logger.info(f"No caption tracks found for {video_id}")
+            return None
+
+        # Step 2: Pick best track — Hindi first, then English
+        selected = None
+        for lang_pref in ["hi", "hi-IN", "en", "en-US", "en-IN"]:
+            for track in tracks:
+                if track["snippet"]["language"] == lang_pref:
+                    selected = track
+                    break
+            if selected:
+                break
+
+        # Fallback: pick any track
+        if not selected:
+            selected = tracks[0]
+
+        caption_id = selected["id"]
+        lang = selected["snippet"]["language"]
+        logger.info(f"Downloading captions for {video_id}: track={caption_id}, lang={lang}")
+
+        # Step 3: Download caption track as SRT
+        dl_resp = httpx.get(
+            f"{YOUTUBE_API_URL}/captions/{caption_id}",
+            params={"tfmt": "srt"},
+            headers=headers,
+            timeout=30,
+        )
+
+        if dl_resp.status_code == 429:
+            raise Exception("429 Too Many Requests (official API)")
+
+        dl_resp.raise_for_status()
+        srt_text = dl_resp.text
+
+        # Step 4: Parse SRT → plain text (strip timestamps and sequence numbers)
+        lines = []
+        for line in srt_text.split("\n"):
+            line = line.strip()
+            # Skip empty lines, sequence numbers, and timestamp lines
+            if not line:
+                continue
+            if line.isdigit():
+                continue
+            if "-->" in line:
+                continue
+            lines.append(line)
+
+        transcript = " ".join(lines)
+        logger.info(f"Official captions downloaded for {video_id}: {len(transcript)} chars")
+        return transcript
+
+    except Exception as e:
+        error_str = str(e).lower()
+        if "429" in error_str or "too many" in error_str:
+            raise  # Re-raise rate limits for scheduler to handle
+        logger.error(f"Official captions API error for {video_id}: {e}")
+        return None
+
+
+def _get_transcript_unofficial(video_id: str) -> str | None:
+    """Fallback: get transcript using unofficial youtube-transcript-api library.
+
+    This scrapes YouTube directly (no API key needed).
+    Works but can trigger 429 rate limits if used too much.
+    """
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        try:
+            transcript = transcript_list.find_transcript(["hi", "hi-IN"])
+        except Exception:
+            try:
+                transcript = transcript_list.find_transcript(["en"])
+            except Exception:
+                transcript = transcript_list.find_generated_transcript(["hi", "en"])
+
+        entries = transcript.fetch()
+        return " ".join(entry.text for entry in entries)
+
+    except Exception as e:
+        error_str = str(e).lower()
+        if "429" in error_str or "too many" in error_str:
+            logger.warning(f"YouTube RATE LIMITED (unofficial) for {video_id} — must stop fetching!")
+            raise
+        logger.error(f"Unofficial transcript fetch error for {video_id}: {e}")
+        return None
+
 
 def get_transcript(video_url: str) -> str | None:
-    """Get transcript from a YouTube video URL."""
-    from youtube_transcript_api import YouTubeTranscriptApi
+    """Get transcript from a YouTube video URL.
 
+    Strategy:
+    1. Try official YouTube Captions API (OAuth 2.0) — proper, no scraping
+    2. Fallback to unofficial youtube-transcript-api — if OAuth not configured
+    """
     # Extract video ID from URL
     video_id = None
     patterns = [
@@ -29,28 +192,17 @@ def get_transcript(video_url: str) -> str | None:
         logger.error(f"Could not extract video ID from: {video_url}")
         return None
 
-    try:
-        # Try Hindi first, then English
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        try:
-            transcript = transcript_list.find_transcript(["hi", "hi-IN"])
-        except Exception:
-            try:
-                transcript = transcript_list.find_transcript(["en"])
-            except Exception:
-                # Get auto-generated
-                transcript = transcript_list.find_generated_transcript(["hi", "en"])
+    # Try official API first (if OAuth configured)
+    if settings.youtube_client_id and settings.youtube_client_secret and settings.youtube_refresh_token:
+        logger.info(f"Using official YouTube Captions API for {video_id}")
+        transcript = _get_transcript_official(video_id)
+        if transcript:
+            return transcript
+        logger.info(f"Official API returned no captions for {video_id}, trying unofficial fallback...")
 
-        entries = transcript.fetch()
-        return " ".join(entry.text for entry in entries)
-
-    except Exception as e:
-        error_str = str(e).lower()
-        if "429" in error_str or "too many" in error_str:
-            logger.warning(f"YouTube RATE LIMITED for {video_url} — must stop fetching!")
-            raise  # Re-raise so scheduler can detect and activate cooldown
-        logger.error(f"Transcript fetch error for {video_url}: {e}")
-        return None
+    # Fallback to unofficial scraping
+    logger.info(f"Using unofficial transcript API for {video_id}")
+    return _get_transcript_unofficial(video_id)
 
 
 def extract_knowledge_from_transcript(transcript: str, video_title: str = "") -> dict:

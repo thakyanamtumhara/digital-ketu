@@ -422,6 +422,138 @@ async def youtube_backfill_status():
     return get_backfill_status()
 
 
+# --- YouTube OAuth Setup (one-time authorization flow) ---
+
+@app.get("/api/youtube/auth")
+async def youtube_oauth_start():
+    """Step 1: Get the authorization URL. Open this in your browser to authorize.
+
+    Prerequisites:
+    1. Set YOUTUBE_CLIENT_ID in Railway env vars
+    2. Set YOUTUBE_CLIENT_SECRET in Railway env vars
+    3. Open the returned URL in your browser
+    4. After authorizing, Google redirects to /api/youtube/callback with a code
+    5. The callback automatically exchanges the code for a refresh_token
+    6. Copy the refresh_token and set it as YOUTUBE_REFRESH_TOKEN in Railway
+    """
+    if not settings.youtube_client_id or not settings.youtube_client_secret:
+        return {
+            "status": "not_configured",
+            "message": "Set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in Railway env vars first.",
+            "steps": [
+                "1. Go to Google Cloud Console > APIs & Services > Credentials",
+                "2. Create OAuth 2.0 Client ID (type: Web application)",
+                "3. Add redirect URI: https://YOUR-RAILWAY-URL/api/youtube/callback",
+                "4. Copy Client ID → YOUTUBE_CLIENT_ID env var",
+                "5. Copy Client Secret → YOUTUBE_CLIENT_SECRET env var",
+                "6. Redeploy, then visit this endpoint again",
+            ],
+        }
+
+    from urllib.parse import urlencode
+
+    # Request access to YouTube captions (force.captions scope)
+    auth_params = urlencode({
+        "client_id": settings.youtube_client_id,
+        "redirect_uri": _get_oauth_redirect_uri(),
+        "response_type": "code",
+        "scope": "https://www.googleapis.com/auth/youtube.force-ssl",
+        "access_type": "offline",  # This gives us a refresh_token
+        "prompt": "consent",  # Force consent screen to always get refresh_token
+    })
+
+    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{auth_params}"
+
+    return {
+        "status": "ready",
+        "message": "Open this URL in your browser to authorize YouTube access:",
+        "auth_url": auth_url,
+        "next_step": "After authorizing, Google will redirect to /api/youtube/callback automatically.",
+    }
+
+
+@app.get("/api/youtube/callback")
+async def youtube_oauth_callback(code: str = "", error: str = ""):
+    """Step 2: Google redirects here after you authorize. Exchanges code for refresh_token."""
+    if error:
+        return {"status": "error", "message": f"Authorization denied: {error}"}
+
+    if not code:
+        return {"status": "error", "message": "No authorization code received"}
+
+    import httpx as _httpx
+
+    try:
+        resp = _httpx.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": settings.youtube_client_id,
+                "client_secret": settings.youtube_client_secret,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": _get_oauth_redirect_uri(),
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        token_data = resp.json()
+
+        refresh_token = token_data.get("refresh_token")
+        access_token = token_data.get("access_token")
+
+        if not refresh_token:
+            return {
+                "status": "error",
+                "message": "No refresh_token received. Try revoking app access in Google Account settings and authorize again.",
+                "token_data": token_data,
+            }
+
+        # Test the token — try listing captions for any video
+        test_result = "not_tested"
+        if access_token and settings.youtube_channel_id:
+            try:
+                test_resp = _httpx.get(
+                    "https://www.googleapis.com/youtube/v3/channels",
+                    params={"part": "snippet", "id": settings.youtube_channel_id},
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=10,
+                )
+                if test_resp.status_code == 200:
+                    ch_data = test_resp.json()
+                    ch_name = ch_data.get("items", [{}])[0].get("snippet", {}).get("title", "Unknown")
+                    test_result = f"Connected to channel: {ch_name}"
+            except Exception:
+                test_result = "token_valid_but_test_failed"
+
+        return {
+            "status": "success",
+            "message": "YouTube OAuth authorized! Copy the refresh_token below and set it as YOUTUBE_REFRESH_TOKEN in Railway.",
+            "refresh_token": refresh_token,
+            "test": test_result,
+            "next_steps": [
+                f"1. Copy this refresh_token: {refresh_token}",
+                "2. Go to Railway > Variables",
+                "3. Add: YOUTUBE_REFRESH_TOKEN = (paste the token)",
+                "4. Redeploy — Digital Ketu will now use the official YouTube Captions API!",
+            ],
+        }
+
+    except Exception as e:
+        return {"status": "error", "message": f"Token exchange failed: {e}"}
+
+
+def _get_oauth_redirect_uri() -> str:
+    """Build the OAuth redirect URI based on the current server."""
+    # In production (Railway), use HTTPS
+    # Check common env vars for the public URL
+    import os
+    railway_url = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+    if railway_url:
+        return f"https://{railway_url}/api/youtube/callback"
+    # Fallback for local dev
+    return f"http://localhost:{settings.port}/api/youtube/callback"
+
+
 @app.get("/api/learned-files")
 async def list_learned_files_endpoint():
     """List all learned files with rich details (title, key_points for YT videos)."""

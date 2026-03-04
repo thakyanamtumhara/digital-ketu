@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # YouTube
     youtube_api_key: str = ""
     youtube_channel_id: str = ""
+    # YouTube OAuth 2.0 (for official Captions API — channel owner access)
+    youtube_client_id: str = ""
+    youtube_client_secret: str = ""
+    youtube_refresh_token: str = ""  # Get this via /api/youtube/auth flow
 
     # GitHub Auto-Persist (backup — saves learned knowledge back to repo)
     github_token: str = ""
