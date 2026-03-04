@@ -49,6 +49,15 @@ async def lifespan(app: FastAPI):
     # Ensure knowledge directories exist
     init_knowledge_dir()
 
+    # Restore evolved knowledge from GitHub (survives ephemeral deploys)
+    from core.git_persist import restore_knowledge_from_github
+    try:
+        restored = restore_knowledge_from_github()
+        if restored:
+            logger.info(f"Knowledge restored from GitHub: {restored}")
+    except Exception as e:
+        logger.error(f"Knowledge restore failed (non-fatal): {e}")
+
     # Startup: load knowledge base
     logger.info("Loading knowledge base...")
     load_knowledge()
