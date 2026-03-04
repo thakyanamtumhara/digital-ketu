@@ -1,8 +1,11 @@
 import logging
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from core.config import settings
@@ -348,6 +351,17 @@ async def dashboard_storage():
     Shows file sizes, item counts, what's stored where.
     """
     return get_storage_stats()
+
+
+# --- Dashboard UI ---
+
+_dashboard_html = (Path(__file__).parent / "static" / "dashboard.html").read_text(encoding="utf-8")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard_ui():
+    """Digital Ketu Live Dashboard UI."""
+    return _dashboard_html
 
 
 # --- Run ---

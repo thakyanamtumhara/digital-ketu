@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Digital Ketu - Live Dashboard</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --card: #12121a;
+    --card-border: #1e1e2e;
+    --accent: #6c5ce7;
+    --accent2: #00cec9;
+    --green: #00b894;
+    --orange: #fdcb6e;
+    --red: #d63031;
+    --text: #dfe6e9;
+    --text-dim: #636e72;
+    --text-bright: #ffffff;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .header {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-bottom: 1px solid var(--card-border);
+    padding: 20px 30px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(10px);
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+  }
+
+  .logo {
+    width: 45px;
+    height: 45px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    font-weight: bold;
+    color: white;
+  }
+
+  .header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .header h1 span {
+    font-size: 13px;
+    font-weight: 400;
+    display: block;
+    background: none;
+    -webkit-text-fill-color: var(--text-dim);
+  }
+
+  .status-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .status-badge.online {
+    background: rgba(0, 184, 148, 0.15);
+    color: var(--green);
+    border: 1px solid rgba(0, 184, 148, 0.3);
+  }
+
+  .status-badge.offline {
+    background: rgba(214, 48, 49, 0.15);
+    color: var(--red);
+    border: 1px solid rgba(214, 48, 49, 0.3);
+  }
+
+  .pulse {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  .pulse.off { background: var(--red); animation: none; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.3); }
+  }
+
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 25px;
+  }
+
+  /* Strength Meter */
+  .strength-section {
+    background: linear-gradient(135deg, #1a1a2e, #16213e);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 25px 30px;
+    margin-bottom: 25px;
+  }
+
+  .strength-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+
+  .strength-header h2 {
+    font-size: 18px;
+    color: var(--text-bright);
+  }
+
+  .strength-score {
+    font-size: 36px;
+    font-weight: 800;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .strength-bar {
+    width: 100%;
+    height: 12px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 15px;
+  }
+
+  .strength-fill {
+    height: 100%;
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    transition: width 1s ease;
+  }
+
+  .strength-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+  }
+
+  .stat-chip {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 12px 15px;
+    text-align: center;
+  }
+
+  .stat-chip .num {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--accent2);
+  }
+
+  .stat-chip .label {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Grid layout */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 25px;
+    margin-bottom: 25px;
+  }
+
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+    .container { padding: 15px; }
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  .card-header {
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--card-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .card-header h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-bright);
+  }
+
+  .card-header .badge {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: rgba(108, 92, 231, 0.15);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .card-body {
+    padding: 18px 22px;
+    max-height: 450px;
+    overflow-y: auto;
+  }
+
+  .card-body::-webkit-scrollbar { width: 4px; }
+  .card-body::-webkit-scrollbar-thumb { background: var(--card-border); border-radius: 2px; }
+
+  /* Activity Feed */
+  .activity-item {
+    display: flex;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+
+  .activity-item:last-child { border-bottom: none; }
+
+  .activity-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+
+  .activity-icon.reply { background: rgba(108, 92, 231, 0.15); }
+  .activity-icon.learn { background: rgba(0, 206, 201, 0.15); }
+  .activity-icon.sync { background: rgba(253, 203, 110, 0.15); }
+  .activity-icon.youtube { background: rgba(214, 48, 49, 0.15); }
+
+  .activity-info { flex: 1; min-width: 0; }
+
+  .activity-info .title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 3px;
+  }
+
+  .activity-info .detail {
+    font-size: 11px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .activity-info .time {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  /* Knowledge Section */
+  .knowledge-section {
+    margin-bottom: 10px;
+  }
+
+  .knowledge-section h4 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+
+  .knowledge-list {
+    list-style: none;
+  }
+
+  .knowledge-list li {
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.02);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .knowledge-list li strong {
+    color: var(--text);
+  }
+
+  /* Storage bars */
+  .storage-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+
+  .storage-item .name {
+    font-size: 13px;
+    color: var(--text);
+    flex: 1;
+  }
+
+  .storage-item .size {
+    font-size: 12px;
+    color: var(--accent2);
+    font-weight: 600;
+    margin-left: 10px;
+  }
+
+  .storage-item .modified {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-left: 15px;
+    min-width: 120px;
+    text-align: right;
+  }
+
+  /* System Prompt Card */
+  .system-prompt {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    font-family: 'Consolas', 'Monaco', monospace;
+    background: rgba(0,0,0,0.3);
+    padding: 15px;
+    border-radius: 8px;
+    max-height: 350px;
+    overflow-y: auto;
+  }
+
+  /* Today summary cards */
+  .today-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 15px;
+  }
+
+  .today-card {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 12px;
+    padding: 15px;
+  }
+
+  .today-card .source-name {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    margin-bottom: 5px;
+  }
+
+  .today-card .source-count {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-bright);
+  }
+
+  .today-card .source-detail {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 3px;
+  }
+
+  /* Toggle switch */
+  .toggle-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .toggle {
+    width: 44px;
+    height: 24px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 12px;
+    cursor: pointer;
+    position: relative;
+    transition: background 0.3s;
+    border: none;
+  }
+
+  .toggle.active { background: var(--green); }
+
+  .toggle::after {
+    content: '';
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    background: white;
+    border-radius: 50%;
+    top: 3px;
+    left: 3px;
+    transition: transform 0.3s;
+  }
+
+  .toggle.active::after { transform: translateX(20px); }
+
+  .toggle-label {
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+
+  .refresh-time {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  /* Full width card */
+  .full-width { grid-column: 1 / -1; }
+
+  .tab-bar {
+    display: flex;
+    gap: 5px;
+    padding: 0 22px;
+    border-bottom: 1px solid var(--card-border);
+  }
+
+  .tab-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 12px;
+    padding: 10px 14px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .empty-state {
+    text-align: center;
+    padding: 30px;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  .auto-reply-toggle {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo">DK</div>
+    <h1>
+      Digital Ketu
+      <span>AI Twin - Own Knitted Blank Wears</span>
+    </h1>
+  </div>
+  <div style="display:flex;align-items:center;gap:15px;">
+    <div class="auto-reply-toggle">
+      <span class="toggle-label">Auto-Reply</span>
+      <button class="toggle" id="autoReplyToggle" onclick="toggleAutoReply()"></button>
+    </div>
+    <div class="status-badge online" id="statusBadge">
+      <div class="pulse" id="statusPulse"></div>
+      <span id="statusText">Online</span>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Strength Meter -->
+  <div class="strength-section">
+    <div class="strength-header">
+      <h2>Knowledge Strength</h2>
+      <div class="strength-score" id="strengthScore">0%</div>
+    </div>
+    <div class="strength-bar">
+      <div class="strength-fill" id="strengthFill" style="width:0%"></div>
+    </div>
+    <div class="strength-stats" id="strengthStats"></div>
+  </div>
+
+  <!-- Today Summary -->
+  <div style="margin-bottom:25px;">
+    <h3 style="font-size:15px;color:var(--text-bright);margin-bottom:12px;">
+      Today's Activity <span id="todayDate" style="font-weight:400;color:var(--text-dim);font-size:13px;"></span>
+    </h3>
+    <div class="today-grid" id="todayGrid"></div>
+  </div>
+
+  <div class="grid">
+
+    <!-- Live Activity Feed -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Live Activity Feed</h3>
+        <span class="refresh-time" id="refreshTime">Refreshing...</span>
+      </div>
+      <div class="card-body" id="activityFeed">
+        <div class="empty-state">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Knowledge Base -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Knowledge Base</h3>
+        <span class="badge" id="knowledgeBadge">Loading</span>
+      </div>
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('products')">Products</button>
+        <button class="tab-btn" onclick="switchTab('faqs')">FAQs</button>
+        <button class="tab-btn" onclick="switchTab('style')">Style</button>
+        <button class="tab-btn" onclick="switchTab('company')">Company</button>
+      </div>
+      <div class="card-body" id="knowledgeBody">
+        <div id="tab-products" class="tab-content active"></div>
+        <div id="tab-faqs" class="tab-content"></div>
+        <div id="tab-style" class="tab-content"></div>
+        <div id="tab-company" class="tab-content"></div>
+      </div>
+    </div>
+
+    <!-- Storage -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Storage</h3>
+        <span class="badge" id="storageBadge">0 KB</span>
+      </div>
+      <div class="card-body" id="storageBody">
+        <div class="empty-state">Loading...</div>
+      </div>
+    </div>
+
+    <!-- System Instructions -->
+    <div class="card">
+      <div class="card-header">
+        <h3>System Instructions (Prompt)</h3>
+        <span class="badge">AI Personality</span>
+      </div>
+      <div class="card-body">
+        <div class="system-prompt" id="systemPrompt">Loading...</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const BASE = window.location.origin;
+let autoRefreshInterval;
+
+// ---- DATA FETCHING ----
+
+async function fetchJSON(path) {
+  try {
+    const r = await fetch(BASE + path);
+    if (!r.ok) throw new Error(r.statusText);
+    return await r.json();
+  } catch (e) {
+    console.error('Fetch error:', path, e);
+    return null;
+  }
+}
+
+// ---- HEALTH CHECK ----
+
+async function checkHealth() {
+  const data = await fetchJSON('/api/health');
+  const badge = document.getElementById('statusBadge');
+  const pulse = document.getElementById('statusPulse');
+  const text = document.getElementById('statusText');
+  const toggle = document.getElementById('autoReplyToggle');
+
+  if (data && data.status === 'ok') {
+    badge.className = 'status-badge online';
+    pulse.className = 'pulse';
+    text.textContent = 'Online';
+    toggle.className = data.auto_reply ? 'toggle active' : 'toggle';
+  } else {
+    badge.className = 'status-badge offline';
+    pulse.className = 'pulse off';
+    text.textContent = 'Offline';
+  }
+}
+
+// ---- AUTO-REPLY TOGGLE ----
+
+async function toggleAutoReply() {
+  const toggle = document.getElementById('autoReplyToggle');
+  const isActive = toggle.classList.contains('active');
+  try {
+    const r = await fetch(BASE + '/api/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !isActive }),
+    });
+    const data = await r.json();
+    toggle.className = data.auto_reply ? 'toggle active' : 'toggle';
+  } catch (e) {
+    console.error('Toggle error:', e);
+  }
+}
+
+// ---- DASHBOARD ----
+
+async function loadDashboard() {
+  const data = await fetchJSON('/api/dashboard');
+  if (!data) return;
+
+  // Today summary
+  const today = data.today;
+  document.getElementById('todayDate').textContent = '- ' + today.date;
+
+  const grid = document.getElementById('todayGrid');
+  const sourceIcons = {
+    'api-reply': { icon: 'AI Replies', color: 'var(--accent)' },
+    'wwbun-sync': { icon: 'WhatsApp Sync', color: 'var(--accent2)' },
+    'whatsapp-export': { icon: 'WA Export', color: 'var(--green)' },
+    'youtube': { icon: 'YouTube', color: 'var(--red)' },
+    'catalog-sync': { icon: 'Catalog Sync', color: 'var(--orange)' },
+  };
+
+  let todayHTML = `
+    <div class="today-card">
+      <div class="source-name">Total Events</div>
+      <div class="source-count">${today.total_events}</div>
+      <div class="source-detail">${today.total_items_learned} items processed</div>
+    </div>`;
+
+  for (const [src, info] of Object.entries(today.by_source || {})) {
+    const meta = sourceIcons[src] || { icon: src, color: 'var(--text-dim)' };
+    todayHTML += `
+      <div class="today-card">
+        <div class="source-name">${meta.icon}</div>
+        <div class="source-count" style="color:${meta.color}">${info.count}</div>
+        <div class="source-detail">${info.items_learned} items | Last: ${info.last_time}</div>
+      </div>`;
+  }
+  grid.innerHTML = todayHTML;
+
+  // Activity feed
+  const feed = document.getElementById('activityFeed');
+  const entries = data.recent_activity || [];
+
+  if (entries.length === 0) {
+    feed.innerHTML = '<div class="empty-state">No activity yet today</div>';
+  } else {
+    feed.innerHTML = entries.map(e => {
+      let iconClass = 'reply';
+      let emoji = '';
+      if (e.source === 'api-reply') { iconClass = 'reply'; emoji = 'AI'; }
+      else if (e.source === 'wwbun-sync') { iconClass = 'learn'; emoji = 'WA'; }
+      else if (e.source === 'whatsapp-export') { iconClass = 'learn'; emoji = 'WA'; }
+      else if (e.source === 'youtube') { iconClass = 'youtube'; emoji = 'YT'; }
+      else if (e.source === 'catalog-sync') { iconClass = 'sync'; emoji = 'CT'; }
+
+      let title = '';
+      let detail = '';
+      const d = e.details || {};
+
+      if (e.source === 'api-reply') {
+        title = `Replied to ${d.customer_name || 'customer'}`;
+        detail = d.message_preview || '';
+      } else if (e.source === 'wwbun-sync') {
+        title = `Learned from ${d.manual_messages || 0} manual messages`;
+        detail = (d.updates_applied || []).slice(0, 2).join(', ') || 'Processing...';
+      } else if (e.source === 'whatsapp-export') {
+        title = `Learned from WA export (${d.messages_parsed || 0} msgs)`;
+        detail = (d.updates_applied || []).slice(0, 2).join(', ') || 'Processing...';
+      } else if (e.source === 'youtube') {
+        title = `Learned from YouTube`;
+        detail = d.video_title || d.video_url || '';
+      } else if (e.source === 'catalog-sync') {
+        title = `Catalog synced`;
+        detail = `${d.products_synced || 0} products updated`;
+      }
+
+      return `
+        <div class="activity-item">
+          <div class="activity-icon ${iconClass}">${emoji}</div>
+          <div class="activity-info">
+            <div class="title">${title}</div>
+            <div class="detail">${detail}</div>
+            <div class="time">${e.time}</div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  document.getElementById('refreshTime').textContent =
+    'Updated ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+}
+
+// ---- STORAGE ----
+
+async function loadStorage() {
+  const data = await fetchJSON('/api/dashboard/storage');
+  if (!data) return;
+
+  document.getElementById('storageBadge').textContent = data.total_size_kb + ' KB';
+
+  const body = document.getElementById('storageBody');
+  let html = '';
+
+  for (const [name, info] of Object.entries(data.knowledge_files || {})) {
+    if (name === 'activity_log') continue;
+    html += `
+      <div class="storage-item">
+        <span class="name">${name}.json</span>
+        <span class="size">${info.size_kb} KB</span>
+        <span class="modified">${info.modified}</span>
+      </div>`;
+  }
+
+  for (const f of data.learned_files || []) {
+    html += `
+      <div class="storage-item">
+        <span class="name">learned/${f.file}</span>
+        <span class="size">${f.size_kb} KB</span>
+        <span class="modified">${f.modified}</span>
+      </div>`;
+  }
+
+  body.innerHTML = html || '<div class="empty-state">No files</div>';
+
+  // Strength meter
+  updateStrength(data);
+}
+
+function updateStrength(storage) {
+  const products = storage.products_count || 0;
+  const faqs = storage.faqs_count || 0;
+  const patterns = storage.style_patterns_count || 0;
+  const examples = storage.example_conversations_count || 0;
+  const videos = storage.youtube_videos_processed || 0;
+  const learned = (storage.learned_files || []).length;
+
+  // Score calculation (max 100)
+  let score = 0;
+  score += Math.min(products, 25);         // max 25 from products
+  score += Math.min(faqs, 20);             // max 20 from FAQs
+  score += Math.min(patterns * 2, 15);     // max 15 from patterns
+  score += Math.min(examples * 2, 10);     // max 10 from examples
+  score += Math.min(videos * 5, 15);       // max 15 from YouTube
+  score += Math.min(learned * 5, 15);      // max 15 from learned files
+  score = Math.min(score, 100);
+
+  document.getElementById('strengthScore').textContent = score + '%';
+  document.getElementById('strengthFill').style.width = score + '%';
+
+  document.getElementById('strengthStats').innerHTML = `
+    <div class="stat-chip"><div class="num">${products}</div><div class="label">Products</div></div>
+    <div class="stat-chip"><div class="num">${faqs}</div><div class="label">FAQs</div></div>
+    <div class="stat-chip"><div class="num">${patterns}</div><div class="label">Patterns Learned</div></div>
+    <div class="stat-chip"><div class="num">${examples}</div><div class="label">Example Convos</div></div>
+    <div class="stat-chip"><div class="num">${videos}</div><div class="label">YouTube Videos</div></div>
+    <div class="stat-chip"><div class="num">${learned}</div><div class="label">Learned Files</div></div>
+  `;
+}
+
+// ---- KNOWLEDGE BASE ----
+
+async function loadKnowledge() {
+  const data = await fetchJSON('/api/knowledge');
+  if (!data) return;
+
+  const sections = Object.keys(data);
+  document.getElementById('knowledgeBadge').textContent = sections.length + ' sections';
+
+  // Products tab
+  const productsTab = document.getElementById('tab-products');
+  const catalog = (data.products && data.products.catalog) || [];
+  if (catalog.length) {
+    productsTab.innerHTML = catalog.map(p => {
+      const price = p.bulk_price
+        ? `Rs ${p.bulk_price} (bulk) / Rs ${p.sample_price} (sample)`
+        : (p.price_range || 'N/A');
+      const colors = (p.colors || []).length;
+      return `
+        <div class="knowledge-section" style="margin-bottom:12px;padding:10px;background:rgba(255,255,255,0.02);border-radius:8px;">
+          <h4 style="margin-bottom:4px;">${p.name} (${p.gsm} GSM)</h4>
+          <div style="font-size:12px;color:var(--text-dim);">
+            <strong style="color:var(--accent2)">${price}</strong><br>
+            Fabric: ${p.fabric || 'N/A'} | MOQ: ${p.moq || 10} | ${colors} colors
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // FAQs tab
+  const faqsTab = document.getElementById('tab-faqs');
+  const faqs = (data.faq && data.faq.faqs) || [];
+  faqsTab.innerHTML = faqs.map(f => `
+    <div class="knowledge-section" style="margin-bottom:10px;">
+      <div style="font-size:12px;color:var(--text-bright);margin-bottom:3px;">Q: ${f.question}</div>
+      <div style="font-size:12px;color:var(--text-dim);">A: ${f.answer}</div>
+    </div>`).join('');
+
+  // Style tab
+  const styleTab = document.getElementById('tab-style');
+  const style = data.style || {};
+  let styleHTML = '';
+
+  if (style.rules) {
+    styleHTML += '<div class="knowledge-section"><h4>Rules</h4><ul class="knowledge-list">';
+    styleHTML += style.rules.map(r => `<li>${r}</li>`).join('');
+    styleHTML += '</ul></div>';
+  }
+  if (style.avoid) {
+    styleHTML += '<div class="knowledge-section"><h4>Avoid</h4><ul class="knowledge-list">';
+    styleHTML += style.avoid.map(a => `<li>${a}</li>`).join('');
+    styleHTML += '</ul></div>';
+  }
+  if (style.example_conversations) {
+    styleHTML += '<div class="knowledge-section"><h4>Example Conversations</h4>';
+    styleHTML += style.example_conversations.map(ex =>
+      `<div style="margin-bottom:8px;padding:8px;background:rgba(0,0,0,0.2);border-radius:6px;">
+        <div style="font-size:12px;color:var(--orange);">Customer: ${ex.customer}</div>
+        <div style="font-size:12px;color:var(--green);">Ketu: ${ex.reply}</div>
+       </div>`
+    ).join('');
+    styleHTML += '</div>';
+  }
+  if (style.learned_patterns && style.learned_patterns.length) {
+    styleHTML += '<div class="knowledge-section"><h4>Learned Patterns (Auto)</h4><ul class="knowledge-list">';
+    styleHTML += style.learned_patterns.map(p =>
+      `<li>${typeof p === 'string' ? p : JSON.stringify(p)}</li>`
+    ).join('');
+    styleHTML += '</ul></div>';
+  }
+  styleTab.innerHTML = styleHTML || '<div class="empty-state">No style data</div>';
+
+  // Company tab
+  const companyTab = document.getElementById('tab-company');
+  const company = data.company || {};
+  if (company.name) {
+    companyTab.innerHTML = `
+      <div class="knowledge-section">
+        <h4>Company Info</h4>
+        <ul class="knowledge-list">
+          <li><strong>Name:</strong> ${company.name} (${company.brand})</li>
+          <li><strong>Type:</strong> ${company.business_type || 'B2B Wholesale'}</li>
+          <li><strong>Website:</strong> ${(company.websites || {}).primary || 'N/A'}</li>
+          <li><strong>WhatsApp:</strong> ${(company.contact || {}).whatsapp || 'N/A'}</li>
+          <li><strong>Factory:</strong> ${(company.locations || {}).factory ? company.locations.factory.city + ', ' + company.locations.factory.state : 'N/A'}</li>
+        </ul>
+      </div>
+      <div class="knowledge-section">
+        <h4>USP</h4>
+        <ul class="knowledge-list">
+          ${(company.usp || []).map(u => `<li>${u}</li>`).join('')}
+        </ul>
+      </div>
+      <div class="knowledge-section">
+        <h4>Payment</h4>
+        <ul class="knowledge-list">
+          <li><strong>Policy:</strong> ${(company.payment_terms || {}).policy || 'N/A'}</li>
+          <li><strong>Modes:</strong> ${((company.payment_terms || {}).modes || []).join(', ')}</li>
+        </ul>
+      </div>
+      <div class="knowledge-section">
+        <h4>Shipping</h4>
+        <ul class="knowledge-list">
+          <li><strong>Speed:</strong> ${(company.shipping || {}).dispatch_speed || 'N/A'}</li>
+          <li><strong>Delhi NCR:</strong> ${((company.shipping || {}).delivery_time || {}).delhi_ncr || 'N/A'}</li>
+          <li><strong>PAN India:</strong> ${((company.shipping || {}).delivery_time || {}).pan_india || 'N/A'}</li>
+        </ul>
+      </div>`;
+  }
+
+  // System prompt
+  loadSystemPrompt();
+}
+
+function loadSystemPrompt() {
+  // Hardcoded from engine.py — shows the actual AI personality
+  document.getElementById('systemPrompt').textContent =
+`You are Digital Ketu — the AI twin of Ketu, owner of Own Knitted Blank Wears (Sale91.com).
+
+You are NOT a chatbot. You ARE Ketu. You talk exactly like he does — Hinglish mein, confident, direct, helpful.
+
+HOW KETU TALKS:
+- Hinglish natural mix — "Ji sir, 200 GSM Rs 99 se start hota hai"
+- SHORT replies — 2-5 lines max, no essays
+- Respectful — "Ji", "Sir", "Bhai" naturally use karta hai
+- Direct pricing — kabhi "DM for price" mat bol, seedha rate bata
+- Confident — apne product pe full bharosa hai
+- Factory owner feel — "Tiruppur se direct", "apna factory hai"
+- Business-minded — bade order pe excited, better rate offer karta hai
+- Always next step — "sale91.com pe order karo" ya "WhatsApp karo"
+
+REPLY RULES:
+1. Pricing SEEDHA bata
+2. Product pucha? → Rate + GSM + quality + next step
+3. Bulk pucha? → Excited ho, discount bata
+4. Confused hai? → Simply samjha, comparison de
+5. Nahi pata? → "Ek min check karke batata hun"
+6. Emoji max 1-2
+7. End mein CTA — sale91.com ya WhatsApp
+8. Greeting → Warm response + help puch
+
++ Dynamic Knowledge Context (Products, FAQs, Style patterns loaded at runtime)`;
+}
+
+// ---- TAB SWITCHING ----
+
+function switchTab(tabName) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+
+  event.target.classList.add('active');
+  document.getElementById('tab-' + tabName).classList.add('active');
+}
+
+// ---- INIT & AUTO-REFRESH ----
+
+async function init() {
+  await Promise.all([
+    checkHealth(),
+    loadDashboard(),
+    loadStorage(),
+    loadKnowledge(),
+  ]);
+
+  // Auto-refresh every 30 seconds
+  autoRefreshInterval = setInterval(async () => {
+    await Promise.all([
+      checkHealth(),
+      loadDashboard(),
+      loadStorage(),
+    ]);
+  }, 30000);
+}
+
+init();
+</script>
+</body>
+</html>
