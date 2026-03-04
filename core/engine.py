@@ -8,6 +8,10 @@ import httpx
 from core.config import settings, KNOWLEDGE_DIR
 from core.knowledge import format_context
 from core.cost_tracker import track_api_cost
+from core.customer_memory import (
+    get_profile, update_profile, format_customer_context, reset_follow_up_flag,
+)
+from core.escalation import detect_escalation, format_escalation_notice, LEVEL_ESCALATE
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +31,9 @@ _insights_loaded = False
 # FAQ hit rate tracking
 _faq_hit_counts: dict[str, int] = {}  # question_prefix -> hit count
 _faq_hits_loaded = False
+
+# Last escalation result (per customer, for main.py to check)
+_last_escalation: dict[str, dict] = {}  # phone -> escalation result
 
 
 def _load_customer_insights_from_db():
@@ -91,10 +98,14 @@ def _load_prompt_config() -> dict:
         return {}
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(
+    customer_phone: str = "",
+    escalation_modifier: str = "",
+) -> str:
     """Build system prompt dynamically from prompt.json + knowledge context.
 
     This prompt evolves over time as Digital Ketu learns from Ketu's real messages.
+    Includes customer memory context and escalation handling when applicable.
     """
     config = _load_prompt_config()
     knowledge_context = format_context()
@@ -134,6 +145,37 @@ def _build_system_prompt() -> str:
         rule_lines = "\n".join(f"{i+1}. {r}" for i, r in enumerate(all_rules))
         sections.append(f"## REPLY RULES:\n{rule_lines}")
 
+    # Smart Suggestions rule — never push, only suggest when asked
+    sections.append(
+        "## SUGGESTION RULE:\n"
+        "- KABHI unsolicited product push mat kar. Customer jo maang raha hai wohi de.\n"
+        "- Agar customer 180 GSM regular fit maang raha hai, toh oversize mat suggest kar.\n"
+        "- Sirf TABHI suggest kar jab customer KHUD puche: 'kya recommend karoge?', 'best kaun sa hai?', 'suggest karo'\n"
+        "- Customer ki choice respect kar — unko freedom de kuch bhi kharidne ki"
+    )
+
+    # Objection Handling rule
+    sections.append(
+        "## OBJECTION HANDLING (jab customer price ya quality challenge kare):\n"
+        "- 'Mehnga hai' → 'Bhai, factory direct rate hai, koi middleman nahi. Plus biowash + no shrinkage guarantee — ye quality iss price mein aur kahi nahi milegi.'\n"
+        "- 'Competitor sasta de raha' → 'Sir, quality compare karo — 100% cotton, biowash, ready stock, dispatch within minutes. Sasta mein ye service nahi milegi.'\n"
+        "- 'Discount do' → Bulk rate bata, website pe Rs 2/pc extra off mention kar. Fake discount mat de.\n"
+        "- 'Quality kaisi hai?' → Confident bol — 'No shrinkage, no color bleeding, guaranteed. Tiruppur factory se direct.'\n"
+        "- KABHI defensive mat ho. Confident aur genuine reh. Facts bata, argue mat kar."
+    )
+
+    # Chat pattern categorization
+    sections.append(
+        "## CHAT PATTERNS (situation ke hisaab se reply style):\n"
+        "- INQUIRY: Customer product/price puch raha hai → Direct info de, short, with rate\n"
+        "- COMPARISON: Customer compare kar raha hai → Fact-based difference bata, push mat kar\n"
+        "- OBJECTION: Customer price/quality challenge kar raha → USP bata, confident reh\n"
+        "- COMPLAINT: Customer naraz hai/issue hai → Empathetic ho, Ketu sir ko connect kar\n"
+        "- CLOSING: Customer ready hai order karne ko → Website link de, payment info de, smooth karo\n"
+        "- ACKNOWLEDGMENT: Customer ne 'ok', 'thanks' bola → Reply mat kar (conversation ender)\n"
+        "- GREETING: Customer ne 'hi' bola → Warm welcome + kaise help karu"
+    )
+
     # Signature phrases — these are Ketu's real words, use them naturally
     if all_phrases:
         phrase_str = ", ".join(f'"{p}"' for p in all_phrases)
@@ -141,6 +183,16 @@ def _build_system_prompt() -> str:
 
     # Dynamic knowledge context (products, FAQs, style, etc.)
     sections.append(knowledge_context)
+
+    # Customer memory context (if returning customer)
+    if customer_phone:
+        customer_context = format_customer_context(customer_phone)
+        if customer_context:
+            sections.append(customer_context)
+
+    # Escalation modifier (if complaint/anger detected)
+    if escalation_modifier:
+        sections.append(escalation_modifier)
 
     sections.append("CRITICAL: Reply CHHOTA rakh — 1-3 lines MAX. Ketu WhatsApp pe lamba reply nahi deta. Seedha point pe aa, faaltu explanation mat de. You ARE Ketu. Natural, confident, short, helpful.\n\nIMPORTANT: KABHI fake promise mat karo. 'Ek min check karta hun', 'abhi dekhta hun' — ye mat bol kyunki tu actually check nahi kar sakta. Agar kuch nahi pata (stock, order status, custom quote, delivery date) toh honest bol: 'Bhai ye Ketu sir khud batayenge, thodi der mein reply aayega.' Robot mat ban, genuine human ban.")
 
@@ -319,6 +371,8 @@ def generate_reply(
         if customer_phone:
             _conversations[customer_phone] = messages + [{"role": "user", "content": message}]
             _conversation_timestamps[customer_phone] = time.time()
+            # Update customer profile even for enders
+            update_profile(customer_phone, customer_name, message)
         return ""  # Empty = don't send
 
     # Add current message
@@ -342,8 +396,44 @@ def generate_reply(
     # Persist to DB
     _save_customer_insights_to_db()
 
-    # Add customer context if available
-    system = _build_system_prompt()
+    # Update customer memory profile
+    if customer_phone:
+        update_profile(customer_phone, customer_name, message)
+        # Reset follow-up flag since customer is messaging again
+        reset_follow_up_flag(customer_phone)
+
+    # Detect escalation (complaints, anger, frustration)
+    escalation = detect_escalation(message, messages)
+    if customer_phone:
+        _last_escalation[customer_phone] = escalation
+    escalation_modifier = escalation.get("prompt_modifier", "")
+
+    # Log escalation for Ketu's attention
+    if escalation["level"] == LEVEL_ESCALATE:
+        notice = format_escalation_notice(
+            customer_phone, customer_name, message, escalation["reason"]
+        )
+        logger.warning(f"[ESCALATION] {notice}")
+        # Log to activity so it shows on dashboard
+        from core.activity_log import log_activity
+        log_activity(
+            source="escalation",
+            action="flagged",
+            details={
+                "customer_phone": customer_phone[-4:] if customer_phone else "unknown",
+                "customer_name": customer_name,
+                "reason": escalation["reason"],
+                "level": escalation["level"],
+                "message_preview": message[:100],
+            },
+            items_count=1,
+        )
+
+    # Build system prompt with customer context and escalation modifier
+    system = _build_system_prompt(
+        customer_phone=customer_phone,
+        escalation_modifier=escalation_modifier,
+    )
     if customer_name:
         system += f"\n\nCustomer name: {customer_name}"
 
@@ -462,3 +552,8 @@ def get_faq_hit_rates() -> list[dict]:
         key=lambda x: x["hits"],
         reverse=True,
     )
+
+
+def get_last_escalation(phone: str) -> dict:
+    """Get the last escalation result for a customer phone."""
+    return _last_escalation.get(phone, {"level": "none", "reason": "", "prompt_modifier": ""})

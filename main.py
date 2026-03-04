@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from core.config import settings, init_knowledge_dir, KNOWLEDGE_DIR
-from core.engine import generate_reply, get_customer_insights, get_faq_hit_rates, invalidate_ender_cache
+from core.engine import generate_reply, get_customer_insights, get_faq_hit_rates, invalidate_ender_cache, get_last_escalation
 from core.knowledge import load_knowledge, invalidate_cache
 from core.activity_log import log_activity, get_activity_log, get_today_summary, get_storage_stats
 from integrations.whatsapp.webhook import router as whatsapp_router
@@ -52,6 +52,13 @@ from core.conversation_log import (
     get_last_ai_reply,
     init_conversation_log_table,
 )
+from core.customer_memory import (
+    get_profile as get_customer_profile,
+    get_all_profiles_summary,
+    _init_customer_table,
+)
+from core.escalation import LEVEL_ESCALATE
+from core.followup import get_pending_followups, execute_followup, get_followup_stats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,6 +80,7 @@ async def lifespan(app: FastAPI):
         if db_ready:
             seed_from_json_files(KNOWLEDGE_DIR)
             init_conversation_log_table()
+            _init_customer_table()
             logger.info("PostgreSQL ready — data persists across deploys")
         else:
             logger.info("No DATABASE_URL — running in JSON-only mode")
@@ -189,6 +197,8 @@ class ReplyResponse(BaseModel):
     reply: str
     status: str = "ok"
     should_reply: bool = True
+    escalation_level: str = "none"
+    escalation_reason: str = ""
 
 
 @app.post("/api/reply", response_model=ReplyResponse)
@@ -222,6 +232,11 @@ async def api_reply(req: ReplyRequest):
         )
         return ReplyResponse(reply="", status="skipped", should_reply=False)
 
+    # Check if escalation was detected
+    escalation = get_last_escalation(req.customer_phone) if req.customer_phone else {}
+    esc_level = escalation.get("level", "none")
+    esc_reason = escalation.get("reason", "")
+
     log_activity(
         source="api-reply",
         action="replied",
@@ -230,10 +245,16 @@ async def api_reply(req: ReplyRequest):
             "customer_name": req.customer_name or "unknown",
             "message_preview": req.message[:80],
             "reply_preview": reply[:80],
+            "escalation_level": esc_level,
+            "escalation_reason": esc_reason,
         },
         items_count=1,
     )
-    return ReplyResponse(reply=reply)
+    return ReplyResponse(
+        reply=reply,
+        escalation_level=esc_level,
+        escalation_reason=esc_reason,
+    )
 
 
 # --- Auto-Reply Toggle ---
@@ -245,16 +266,43 @@ class ToggleRequest(BaseModel):
 
 @app.post("/api/toggle")
 async def toggle_auto_reply(req: ToggleRequest):
-    """Enable/disable auto-reply."""
+    """Enable/disable auto-reply. Also auto-enables follow-up when turning on."""
     settings.auto_reply_enabled = req.enabled
+    # Auto-enable followup when auto-reply turns on
+    if req.enabled:
+        settings.followup_enabled = True
     status = "enabled" if req.enabled else "disabled"
-    logger.info(f"Auto-reply {status}")
-    return {"status": status, "auto_reply": settings.auto_reply_enabled}
+    logger.info(f"Auto-reply {status} (followup: {'on' if settings.followup_enabled else 'off'})")
+    return {
+        "status": status,
+        "auto_reply": settings.auto_reply_enabled,
+        "followup_enabled": settings.followup_enabled,
+    }
 
 
 @app.get("/api/toggle")
 async def get_toggle_status():
-    return {"auto_reply": settings.auto_reply_enabled}
+    return {
+        "auto_reply": settings.auto_reply_enabled,
+        "followup_enabled": settings.followup_enabled,
+    }
+
+
+# --- Follow-up Toggle (independent control) ---
+
+
+@app.post("/api/followup/toggle")
+async def toggle_followup(req: ToggleRequest):
+    """Enable/disable follow-up independently of auto-reply."""
+    settings.followup_enabled = req.enabled
+    status = "enabled" if req.enabled else "disabled"
+    logger.info(f"Follow-up {status}")
+    return {"followup_enabled": settings.followup_enabled}
+
+
+@app.get("/api/followup/toggle")
+async def get_followup_toggle_status():
+    return {"followup_enabled": settings.followup_enabled}
 
 
 # --- Knowledge Management ---
@@ -1196,6 +1244,91 @@ async def customer_insights():
 async def faq_hit_rates():
     """FAQ hit rates — which FAQs are used most in replies."""
     return {"faq_hits": get_faq_hit_rates()}
+
+
+# --- Customer Memory ---
+
+
+@app.get("/api/customer/{phone}")
+async def get_customer(phone: str):
+    """Get a customer's memory profile — interests, stage, preferences."""
+    profile = get_customer_profile(phone)
+    return {"phone": phone, "profile": profile}
+
+
+@app.get("/api/customers/summary")
+async def customers_summary():
+    """Customer memory summary — total customers, by buying stage."""
+    return get_all_profiles_summary()
+
+
+# --- Follow-up Intelligence ---
+
+
+@app.get("/api/followup/pending")
+async def pending_followups():
+    """Get customers who need a follow-up (interested but didn't order).
+
+    Only shows when auto_reply AND followup are both enabled.
+    These are pre-generated simple messages — no AI cost.
+    """
+    return {"followups": get_pending_followups()}
+
+
+@app.post("/api/followup/send/{phone}")
+async def send_followup(phone: str):
+    """Execute follow-up for a specific customer.
+
+    Returns the message to send. The actual WhatsApp send is wwbun's job.
+    Marks the customer so they don't get another follow-up.
+    """
+    result = execute_followup(phone)
+    if result["status"] == "sent":
+        log_activity(
+            source="followup",
+            action="sent",
+            details={
+                "customer_phone": phone[-4:] if phone else "unknown",
+                "message": result.get("message", ""),
+            },
+            items_count=1,
+        )
+    return result
+
+
+@app.get("/api/followup/stats")
+async def followup_stats_endpoint():
+    """Follow-up intelligence stats for dashboard."""
+    return get_followup_stats()
+
+
+@app.post("/api/followup/send-all")
+async def send_all_followups():
+    """Send follow-ups to all pending customers at once.
+
+    Returns list of messages to send. wwbun handles actual delivery.
+    No AI cost — just template messages.
+    """
+    pending = get_pending_followups()
+    results = []
+    for customer in pending:
+        result = execute_followup(customer["phone"])
+        results.append(result)
+        if result["status"] == "sent":
+            log_activity(
+                source="followup",
+                action="sent",
+                details={
+                    "customer_phone": customer["phone"][-4:] if customer["phone"] else "unknown",
+                    "message": result.get("message", ""),
+                },
+                items_count=1,
+            )
+    return {
+        "total_sent": len([r for r in results if r["status"] == "sent"]),
+        "already_sent": len([r for r in results if r["status"] == "already_sent"]),
+        "results": results,
+    }
 
 
 # --- Knowledge Backup/Export ---
