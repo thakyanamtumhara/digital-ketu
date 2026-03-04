@@ -380,6 +380,13 @@ def apply_knowledge_updates(updates: dict) -> dict:
                 })
                 applied.append(f"New FAQ: {q}")
 
+        # DB first, then file
+        try:
+            from core.database import is_db_available, save_knowledge
+            if is_db_available():
+                save_knowledge("faq", faq_data)
+        except Exception:
+            pass
         faq_path = KNOWLEDGE_DIR / "faq.json"
         with open(faq_path, "w", encoding="utf-8") as f:
             json.dump(faq_data, f, indent=2, ensure_ascii=False)
@@ -409,6 +416,13 @@ def apply_knowledge_updates(updates: dict) -> dict:
             style_data.setdefault("learned_patterns", []).append(patterns)
             applied.append("New style patterns learned")
 
+        # DB first, then file
+        try:
+            from core.database import is_db_available, save_knowledge
+            if is_db_available():
+                save_knowledge("style", style_data)
+        except Exception:
+            pass
         style_path = KNOWLEDGE_DIR / "style.json"
         with open(style_path, "w", encoding="utf-8") as f:
             json.dump(style_data, f, indent=2, ensure_ascii=False)
@@ -490,6 +504,14 @@ def apply_knowledge_updates(updates: dict) -> dict:
                         style_data.setdefault("example_conversations", []).append(ex)
                         applied.append(f"New example: {ex['customer'][:40]}...")
 
+                # DB first, then file
+                try:
+                    from core.database import is_db_available, save_knowledge
+                    if is_db_available():
+                        save_knowledge("style", style_data)
+                except Exception:
+                    pass
+                style_path = KNOWLEDGE_DIR / "style.json"
                 with open(style_path, "w", encoding="utf-8") as f:
                     json.dump(style_data, f, indent=2, ensure_ascii=False)
 
@@ -502,6 +524,13 @@ def apply_knowledge_updates(updates: dict) -> dict:
             })
             prompt_data["version"] = prompt_data.get("version", 1) + 1
 
+            # DB first, then file
+            try:
+                from core.database import is_db_available, save_knowledge
+                if is_db_available():
+                    save_knowledge("prompt", prompt_data)
+            except Exception:
+                pass
             with open(PROMPT_FILE, "w", encoding="utf-8") as f:
                 json.dump(prompt_data, f, indent=2, ensure_ascii=False)
 
@@ -510,32 +539,12 @@ def apply_knowledge_updates(updates: dict) -> dict:
         except Exception as e:
             logger.error(f"Prompt evolution error: {e}")
 
-    # Persist to DB (primary) + GitHub (backup)
+    # Persist to GitHub (backup)
     if applied:
-        _save_knowledge_to_db_direct()
         from core.git_persist import persist_knowledge_files
         persist_knowledge_files(source="knowledge-update")
 
     return {"applied": applied, "count": len(applied)}
 
 
-def _save_knowledge_to_db_direct():
-    """Save all knowledge JSON files to DB directly (DB-first persistence).
-
-    Reads each file that was just written by apply_knowledge_updates() and
-    saves to PostgreSQL immediately. This ensures DB always has the latest data,
-    even if the process is killed before the next step.
-    """
-    from core.database import is_db_available, save_knowledge
-    if not is_db_available():
-        return
-
-    for name in ["faq", "style", "prompt", "products", "company"]:
-        path = KNOWLEDGE_DIR / f"{name}.json"
-        if path.exists():
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                save_knowledge(name, data)
-            except Exception as e:
-                logger.error(f"DB sync {name} failed: {e}")
+    # _save_knowledge_to_db_direct removed — each section now saves to DB immediately

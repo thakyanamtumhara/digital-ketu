@@ -113,14 +113,14 @@ def _save_processed_video(video_id: str):
 
     data = {"video_ids": list(processed)}
 
-    # Save to JSON file
-    with open(_processed_videos_file, "w") as f:
-        json.dump(data, f)
-
-    # Save to DB (primary)
+    # DB first (primary — survives deploys)
     from core.database import is_db_available, kv_set
     if is_db_available():
         kv_set("_processed_videos", data)
+
+    # Then JSON file
+    with open(_processed_videos_file, "w") as f:
+        json.dump(data, f)
 
     # Persist to GitHub (backup)
     from core.git_persist import persist_single_file
@@ -151,13 +151,14 @@ def _load_backfill_state() -> dict:
 def _save_backfill_state(state: dict):
     """Save backfill state to DB + JSON + GitHub."""
     LEARNED_DIR.mkdir(exist_ok=True)
-    with open(_backfill_state_file, "w") as f:
-        json.dump(state, f)
 
-    # Save to DB (primary)
+    # DB first (primary — survives deploys)
     from core.database import is_db_available, kv_set
     if is_db_available():
         kv_set("_backfill_state", state)
+
+    with open(_backfill_state_file, "w") as f:
+        json.dump(state, f)
 
     # Persist to GitHub (backup)
     from core.git_persist import persist_single_file
@@ -317,7 +318,7 @@ async def backfill_youtube_channel(batch_size: int | None = None) -> dict:
 
         except Exception as e:
             logger.error(f"Backfill: Error processing {title}: {e}")
-            _save_processed_video(video_id)  # Mark as processed to avoid retry loop
+            # Don't mark as processed — will retry on next backfill run
 
     remaining = len(pending) - len(batch)
     logger.info(f"Backfill: Processed {len(batch)} videos, {remaining} remaining")

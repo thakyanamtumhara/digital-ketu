@@ -82,6 +82,14 @@ async def handle_indiamart_lead(request: Request):
             customer_name=lead_info["name"],
         )
 
+        # Log conversation for review/correction (same as WhatsApp)
+        try:
+            from core.conversation_log import log_conversation
+            customer_msg = lead_info["message"] or lead_info["product"] or "IndiaMART inquiry"
+            log_conversation(phone, lead_info["name"], customer_msg, reply)
+        except Exception as e:
+            logger.warning(f"Failed to log IndiaMART conversation: {e}")
+
         # Send via WhatsApp (template first for new contacts, then text)
         await send_text_message(to=phone, message=reply)
         logger.info(f"IndiaMART lead reply sent to {phone}")

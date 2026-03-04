@@ -11,6 +11,35 @@ router = APIRouter(prefix="/api/youtube", tags=["youtube"])
 
 # Track replied comment IDs to avoid duplicates
 _replied_comments: set[str] = set()
+_replied_loaded = False
+
+
+def _load_replied_comments():
+    """Load replied comment IDs from DB on first access."""
+    global _replied_comments, _replied_loaded
+    if _replied_loaded:
+        return
+    _replied_loaded = True
+    try:
+        from core.database import is_db_available, kv_get
+        if is_db_available():
+            data = kv_get("youtube_replied_comments")
+            if data and isinstance(data, dict):
+                _replied_comments.update(data.get("ids", []))
+    except Exception:
+        pass
+
+
+def _save_replied_comments():
+    """Persist replied comment IDs to DB."""
+    try:
+        from core.database import is_db_available, kv_set
+        if is_db_available():
+            # Keep last 500 to avoid unbounded growth
+            ids = list(_replied_comments)[-500:]
+            kv_set("youtube_replied_comments", {"ids": ids})
+    except Exception:
+        pass
 
 YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3"
 
@@ -96,6 +125,7 @@ async def check_and_reply_comments():
             author = snippet["authorDisplayName"]
 
             # Skip if already replied
+            _load_replied_comments()
             if comment_id in _replied_comments:
                 continue
 
@@ -117,6 +147,7 @@ async def check_and_reply_comments():
             await reply_to_comment(comment_id, reply)
 
             _replied_comments.add(comment_id)
+            _save_replied_comments()
             replied.append({
                 "video": video_title,
                 "comment": comment_text[:50],

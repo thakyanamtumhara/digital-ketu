@@ -360,7 +360,7 @@ def kv_get(key: str, default=None):
 def cleanup_old_activity_logs(days: int = 90) -> int:
     """Delete activity log entries older than N days. Returns count deleted."""
     rows = _execute(
-        "DELETE FROM activity_log WHERE timestamp < NOW() - INTERVAL '%s days' RETURNING id",
+        "DELETE FROM activity_log WHERE timestamp < NOW() - make_interval(days => %s) RETURNING id",
         (days,),
         fetch=True,
     )
@@ -376,9 +376,9 @@ def cleanup_old_learned_files(days: int = 90, keep_patterns: list[str] | None = 
     keep_patterns: list of LIKE patterns to keep (e.g., ['catalog_%'] for permanent files).
     Returns count deleted.
     """
-    keep_patterns = keep_patterns or ["catalog_%"]
+    keep_patterns = keep_patterns or ["catalog_%", "yt_%"]
 
-    query = "DELETE FROM learned_files WHERE updated_at < NOW() - INTERVAL '%s days'"
+    query = "DELETE FROM learned_files WHERE updated_at < NOW() - make_interval(days => %s)"
     params: list = [days]
 
     for pattern in keep_patterns:

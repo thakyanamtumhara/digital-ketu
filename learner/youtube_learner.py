@@ -105,11 +105,7 @@ def process_video(video_url: str, video_title: str = "") -> dict:
     file_data = {"video_url": video_url, "title": video_title, "knowledge": knowledge}
     file_content = json.dumps(file_data, indent=2, ensure_ascii=False)
 
-    output_path = learned_dir / f"yt_{filename}.json"
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(file_content)
-
-    # Save to DB (primary — survives deploys)
+    # Save to DB first (primary — survives deploys)
     from core.database import is_db_available, save_learned_file
     if is_db_available():
         save_learned_file(
@@ -117,6 +113,10 @@ def process_video(video_url: str, video_title: str = "") -> dict:
             file_content,
             metadata={"video_url": video_url, "title": video_title},
         )
+
+    output_path = learned_dir / f"yt_{filename}.json"
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(file_content)
 
     # Auto-persist YouTube learned file to GitHub (backup)
     from core.git_persist import persist_single_file
