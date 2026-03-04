@@ -102,16 +102,23 @@ def process_video(video_url: str, video_title: str = "") -> dict:
     video_id_match = re.search(r'(?:v=|/)([a-zA-Z0-9_-]{11})', video_url)
     filename = video_id_match.group(1) if video_id_match else "unknown"
 
+    file_data = {"video_url": video_url, "title": video_title, "knowledge": knowledge}
+    file_content = json.dumps(file_data, indent=2, ensure_ascii=False)
+
     output_path = learned_dir / f"yt_{filename}.json"
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {"video_url": video_url, "title": video_title, "knowledge": knowledge},
-            f,
-            indent=2,
-            ensure_ascii=False,
+        f.write(file_content)
+
+    # Save to DB (primary — survives deploys)
+    from core.database import is_db_available, save_learned_file
+    if is_db_available():
+        save_learned_file(
+            f"yt_{filename}.json",
+            file_content,
+            metadata={"video_url": video_url, "title": video_title},
         )
 
-    # Auto-persist YouTube learned file to GitHub
+    # Auto-persist YouTube learned file to GitHub (backup)
     from core.git_persist import persist_single_file
     persist_single_file(
         f"knowledge/learned/yt_{filename}.json",

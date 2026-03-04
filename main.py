@@ -418,14 +418,41 @@ async def youtube_backfill_status():
 
 @app.get("/api/learned-files")
 async def list_learned_files_endpoint():
-    """List all learned files (YouTube videos, WhatsApp exports, etc.)."""
-    from core.database import is_db_available, list_learned_files, count_learned_files
+    """List all learned files with rich details (title, key_points for YT videos)."""
+    import json as _json
+    from core.database import is_db_available, load_learned_file
+
+    def _parse_yt_details(filename: str, content: str | None) -> dict:
+        """Extract title and key_points from a YouTube learned file."""
+        info = {"file": filename}
+        if not content:
+            return info
+        try:
+            data = _json.loads(content)
+            info["title"] = data.get("title", "")
+            info["video_url"] = data.get("video_url", "")
+            knowledge = data.get("knowledge", {})
+            info["key_points"] = knowledge.get("key_points", [])
+            info["has_product_info"] = bool(knowledge.get("product_info"))
+            info["has_pricing"] = bool(knowledge.get("pricing"))
+            info["has_faqs"] = bool(knowledge.get("faqs_covered"))
+        except Exception:
+            pass
+        return info
+
+    # Try DB first
     if is_db_available():
-        files = list_learned_files()
-        return {
-            "total": count_learned_files(),
-            "files": files,
-        }
+        from core.database import list_learned_files, count_learned_files
+        raw_files = list_learned_files()
+        files = []
+        for f in raw_files:
+            fname = f.get("file", "")
+            entry = {**f}
+            if fname.startswith("yt_"):
+                content = load_learned_file(fname)
+                entry.update(_parse_yt_details(fname, content))
+            files.append(entry)
+        return {"total": count_learned_files(), "files": files}
 
     # Fallback to local files
     learned_dir = KNOWLEDGE_DIR / "learned"
@@ -435,7 +462,13 @@ async def list_learned_files_endpoint():
     files = []
     for f in sorted(learned_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
         if not f.name.startswith("_"):
-            files.append({"file": f.name, "size": f.stat().st_size})
+            entry = {"file": f.name, "size": f.stat().st_size}
+            if f.name.startswith("yt_"):
+                try:
+                    entry.update(_parse_yt_details(f.name, f.read_text(encoding="utf-8")))
+                except Exception:
+                    pass
+            files.append(entry)
     return {"total": len(files), "files": files}
 
 

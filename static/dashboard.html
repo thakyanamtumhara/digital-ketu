@@ -1285,14 +1285,34 @@ async function loadYouTubeVideos() {
   const ytFiles = files.filter(f => f.file && f.file.startsWith('yt_'));
 
   if (ytFiles.length) {
-    html += `<div class="knowledge-section"><h4 style="margin-bottom:8px;">Learned Videos (${ytFiles.length})</h4>`;
+    html += `<div class="knowledge-section"><h4 style="margin-bottom:10px;">Learned Videos (${ytFiles.length})</h4>`;
     html += ytFiles.slice(0, 50).map(f => {
       const videoId = f.file.replace('yt_', '').replace('.json', '');
-      const updated = f.updated_at ? new Date(f.updated_at).toLocaleDateString('en-IN', {day:'numeric',month:'short',year:'numeric'}) : '';
-      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;margin-bottom:4px;background:rgba(255,255,255,0.02);border-radius:6px;font-size:12px;">
-        <span style="background:rgba(214,48,49,0.15);color:var(--red);padding:3px 8px;border-radius:4px;font-weight:600;min-width:24px;text-align:center;">YT</span>
-        <span style="color:var(--text-bright);flex:1;">${videoId}</span>
-        <span style="color:var(--text-dim);font-size:11px;">${updated}</span>
+      const title = f.title || 'Untitled';
+      const updated = f.updated_at ? new Date(f.updated_at).toLocaleDateString('en-IN', {day:'numeric',month:'short'}) : '';
+      const keyPoints = (f.key_points || []).slice(0, 3);
+
+      // Tags for what was extracted
+      let tags = '';
+      if (f.has_product_info) tags += '<span style="background:rgba(0,206,201,0.12);color:var(--accent2);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">Product</span>';
+      if (f.has_pricing) tags += '<span style="background:rgba(0,184,148,0.12);color:var(--green);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">Pricing</span>';
+      if (f.has_faqs) tags += '<span style="background:rgba(253,203,110,0.12);color:var(--orange);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">FAQ</span>';
+
+      let pointsHTML = '';
+      if (keyPoints.length) {
+        pointsHTML = '<div style="margin-top:5px;padding-left:4px;">' +
+          keyPoints.map(p => `<div style="font-size:11px;color:var(--text-dim);padding:1px 0;">- ${p}</div>`).join('') +
+          '</div>';
+      }
+
+      return `<div style="padding:10px 12px;margin-bottom:6px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          <span style="background:rgba(214,48,49,0.15);color:var(--red);padding:3px 8px;border-radius:4px;font-weight:600;font-size:11px;">YT</span>
+          <span style="color:var(--text-bright);font-size:12px;font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${title}</span>
+          <span style="color:var(--text-dim);font-size:10px;white-space:nowrap;">${updated}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${tags || '<span style="font-size:10px;color:var(--text-dim);">Processing...</span>'}</div>
+        ${pointsHTML}
       </div>`;
     }).join('');
     if (ytFiles.length > 50) {
