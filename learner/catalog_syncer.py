@@ -151,16 +151,25 @@ async def sync_catalog() -> dict:
     # Convert to knowledge format
     knowledge_products = convert_catalog_to_knowledge(catalog_data)
 
-    # Load existing products for diff comparison
+    # Load existing products for diff comparison — DB first, file fallback
     products_path = KNOWLEDGE_DIR / "products.json"
     old_products = []
     try:
-        if products_path.exists():
-            with open(products_path, "r", encoding="utf-8") as f:
-                old_data = json.load(f)
+        from core.database import is_db_available, load_knowledge_from_db
+        if is_db_available():
+            old_data = load_knowledge_from_db("products")
+            if old_data:
                 old_products = old_data.get("catalog", [])
     except Exception:
         pass
+    if not old_products:
+        try:
+            if products_path.exists():
+                with open(products_path, "r", encoding="utf-8") as f:
+                    old_data = json.load(f)
+                    old_products = old_data.get("catalog", [])
+        except Exception:
+            pass
 
     # Compute diff
     diff = _compute_catalog_diff(old_products, knowledge_products["catalog"])
@@ -168,14 +177,13 @@ async def sync_catalog() -> dict:
     # Count products
     product_count = len(knowledge_products["catalog"])
 
-    # Save to products.json
-    with open(products_path, "w", encoding="utf-8") as f:
-        json.dump(knowledge_products, f, indent=2, ensure_ascii=False)
-
-    # Save to DB
+    # Save to DB first (survives deploys), then file
     from core.database import is_db_available, save_knowledge, save_learned_file
     if is_db_available():
         save_knowledge("products", knowledge_products)
+
+    with open(products_path, "w", encoding="utf-8") as f:
+        json.dump(knowledge_products, f, indent=2, ensure_ascii=False)
 
     # Also fetch and save llms-full.txt for reference
     llms_text = await fetch_catalog_llms_text()

@@ -29,6 +29,38 @@ _conversation_buffer: deque[dict] = deque(maxlen=50)
 _LEARN_EVERY_N = 10  # Analyze after every 10 conversations
 _conversation_count = 0
 _learning_lock = threading.Lock()
+_buffer_loaded = False
+
+
+def _load_buffer_from_db():
+    """Restore conversation buffer from DB on first call (survives deploys)."""
+    global _conversation_buffer, _conversation_count, _buffer_loaded
+    if _buffer_loaded:
+        return
+    _buffer_loaded = True
+    try:
+        from core.database import is_db_available, kv_get
+        if is_db_available():
+            data = kv_get("conversation_buffer")
+            if data and isinstance(data, dict):
+                for entry in data.get("buffer", []):
+                    _conversation_buffer.append(entry)
+                _conversation_count = data.get("count", 0)
+    except Exception as e:
+        logger.warning(f"[Buffer] DB load failed: {e}")
+
+
+def _save_buffer_to_db():
+    """Persist conversation buffer to DB."""
+    try:
+        from core.database import is_db_available, kv_set
+        if is_db_available():
+            kv_set("conversation_buffer", {
+                "buffer": list(_conversation_buffer),
+                "count": _conversation_count,
+            })
+    except Exception as e:
+        logger.warning(f"[Buffer] DB save failed: {e}")
 
 
 def buffer_conversation(
@@ -44,6 +76,8 @@ def buffer_conversation(
     """
     global _conversation_count
 
+    _load_buffer_from_db()
+
     _conversation_buffer.append({
         "customer": customer_message,
         "reply": ai_reply,
@@ -52,6 +86,8 @@ def buffer_conversation(
         "time": datetime.now(IST).strftime("%I:%M %p"),
     })
     _conversation_count += 1
+
+    _save_buffer_to_db()
 
     # Trigger batch learning every N conversations
     if _conversation_count >= _LEARN_EVERY_N:
@@ -183,13 +219,21 @@ def learn_from_correction(
     """
     client = Anthropic(api_key=settings.anthropic_api_key)
 
-    # Load current prompt context
-    prompt_path = KNOWLEDGE_DIR / "prompt.json"
+    # Load current prompt context — DB first (survives deploys), file fallback
+    prompt_data = None
     try:
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            prompt_data = json.load(f)
+        from core.database import is_db_available, load_knowledge_from_db
+        if is_db_available():
+            prompt_data = load_knowledge_from_db("prompt")
     except Exception:
-        prompt_data = {}
+        pass
+    if not prompt_data:
+        prompt_path = KNOWLEDGE_DIR / "prompt.json"
+        try:
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                prompt_data = json.load(f)
+        except Exception:
+            prompt_data = {}
 
     current_traits = prompt_data.get("personality_traits", []) + prompt_data.get("evolved_traits", [])
     current_rules = prompt_data.get("reply_rules", []) + prompt_data.get("evolved_rules", [])
@@ -316,13 +360,21 @@ async def learn_from_voice_note(
 
     context_line = f"\nContext: {context}" if context else ""
 
-    # Load current knowledge for dedup
-    prompt_path = KNOWLEDGE_DIR / "prompt.json"
+    # Load current knowledge for dedup — DB first, file fallback
+    prompt_data = None
     try:
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            prompt_data = json.load(f)
+        from core.database import is_db_available, load_knowledge_from_db
+        if is_db_available():
+            prompt_data = load_knowledge_from_db("prompt")
     except Exception:
-        prompt_data = {}
+        pass
+    if not prompt_data:
+        prompt_path = KNOWLEDGE_DIR / "prompt.json"
+        try:
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                prompt_data = json.load(f)
+        except Exception:
+            prompt_data = {}
 
     current_phrases = prompt_data.get("signature_phrases", []) + prompt_data.get("evolved_phrases", [])
 

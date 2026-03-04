@@ -25,6 +25,7 @@ _insights_loaded = False
 
 # FAQ hit rate tracking
 _faq_hit_counts: dict[str, int] = {}  # question_prefix -> hit count
+_faq_hits_loaded = False
 
 
 def _load_customer_insights_from_db():
@@ -253,10 +254,34 @@ def generate_reply(
     return "Ji sir, ek chhota sa technical issue aa gaya. Thodi der mein reply karta hun. Aap sale91.com pe check kar sakte hain."
 
 
+def _load_faq_hits_from_db():
+    """Load FAQ hit counts from DB on first access."""
+    global _faq_hit_counts, _faq_hits_loaded
+    if _faq_hits_loaded:
+        return
+    _faq_hits_loaded = True
+    try:
+        from core.database import is_db_available, kv_get
+        if is_db_available():
+            data = kv_get("faq_hit_counts")
+            if data and isinstance(data, dict):
+                _faq_hit_counts.update(data)
+    except Exception as e:
+        logger.warning(f"[FAQ Hits] DB load failed: {e}")
+
+
 def track_faq_hit(question: str):
     """Track that a FAQ was used in a reply."""
+    _load_faq_hits_from_db()
     key = question[:60]
     _faq_hit_counts[key] = _faq_hit_counts.get(key, 0) + 1
+    # Persist to DB
+    try:
+        from core.database import is_db_available, kv_set
+        if is_db_available():
+            kv_set("faq_hit_counts", _faq_hit_counts)
+    except Exception:
+        pass
 
 
 def get_customer_insights() -> dict:
@@ -290,6 +315,7 @@ def get_customer_insights() -> dict:
 
 def get_faq_hit_rates() -> list[dict]:
     """Get FAQ hit rates, sorted by most used."""
+    _load_faq_hits_from_db()
     return sorted(
         [{"question": q, "hits": c} for q, c in _faq_hit_counts.items()],
         key=lambda x: x["hits"],

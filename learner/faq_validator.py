@@ -23,22 +23,40 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 
 def _load_faq() -> dict:
+    # DB first (survives deploys), file fallback
+    try:
+        from core.database import is_db_available, load_knowledge_from_db
+        if is_db_available():
+            data = load_knowledge_from_db("faq")
+            if data:
+                return data
+    except Exception:
+        pass
     faq_path = KNOWLEDGE_DIR / "faq.json"
     with open(faq_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def _save_faq(faq_data: dict):
-    faq_path = KNOWLEDGE_DIR / "faq.json"
-    with open(faq_path, "w", encoding="utf-8") as f:
-        json.dump(faq_data, f, indent=2, ensure_ascii=False)
-    # Also save to DB
+    # DB first (survives deploys), then file
     from core.database import is_db_available, save_knowledge
     if is_db_available():
         save_knowledge("faq", faq_data)
+    faq_path = KNOWLEDGE_DIR / "faq.json"
+    with open(faq_path, "w", encoding="utf-8") as f:
+        json.dump(faq_data, f, indent=2, ensure_ascii=False)
 
 
 def _load_catalog() -> list[dict]:
+    # DB first (survives deploys), file fallback
+    try:
+        from core.database import is_db_available, load_knowledge_from_db
+        if is_db_available():
+            data = load_knowledge_from_db("products")
+            if data:
+                return data.get("catalog", [])
+    except Exception:
+        pass
     products_path = KNOWLEDGE_DIR / "products.json"
     with open(products_path, "r", encoding="utf-8") as f:
         data = json.load(f)

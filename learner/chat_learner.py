@@ -11,7 +11,15 @@ PROMPT_FILE = KNOWLEDGE_DIR / "prompt.json"
 
 
 def _load_prompt_config() -> dict:
-    """Load current prompt config for evolution comparison."""
+    """Load current prompt config — DB first (survives deploys), file fallback."""
+    try:
+        from core.database import is_db_available, load_knowledge_from_db
+        if is_db_available():
+            data = load_knowledge_from_db("prompt")
+            if data:
+                return data
+    except Exception:
+        pass
     try:
         with open(PROMPT_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -342,9 +350,18 @@ def apply_knowledge_updates(updates: dict) -> dict:
             for r in contradiction_result.get("replaced", []):
                 applied.append(f"FAQ replaced (contradiction): {r['old_question']}")
 
-        faq_path = KNOWLEDGE_DIR / "faq.json"
-        with open(faq_path, "r", encoding="utf-8") as f:
-            faq_data = json.load(f)
+        # Load from DB first (source of truth), fallback to file
+        faq_data = None
+        try:
+            from core.database import is_db_available, load_knowledge_from_db
+            if is_db_available():
+                faq_data = load_knowledge_from_db("faq")
+        except Exception:
+            pass
+        if not faq_data:
+            faq_path = KNOWLEDGE_DIR / "faq.json"
+            with open(faq_path, "r", encoding="utf-8") as f:
+                faq_data = json.load(f)
 
         existing_questions = {faq["question"].lower() for faq in faq_data["faqs"]}
 
@@ -363,14 +380,24 @@ def apply_knowledge_updates(updates: dict) -> dict:
                 })
                 applied.append(f"New FAQ: {q}")
 
+        faq_path = KNOWLEDGE_DIR / "faq.json"
         with open(faq_path, "w", encoding="utf-8") as f:
             json.dump(faq_data, f, indent=2, ensure_ascii=False)
 
     # Update style patterns
     if updates.get("style_patterns"):
-        style_path = KNOWLEDGE_DIR / "style.json"
-        with open(style_path, "r", encoding="utf-8") as f:
-            style_data = json.load(f)
+        # Load from DB first (source of truth), fallback to file
+        style_data = None
+        try:
+            from core.database import is_db_available, load_knowledge_from_db
+            if is_db_available():
+                style_data = load_knowledge_from_db("style")
+        except Exception:
+            pass
+        if not style_data:
+            style_path = KNOWLEDGE_DIR / "style.json"
+            with open(style_path, "r", encoding="utf-8") as f:
+                style_data = json.load(f)
 
         patterns = updates["style_patterns"]
         if isinstance(patterns, list):
@@ -382,6 +409,7 @@ def apply_knowledge_updates(updates: dict) -> dict:
             style_data.setdefault("learned_patterns", []).append(patterns)
             applied.append("New style patterns learned")
 
+        style_path = KNOWLEDGE_DIR / "style.json"
         with open(style_path, "w", encoding="utf-8") as f:
             json.dump(style_data, f, indent=2, ensure_ascii=False)
 
@@ -437,9 +465,18 @@ def apply_knowledge_updates(updates: dict) -> dict:
             # Add example conversations to style.json
             new_examples = evolution.get("example_conversations", [])
             if new_examples:
-                style_path = KNOWLEDGE_DIR / "style.json"
-                with open(style_path, "r", encoding="utf-8") as f:
-                    style_data = json.load(f)
+                # Load from DB first (source of truth), fallback to file
+                style_data = None
+                try:
+                    from core.database import is_db_available, load_knowledge_from_db
+                    if is_db_available():
+                        style_data = load_knowledge_from_db("style")
+                except Exception:
+                    pass
+                if not style_data:
+                    style_path = KNOWLEDGE_DIR / "style.json"
+                    with open(style_path, "r", encoding="utf-8") as f:
+                        style_data = json.load(f)
 
                 existing_replies = {
                     ex["reply"].lower()[:50]
@@ -475,15 +512,20 @@ def apply_knowledge_updates(updates: dict) -> dict:
 
     # Persist to DB (primary) + GitHub (backup)
     if applied:
-        _sync_knowledge_to_db()
+        _save_knowledge_to_db_direct()
         from core.git_persist import persist_knowledge_files
         persist_knowledge_files(source="knowledge-update")
 
     return {"applied": applied, "count": len(applied)}
 
 
-def _sync_knowledge_to_db():
-    """Sync all knowledge JSON files to PostgreSQL after updates."""
+def _save_knowledge_to_db_direct():
+    """Save all knowledge JSON files to DB directly (DB-first persistence).
+
+    Reads each file that was just written by apply_knowledge_updates() and
+    saves to PostgreSQL immediately. This ensures DB always has the latest data,
+    even if the process is killed before the next step.
+    """
     from core.database import is_db_available, save_knowledge
     if not is_db_available():
         return
