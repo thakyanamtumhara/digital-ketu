@@ -23,6 +23,7 @@ from core.activity_log import log_activity
 from learner.youtube_learner import process_video
 from learner.chat_learner import apply_knowledge_updates
 from learner.catalog_syncer import sync_catalog
+from learner.faq_validator import validate_faqs_against_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -463,6 +464,28 @@ async def catalog_sync_loop():
                     items_count=result.get("products_synced", 0),
                 )
                 logger.info(f"Catalog synced: {result.get('products_synced')} products")
+
+                # Validate FAQs against updated catalog
+                try:
+                    validation = validate_faqs_against_catalog()
+                    if validation.get("deactivated") or validation.get("price_warnings"):
+                        log_activity(
+                            source="faq-validator",
+                            action="validated",
+                            details={
+                                "deactivated": validation.get("deactivated", 0),
+                                "price_warnings": validation.get("price_warnings", 0),
+                                "flagged": validation.get("flagged_faqs", []),
+                                "price_issues": validation.get("price_issues", []),
+                            },
+                            items_count=validation.get("deactivated", 0),
+                        )
+                        logger.info(
+                            f"FAQ validation: {validation['deactivated']} deactivated, "
+                            f"{validation['price_warnings']} price warnings"
+                        )
+                except Exception as e:
+                    logger.error(f"FAQ validation error: {e}")
             else:
                 logger.warning(f"Catalog sync issue: {result}")
         except Exception as e:

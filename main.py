@@ -31,6 +31,11 @@ from scheduler import (
     get_scheduler_status,
 )
 from learner.catalog_syncer import sync_catalog
+from learner.faq_validator import (
+    validate_faqs_against_catalog,
+    get_faq_health_report,
+    reactivate_faq,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -353,6 +358,61 @@ async def sync_catalog_endpoint():
             },
             items_count=result.get("products_synced", 0),
         )
+    return result
+
+
+# --- FAQ Validation ---
+
+
+@app.get("/api/faq/health")
+async def faq_health():
+    """FAQ health report — shows active, inactive, price-warned FAQs.
+
+    Use this to see which FAQs are outdated or have wrong prices.
+    """
+    return get_faq_health_report()
+
+
+@app.post("/api/faq/validate")
+async def faq_validate():
+    """Manually trigger FAQ validation against current catalog.
+
+    Cross-checks all FAQs with product catalog:
+    - FAQs mentioning removed products → deactivated
+    - FAQs with wrong prices → flagged
+
+    This also runs automatically after every catalog sync (every 6h).
+    """
+    result = validate_faqs_against_catalog()
+    if result.get("deactivated") or result.get("price_warnings"):
+        invalidate_cache()
+        log_activity(
+            source="faq-validator",
+            action="validated",
+            details={
+                "deactivated": result.get("deactivated", 0),
+                "price_warnings": result.get("price_warnings", 0),
+                "flagged": result.get("flagged_faqs", []),
+                "price_issues": result.get("price_issues", []),
+            },
+            items_count=result.get("deactivated", 0),
+        )
+    return result
+
+
+class ReactivateFaqRequest(BaseModel):
+    question: str
+
+
+@app.post("/api/faq/reactivate")
+async def faq_reactivate(req: ReactivateFaqRequest):
+    """Reactivate a previously deactivated FAQ (owner override).
+
+    If a product comes back or the FAQ is still valid, use this to bring it back.
+    """
+    result = reactivate_faq(req.question)
+    if result.get("status") == "reactivated":
+        invalidate_cache()
     return result
 
 

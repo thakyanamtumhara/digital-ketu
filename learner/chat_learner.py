@@ -326,6 +326,13 @@ def apply_knowledge_updates(updates: dict) -> dict:
 
     # Update FAQ
     if updates.get("new_faqs"):
+        # First: detect contradictions with existing FAQs
+        from learner.faq_validator import detect_contradiction
+        contradiction_result = detect_contradiction(updates["new_faqs"])
+        if contradiction_result.get("contradictions_found", 0) > 0:
+            for r in contradiction_result.get("replaced", []):
+                applied.append(f"FAQ replaced (contradiction): {r['old_question']}")
+
         faq_path = KNOWLEDGE_DIR / "faq.json"
         with open(faq_path, "r", encoding="utf-8") as f:
             faq_data = json.load(f)

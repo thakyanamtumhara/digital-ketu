@@ -156,10 +156,12 @@ def format_context() -> str:
         if "gst" in c:
             sections.append(f"## GST: {c['gst'].get('rate', '5%')} — {c['gst'].get('note', '')}")
 
-    # ALL FAQs — not truncated
+    # Active FAQs only (skip inactive/outdated ones)
     if "faq" in knowledge:
         faq_lines = []
         for faq in knowledge["faq"].get("faqs", []):
+            if faq.get("status") == "inactive":
+                continue  # Skip deactivated FAQs
             faq_lines.append(f"Q: {faq['question']}\nA: {faq['answer']}")
         sections.append("## Common Q&A\n" + "\n\n".join(faq_lines))
 
