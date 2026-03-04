@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from core.config import settings
+from core.config import settings, init_knowledge_volume
 from core.engine import generate_reply
 from core.knowledge import load_knowledge, invalidate_cache
 from core.activity_log import log_activity, get_activity_log, get_today_summary, get_storage_stats
@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize persistent volume (copy bundled files on first boot)
+    init_knowledge_volume()
+
     # Startup: load knowledge base
     logger.info("Loading knowledge base...")
     load_knowledge()

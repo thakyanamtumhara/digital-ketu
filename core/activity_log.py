@@ -13,10 +13,12 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from core.config import KNOWLEDGE_DIR
+
 logger = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
-LOG_FILE = Path(__file__).parent.parent / "knowledge" / "activity_log.json"
+LOG_FILE = KNOWLEDGE_DIR / "activity_log.json"
 MAX_ENTRIES = 500
 
 
@@ -127,8 +129,9 @@ def get_today_summary() -> dict:
 
 def get_storage_stats() -> dict:
     """Get knowledge base storage statistics."""
-    knowledge_dir = Path(__file__).parent.parent / "knowledge"
-    learned_dir = knowledge_dir / "learned"
+    from core.config import KNOWLEDGE_DIR, LEARNED_DIR
+    knowledge_dir = KNOWLEDGE_DIR
+    learned_dir = LEARNED_DIR
 
     stats = {
         "knowledge_files": {},

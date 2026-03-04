@@ -10,13 +10,12 @@ knowledge/products.json with the latest data.
 
 import json
 import logging
-from pathlib import Path
 
 import httpx
 
-logger = logging.getLogger(__name__)
+from core.config import KNOWLEDGE_DIR
 
-KNOWLEDGE_DIR = Path(__file__).parent.parent / "knowledge"
+logger = logging.getLogger(__name__)
 
 # Raw GitHub URLs for catalog data
 CATALOG_PRODUCTS_URL = (

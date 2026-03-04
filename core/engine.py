@@ -1,16 +1,14 @@
 import json
 import time
 import logging
-from pathlib import Path
 
 from anthropic import Anthropic
 
-from core.config import settings
+from core.config import settings, KNOWLEDGE_DIR
 from core.knowledge import format_context
 
 logger = logging.getLogger(__name__)
 
-KNOWLEDGE_DIR = Path(__file__).parent.parent / "knowledge"
 PROMPT_FILE = KNOWLEDGE_DIR / "prompt.json"
 
 # In-memory conversation history per customer (phone -> messages)

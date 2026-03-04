@@ -1,12 +1,10 @@
 import json
 import logging
 import time
-from pathlib import Path
+
+from core.config import KNOWLEDGE_DIR, LEARNED_DIR
 
 logger = logging.getLogger(__name__)
-
-KNOWLEDGE_DIR = Path(__file__).parent.parent / "knowledge"
-LEARNED_DIR = KNOWLEDGE_DIR / "learned"
 
 _cache: dict = {}
 _cache_time: float = 0

@@ -14,11 +14,10 @@ import asyncio
 import json
 import logging
 import time
-from pathlib import Path
 
 import httpx
 
-from core.config import settings
+from core.config import settings, KNOWLEDGE_DIR, LEARNED_DIR
 from core.knowledge import invalidate_cache
 from core.activity_log import log_activity
 from learner.youtube_learner import process_video
@@ -26,9 +25,6 @@ from learner.chat_learner import apply_knowledge_updates
 from learner.catalog_syncer import sync_catalog
 
 logger = logging.getLogger(__name__)
-
-KNOWLEDGE_DIR = Path(__file__).parent / "knowledge"
-LEARNED_DIR = KNOWLEDGE_DIR / "learned"
 
 # Track processed videos to avoid re-processing
 _processed_videos_file = LEARNED_DIR / "_processed_videos.json"

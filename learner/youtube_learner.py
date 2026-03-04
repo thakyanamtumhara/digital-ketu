@@ -1,14 +1,12 @@
 import json
 import logging
 import re
-from pathlib import Path
 
 from anthropic import Anthropic
 
-from core.config import settings
+from core.config import settings, KNOWLEDGE_DIR
 
 logger = logging.getLogger(__name__)
-KNOWLEDGE_DIR = Path(__file__).parent.parent / "knowledge"
 
 
 def get_transcript(video_url: str) -> str | None:
