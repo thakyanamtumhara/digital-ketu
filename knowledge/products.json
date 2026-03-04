@@ -1,354 +1,646 @@
 {
-  "last_updated": "2026-02",
-  "currency": "INR",
-  "gst_rate": 5,
-  "moq": 10,
-  "price_note": "All prices exclusive of 5% GST. Bulk = min 10 pcs (mix & match). Sample = single piece.",
   "catalog": [
     {
       "id": "oversize-210gsm",
       "name": "Oversize 210gsm",
       "category": "Oversized Tees",
       "gsm": 210,
-      "description": "Oversized Drop Shoulder, Terry Cotton Loopknit Heavy Gauge",
-      "fabric": "100% Cotton Supercombed Red Label Premium",
-      "sizes": ["S", "M", "L", "XL", "XXL"],
-      "colors": ["Black", "White", "Lavender", "Beige", "Red", "Sage Green", "Brown", "Off-white", "Orange", "Navy"],
+      "description": "Oversized Drop Shoulder 210gsm, Terry Cotton Loopknit Heavy Gauge, 100% Cotton Supercombed Red Lable Premium Fabric",
+      "fabric": "Terry Cotton Loopknit Heavy Gauge, 100% Cotton Supercombed Red Lable Premium Fabric",
+      "sizes": [
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "Black",
+        "White",
+        "Lavender",
+        "Beige",
+        "Red",
+        "Sage Green",
+        "Brown",
+        "Off-white",
+        "Orange",
+        "Navy"
+      ],
       "bulk_price": 175,
       "sample_price": 210,
-      "weight_kg": 0.27,
+      "price_range": "Rs 175/pc (bulk) | Rs 210/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/oversize-210gsm/"
+      "weight_kg": 0.27,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/oversize-210gsm/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/oversize-210gsm/"
     },
     {
       "id": "oversize-240gsm",
       "name": "Oversize 240gsm",
       "category": "Oversized Tees",
       "gsm": 240,
-      "description": "Oversized Drop-shoulder, Terry Cotton Loopknit Heavy Gauge, BEST SELLER for streetwear brands",
-      "fabric": "100% Cotton Premium Biowash",
-      "sizes": ["XS", "S", "M", "L", "XL", "XXL"],
-      "colors": ["Black", "White", "Red", "Maroon", "Off-white", "Beige", "Lavender", "Brown", "Rose Pink", "Charcoal", "Army Green", "Powder Blue"],
+      "description": "Oversized Drop-shoulder, 240gsm, Terry cotton/Loopknit Heavy Gauge, 100% Cotton Premium Quality Biowash Fabric",
+      "fabric": "240gsm, Terry cotton/Loopknit Heavy Gauge, 100% Cotton Premium Quality Biowash Fabric",
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "Black",
+        "White",
+        "Red",
+        "Maroon",
+        "Off-white",
+        "Beige",
+        "Lavender",
+        "Brown",
+        "Rose Pink",
+        "Charcoal",
+        "Army Green",
+        "Powder Blue"
+      ],
       "bulk_price": 180,
       "sample_price": 222,
-      "weight_kg": 0.32,
+      "price_range": "Rs 180/pc (bulk) | Rs 222/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/oversize-240gsm/"
+      "weight_kg": 0.32,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/oversize-240gsm/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/oversize-240gsm/"
     },
     {
       "id": "oversize-180gsm",
       "name": "Oversize 180gsm",
       "category": "Oversized Tees",
       "gsm": 180,
-      "description": "Oversized Drop-shoulder, Lightweight",
-      "fabric": "100% Cotton Supercombed Red Label Premium",
-      "sizes": ["S", "M", "L", "XL", "XXL"],
-      "colors": ["Black", "White"],
+      "description": "Oversized Drop-shoulder 180gsm, 100% Cotton Supercombed Premium Quality Red Lable Fabric",
+      "fabric": "100% Cotton Supercombed Premium Quality Red Lable Fabric",
+      "sizes": [
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "Black",
+        "White"
+      ],
       "bulk_price": 165,
       "sample_price": 198,
-      "weight_kg": 0.26,
+      "price_range": "Rs 165/pc (bulk) | Rs 198/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/oversize-180gsm/"
+      "weight_kg": 0.26,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/oversize-180gsm/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/oversize-180gsm/"
     },
     {
       "id": "boxy-fit",
       "name": "Boxy Fit",
       "category": "Oversized Tees",
       "gsm": 180,
-      "description": "Boxy Fit Drop-shoulder — streetwear square silhouette, wider chest, slightly shorter length",
-      "fabric": "100% Cotton Supercombed Red Label Premium",
-      "sizes": ["XS", "S", "M", "L", "XL", "XXL"],
-      "colors": ["Black", "White"],
+      "description": "Boxy Fit Drop-shoulder Tshirt, 180gsm, 100% Cotton Supercombed Premium Quality Red Lable Fabric",
+      "fabric": "180gsm, 100% Cotton Supercombed Premium Quality Red Lable Fabric",
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "Black",
+        "White"
+      ],
       "bulk_price": 175,
       "sample_price": 204,
-      "weight_kg": 0.26,
+      "price_range": "Rs 175/pc (bulk) | Rs 204/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/boxy-fit/"
+      "weight_kg": 0.26,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/boxy-fit/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/boxy-fit/"
     },
     {
       "id": "acidwash-oversize",
       "name": "AcidWash Oversize",
       "category": "Oversized Tees",
       "gsm": 240,
-      "description": "Acid Wash Oversize Fit, French Terry Loopknit, vintage look",
-      "fabric": "100% Cotton Biowash French Terry Loopknit",
-      "sizes": ["XS", "S", "M", "L", "XL", "XXL"],
-      "colors": ["Black"],
+      "description": "AcidWash OS (Oversize Fit), 240gsm, 100% cotton Biowash French Terry Loopknit",
+      "fabric": "240gsm, 100% cotton Biowash French Terry Loopknit",
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "Black"
+      ],
       "bulk_price": 220,
       "sample_price": 264,
-      "weight_kg": 0.27,
+      "price_range": "Rs 220/pc (bulk) | Rs 264/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/acidwash-oversize/"
+      "weight_kg": 0.27,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/acidwash-oversize/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/acidwash-oversize/"
     },
     {
       "id": "true-biowash-round-neck",
       "name": "True Biowash Round Neck",
       "category": "Round Neck Tees",
       "gsm": 180,
-      "description": "Regular Fit, True Biowash — best value for printing businesses",
-      "fabric": "100% Cotton Supercombed Red Label Premium",
-      "sizes": ["36", "38", "40", "42", "44", "46"],
-      "colors": ["Black", "White", "Maroon", "Navy", "Mustard Yellow", "Red", "Bottle Green", "Beige", "Royal Blue", "Lavender", "Sky", "Grey", "Bhagwa"],
+      "description": "Regular Fit, True Biowash Round neck, 180gsm, 100% Cotton Supercombed Premium Quality Red Lable Fabric",
+      "fabric": "True Biowash Round neck, 180gsm, 100% Cotton Supercombed Premium Quality Red Lable Fabric",
+      "sizes": [
+        "36",
+        "38",
+        "40",
+        "42",
+        "44",
+        "46"
+      ],
+      "colors": [
+        "Black",
+        "White",
+        "Maroon",
+        "Navy",
+        "Mustard Yellow",
+        "Red",
+        "Bottle Green",
+        "Beige",
+        "Royal Blue",
+        "Lavender",
+        "Sky",
+        "Grey",
+        "Bhagwa"
+      ],
       "bulk_price": 140,
       "sample_price": 174,
-      "weight_kg": 0.21,
+      "price_range": "Rs 140/pc (bulk) | Rs 174/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/true-biowash-round-neck/"
+      "weight_kg": 0.21,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/true-biowash-round-neck/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/true-biowash-round-neck/"
     },
     {
       "id": "biowash-round-neck",
       "name": "Biowash Round Neck",
       "category": "Round Neck Tees",
       "gsm": 180,
-      "description": "Regular Fit, Biowash",
-      "fabric": "100% Cotton Premium",
-      "sizes": ["36", "38", "40", "42", "44", "46"],
-      "colors": ["Black", "White", "Navy", "Red", "Brown", "Maroon", "Charcoal", "Off-white", "Rose Pink"],
+      "description": "Regular Fit, Biowash Round neck, 180gsm, 100% Cotton Premium Quality Fabric",
+      "fabric": "Biowash Round neck, 180gsm, 100% Cotton Premium Quality Fabric",
+      "sizes": [
+        "36",
+        "38",
+        "40",
+        "42",
+        "44",
+        "46"
+      ],
+      "colors": [
+        "Black",
+        "White",
+        "Navy",
+        "Red",
+        "Brown",
+        "Maroon",
+        "Charcoal",
+        "Off-white",
+        "Rose Pink"
+      ],
       "bulk_price": 130,
       "sample_price": 162,
-      "weight_kg": 0.21,
+      "price_range": "Rs 130/pc (bulk) | Rs 162/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/biowash-round-neck/"
+      "weight_kg": 0.21,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/biowash-round-neck/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/biowash-round-neck/"
     },
     {
       "id": "non-bio-round-neck",
       "name": "Non Bio Round Neck",
       "category": "Round Neck Tees",
       "gsm": 180,
-      "description": "Budget option, Non Bio-wash",
-      "fabric": "88% Cotton, 12% Polyester",
-      "sizes": ["36", "38", "40", "42", "44", "46"],
-      "colors": ["Black"],
+      "description": "Non Bio Round neck, 180gsm, 88% Cotton, 12% Polyester",
+      "fabric": "180gsm, 88% Cotton, 12% Polyester",
+      "sizes": [
+        "36",
+        "38",
+        "40",
+        "42",
+        "44",
+        "46"
+      ],
+      "colors": [
+        "Black"
+      ],
       "bulk_price": 102,
       "sample_price": 129,
-      "weight_kg": 0.21,
+      "price_range": "Rs 102/pc (bulk) | Rs 129/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/non-bio-round-neck/"
+      "weight_kg": 0.21,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/non-bio-round-neck/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/non-bio-round-neck/"
     },
     {
       "id": "sublimation-t-shirt",
       "name": "Sublimation T-Shirt",
       "category": "Round Neck Tees",
       "gsm": 200,
-      "description": "Cotton Feel Polyester — ONLY option for sublimation printing",
-      "fabric": "Cotton Feel Polyester, Sarina Knitting",
-      "sizes": ["36", "38", "40", "42", "44", "46"],
-      "colors": ["White"],
+      "description": "Regular Fit Round neck, 200gsm, Cotton Feel Polyester Sublimation tshirt, Premium Quality Sarina Knitting Type",
+      "fabric": "200gsm, Cotton Feel Polyester Sublimation tshirt, Premium Quality Sarina Knitting Type",
+      "sizes": [
+        "36",
+        "38",
+        "40",
+        "42",
+        "44",
+        "46"
+      ],
+      "colors": [
+        "White"
+      ],
       "bulk_price": 115,
       "sample_price": 144,
-      "weight_kg": 0.21,
+      "price_range": "Rs 115/pc (bulk) | Rs 144/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/sublimation-t-shirt/"
+      "weight_kg": 0.21,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/sublimation-t-shirt/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/sublimation-t-shirt/"
     },
     {
       "id": "premium-polo",
       "name": "Premium Polo",
       "category": "Polo T-Shirts",
       "gsm": 220,
-      "description": "Most Premium Honeycomb Polo — corporate/casual",
-      "fabric": "100% Cotton Supercombed Red Label Honeycomb",
-      "sizes": ["36", "38", "40", "42", "44", "46"],
-      "colors": ["Black", "White", "Navy", "Maroon"],
+      "description": "Most Premium Honeycomb Polo, 220gsm, 100% Cotton Supercombed Red Lable Fabric",
+      "fabric": "220gsm, 100% Cotton Supercombed Red Lable Fabric",
+      "sizes": [
+        "36",
+        "38",
+        "40",
+        "42",
+        "44",
+        "46"
+      ],
+      "colors": [
+        "Black",
+        "White",
+        "Navy",
+        "Maroon"
+      ],
       "bulk_price": 220,
       "sample_price": 270,
-      "weight_kg": 0.26,
+      "price_range": "Rs 220/pc (bulk) | Rs 270/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/premium-polo/"
+      "weight_kg": 0.26,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/premium-polo/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/premium-polo/"
     },
     {
       "id": "cotton-polo",
       "name": "Cotton Polo",
       "category": "Polo T-Shirts",
       "gsm": 220,
-      "description": "Cotton Matty Polo — value option",
-      "fabric": "88% Cotton, 12% Polyester",
-      "sizes": ["36", "38", "40", "42", "44", "46"],
-      "colors": ["Black", "White", "Navy", "Grey", "Maroon", "Charcoal"],
+      "description": "Cotton Matty Polo neck, 220gsm, 88% Cotton, 12% Polyester",
+      "fabric": "220gsm, 88% Cotton, 12% Polyester",
+      "sizes": [
+        "36",
+        "38",
+        "40",
+        "42",
+        "44",
+        "46"
+      ],
+      "colors": [
+        "Black",
+        "White",
+        "Navy",
+        "Grey",
+        "Maroon",
+        "Charcoal"
+      ],
       "bulk_price": 180,
       "sample_price": 222,
-      "weight_kg": 0.26,
+      "price_range": "Rs 180/pc (bulk) | Rs 222/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/cotton-polo/"
+      "weight_kg": 0.26,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/cotton-polo/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/cotton-polo/"
     },
     {
       "id": "zip-hoodie",
       "name": "Zip Hoodie",
       "category": "Hoodies",
       "gsm": 320,
-      "description": "Zipper Hoodie, Cotton Brushed Loopknit",
-      "fabric": "88% Cotton, 12% Polyester",
-      "sizes": ["S", "M", "L", "XL", "XXL"],
-      "colors": ["Black"],
+      "description": "Zipper Hoodie, 320gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "fabric": "320gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "sizes": [
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "Black"
+      ],
       "bulk_price": 325,
       "sample_price": 390,
-      "weight_kg": 0.56,
+      "price_range": "Rs 325/pc (bulk) | Rs 390/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/zip-hoodie/"
+      "weight_kg": 0.56,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/zip-hoodie/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/zip-hoodie/"
     },
     {
       "id": "hoodie-320gsm-black",
       "name": "Hoodie 320gsm (Black)",
       "category": "Hoodies",
       "gsm": 320,
-      "description": "Non-zipper Hoodie, Black only — lower price",
-      "fabric": "88% Cotton, 12% Polyester, Cotton Brushed Loopknit",
-      "sizes": ["S", "M", "L", "XL", "XXL"],
-      "colors": ["Black"],
+      "description": "Non-zipper Hoodie, 320gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "fabric": "320gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "sizes": [
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "Black"
+      ],
       "bulk_price": 295,
       "sample_price": 366,
-      "weight_kg": 0.56,
+      "price_range": "Rs 295/pc (bulk) | Rs 366/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/hoodie-320gsm-black/"
+      "weight_kg": 0.56,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/hoodie-320gsm-black/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/hoodie-320gsm-black/"
     },
     {
       "id": "hoodie-320gsm",
       "name": "Hoodie 320gsm",
       "category": "Hoodies",
       "gsm": 320,
-      "description": "Non-zipper Hoodie, 7 color options",
-      "fabric": "88% Cotton, 12% Polyester, Cotton Brushed Loopknit",
-      "sizes": ["S", "M", "L", "XL", "XXL"],
-      "colors": ["White", "Navy", "Army Green", "Off-white", "Maroon", "Grey", "Red"],
+      "description": "Non-zipper Hoodie, 320gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "fabric": "320gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "sizes": [
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "White",
+        "Navy",
+        "Army Green",
+        "Off-white",
+        "Maroon",
+        "Grey",
+        "Red"
+      ],
       "bulk_price": 325,
       "sample_price": 402,
-      "weight_kg": 0.56,
+      "price_range": "Rs 325/pc (bulk) | Rs 402/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/hoodie-320gsm/"
+      "weight_kg": 0.56,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/hoodie-320gsm/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/hoodie-320gsm/"
     },
     {
       "id": "dropshoulder-hoodie-430gsm",
       "name": "Dropshoulder Hoodie 430gsm",
       "category": "Hoodies",
       "gsm": 430,
-      "description": "Most Heavy Non-zipper Dropshoulder Hoodie — ultra heavyweight",
-      "fabric": "88% Cotton, 12% Polyester, Cotton Brushed Loopknit",
-      "sizes": ["S", "M", "L", "XL", "XXL"],
-      "colors": ["Black"],
+      "description": "Most Heavy Non-zipper Dropshoulder Hoodie, 430gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "fabric": "430gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "sizes": [
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "Black"
+      ],
       "bulk_price": 380,
       "sample_price": 468,
-      "weight_kg": 0.75,
+      "price_range": "Rs 380/pc (bulk) | Rs 468/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/dropshoulder-hoodie-430gsm/"
+      "weight_kg": 0.75,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/dropshoulder-hoodie-430gsm/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/dropshoulder-hoodie-430gsm/"
     },
     {
       "id": "hoodie-430gsm",
       "name": "Hoodie 430gsm",
       "category": "Hoodies",
       "gsm": 430,
-      "description": "Most Heavy Non-zipper Dropshoulder Hoodie — color options",
-      "fabric": "88% Cotton, 12% Polyester, Cotton Brushed Loopknit",
-      "sizes": ["S", "M", "L", "XL", "XXL"],
-      "colors": ["Navy", "White", "Off-white"],
+      "description": "Most Heavy Non-zipper Dropshoulder Hoodie, 430gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "fabric": "430gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "sizes": [
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "Navy",
+        "White",
+        "Off-white"
+      ],
       "bulk_price": 418,
       "sample_price": 502,
-      "weight_kg": 0.75,
+      "price_range": "Rs 418/pc (bulk) | Rs 502/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/hoodie-430gsm/"
+      "weight_kg": 0.75,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/hoodie-430gsm/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/hoodie-430gsm/"
     },
     {
       "id": "sweatshirt",
       "name": "Sweatshirt",
       "category": "Sweatshirts & Jackets",
       "gsm": 320,
-      "description": "Crew neck sweatshirt, Cotton Brushed Loopknit",
-      "fabric": "88% Cotton, 12% Polyester",
-      "sizes": ["S", "M", "L", "XL", "XXL"],
-      "colors": ["Black", "Navy", "Grey", "Army Green"],
+      "description": "Sweatshirt, 320gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "fabric": "320gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "sizes": [
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "Black",
+        "Navy",
+        "Grey",
+        "Army Green"
+      ],
       "bulk_price": 225,
       "sample_price": 276,
-      "weight_kg": 0.46,
+      "price_range": "Rs 225/pc (bulk) | Rs 276/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/sweatshirt/"
+      "weight_kg": 0.46,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/sweatshirt/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/sweatshirt/"
     },
     {
       "id": "sweatshirt-2",
       "name": "Sweatshirt 2",
       "category": "Sweatshirts & Jackets",
       "gsm": 320,
-      "description": "Crew neck sweatshirt — different color range",
-      "fabric": "88% Cotton, 12% Polyester",
-      "sizes": ["S", "M", "L", "XL", "XXL"],
-      "colors": ["Maroon", "White", "Off-white"],
+      "description": "Sweatshirt, 320gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "fabric": "320gsm, Cotton Brushed Loopknit, 88% cotton, 12% polyester",
+      "sizes": [
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "Maroon",
+        "White",
+        "Off-white"
+      ],
       "bulk_price": 240,
       "sample_price": 288,
-      "weight_kg": 0.46,
+      "price_range": "Rs 240/pc (bulk) | Rs 288/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/sweatshirt-2/"
+      "weight_kg": 0.46,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/sweatshirt-2/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/sweatshirt-2/"
     },
     {
       "id": "varsity-jacket",
       "name": "Varsity Jacket",
       "category": "Sweatshirts & Jackets",
       "gsm": 320,
-      "description": "Classic baseball-style, White Sleeve / Black Body",
-      "fabric": "88% Cotton, 12% Polyester, Cotton Brushed Loopknit",
-      "sizes": ["XS", "S", "M", "L", "XL", "XXL"],
-      "colors": ["Black"],
+      "description": "Varsity Jacket, 320gsm, Cotton Brushed Loopknit, White Sleeve/Black Body, 88% cotton, 12% polyester",
+      "fabric": "320gsm, Cotton Brushed Loopknit, White Sleeve/Black Body, 88% cotton, 12% polyester",
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "colors": [
+        "Black"
+      ],
       "bulk_price": 335,
       "sample_price": 402,
-      "weight_kg": 0.56,
+      "price_range": "Rs 335/pc (bulk) | Rs 402/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/varsity-jacket/"
+      "weight_kg": 0.56,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/varsity-jacket/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/varsity-jacket/"
     },
     {
       "id": "kids-round-neck",
       "name": "Kids Round Neck",
       "category": "Kids & Bottomwear",
       "gsm": 180,
-      "description": "True Biowash Kids Round Neck, ages 2-12 years",
-      "fabric": "100% Cotton Supercombed Red Label Premium",
-      "sizes": ["20", "22", "24", "26", "28", "30", "32", "34"],
-      "colors": ["Black", "White", "Red", "Baby Pink", "Mustard Yellow"],
+      "description": "True Biowash Kids Round neck, 180gsm, 100% Cotton Supercombed Premium Quality Red Lable Fabric",
+      "fabric": "180gsm, 100% Cotton Supercombed Premium Quality Red Lable Fabric",
+      "sizes": [
+        "20",
+        "22",
+        "24",
+        "26",
+        "28",
+        "30",
+        "32",
+        "34"
+      ],
+      "colors": [
+        "Black",
+        "White",
+        "Red",
+        "Baby Pink",
+        "Mustard Yellow"
+      ],
       "bulk_price": 110,
       "sample_price": 144,
-      "weight_kg": 0.16,
+      "price_range": "Rs 110/pc (bulk) | Rs 144/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/kids-round-neck/"
+      "weight_kg": 0.16,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/kids-round-neck/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/kids-round-neck/"
     },
     {
       "id": "shorts",
       "name": "Shorts",
       "category": "Kids & Bottomwear",
       "gsm": 240,
-      "description": "Heavyweight cotton shorts — zipper left/right pocket, 1 back pocket",
-      "fabric": "100% Cotton Supercombed Red Label Premium, Terry Loopknit",
-      "sizes": ["XS", "S", "M", "L", "XL"],
-      "colors": ["Black", "Off-white", "Lavender", "Beige"],
+      "description": "240gsm, Terry cotton/Loopknit Heavy Gauge, 100% Cotton Supercombed Premium Quality Red Lable Fabric, (Zipper Left and Right pocket, 1 back pocket)",
+      "fabric": "Terry cotton/Loopknit Heavy Gauge, 100% Cotton Supercombed Premium Quality Red Lable Fabric, (Zipper Left and Right pocket, 1 back pocket)",
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "colors": [
+        "Black",
+        "Off-white",
+        "Lavender",
+        "Beige"
+      ],
       "bulk_price": 205,
       "sample_price": 246,
-      "weight_kg": 0.25,
+      "price_range": "Rs 205/pc (bulk) | Rs 246/pc (sample)",
       "moq": 10,
-      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/shorts/"
+      "weight_kg": 0.25,
+      "catalog_url": "https://www.bulkplaintshirt.com/catalog/p/shorts/",
+      "image_url": "https://www.bulkplaintshirt.com/catalog/images/shorts/"
     }
   ],
+  "last_updated": "2026-02",
+  "currency": "INR",
+  "gst_rate": 5,
+  "moq": 10,
+  "website_discount": "Extra Rs 2/pc discount on bulkplaintshirt.com",
+  "payment_terms": "100% Prepaid",
+  "contact": {
+    "whatsapp": "https://wa.me/919336695049",
+    "phone": "+91-9336695049",
+    "website": "https://www.bulkplaintshirt.com/",
+    "catalog": "https://www.bulkplaintshirt.com/catalog"
+  },
   "bulk_discounts": {
-    "website": "Extra Rs 2/pc discount on bulkplaintshirt.com orders",
-    "1000_plus": "Special rates — contact on WhatsApp for custom pricing"
-  },
-  "gsm_guide": {
-    "180": "Standard weight — everyday tees, light and breathable, like a regular store-bought tee",
-    "200": "Standard+ — sublimation printing specifically, cotton-feel polyester",
-    "210": "Mid-weight — premium oversized tees, like H&M/Zara quality, noticeable weight",
-    "220": "Mid-weight — structured honeycomb polo fabric, has body and form",
-    "240": "Heavyweight — thick, structured drape, gold standard for streetwear brands (like Stussy/Fear of God)",
-    "320": "Heavy fleece — warm, soft brushed inside, hoodies/sweatshirts/winter wear",
-    "430": "Ultra-heavy — thickest blank hoodie in India, like wearing a blanket, extreme cold weather"
-  },
-  "fabric_features": {
-    "biowash": "Enzyme-washed for softness and pre-shrunk finish — no shrinkage after washing",
-    "supercombed": "Premium combed cotton — smoother, stronger yarn, Red Label quality",
-    "drop_shoulder": "Oversized relaxed fit style popular in streetwear, wider shoulder line",
-    "loopknit": "Knitting method that creates loops on inside for softness",
-    "brushed": "Fabric brushed on inside for fleece-like warmth (hoodies/sweatshirts)"
-  },
-  "printing_compatibility": {
-    "screen_print": "Best on 100% cotton, higher GSM = better. Recommended: Oversize 240gsm, True Biowash RN",
-    "dtg": "All 100% cotton products. Pre-treated cotton for vibrant digital prints",
-    "dtf": "ALL products work great — cotton and cotton-polyester blends",
-    "sublimation": "ONLY Sublimation T-Shirt (200gsm) for full sublimation",
-    "embroidery": "High GSM products — Premium Polo, Hoodie 320gsm, Oversize 240gsm, Varsity Jacket",
-    "htv_heat_press": "All products, especially 240gsm+ for best results"
+    "website": "Rs 2/pc discount on website orders",
+    "1000_plus": "Special rates available — contact on WhatsApp"
   },
   "ready_stock": "Massive ready-to-dispatch inventory — dispatch within minutes",
-  "total_sold": "Selling lakhs of units monthly"
+  "total_sold": "Selling lakhs of units monthly",
+  "gsm_guide": {
+    "180": "Standard weight — regular t-shirts, everyday wear, breathable",
+    "200": "Standard+ — sublimation printing specifically",
+    "210": "Mid-weight — premium oversized tees, like H&M/Zara quality",
+    "220": "Mid-weight — structured polo fabric, honeycomb texture",
+    "240": "Heavyweight — thick, structured drape, gold standard for streetwear",
+    "320": "Heavy fleece — warm, soft brushed inside, hoodies/sweatshirts",
+    "430": "Ultra-heavy — thickest blank hoodie in India, extreme cold"
+  },
+  "fabric_features": {
+    "biowash": "Enzyme-washed for softness and pre-shrunk finish",
+    "supercombed": "Premium combed cotton — smoother, stronger yarn",
+    "drop_shoulder": "Oversized relaxed fit style popular in streetwear",
+    "loopknit": "Knitting method that creates loops inside for softness",
+    "brushed": "Fabric brushed on inside for fleece-like warmth"
+  }
 }
