@@ -17,13 +17,51 @@ _conversations: dict[str, list] = {}
 _conversation_timestamps: dict[str, float] = {}
 CONVERSATION_TTL = 3600  # 1 hour
 
-# Customer insights tracking (in-memory, resets on deploy)
+# Customer insights tracking (DB-persisted, survives deploys)
 _customer_message_counts: dict[str, int] = {}  # phone_last4 -> count
 _customer_names: dict[str, str] = {}  # phone_last4 -> name
 _hourly_message_counts: dict[int, int] = {}  # hour (0-23) -> count
+_insights_loaded = False
 
 # FAQ hit rate tracking
 _faq_hit_counts: dict[str, int] = {}  # question_prefix -> hit count
+
+
+def _load_customer_insights_from_db():
+    """Load customer insights from DB on first access (survives deploys)."""
+    global _customer_message_counts, _customer_names, _hourly_message_counts, _insights_loaded
+    if _insights_loaded:
+        return
+    _insights_loaded = True
+    try:
+        from core.database import is_db_available, kv_get
+        if not is_db_available():
+            return
+        data = kv_get("customer_insights")
+        if data:
+            _customer_message_counts.update(data.get("message_counts", {}))
+            _customer_names.update(data.get("names", {}))
+            # DB stores hour keys as strings, convert back to int
+            for h, c in data.get("hourly", {}).items():
+                _hourly_message_counts[int(h)] = _hourly_message_counts.get(int(h), 0) + c
+            logger.info(f"[Insights] Loaded from DB: {len(_customer_message_counts)} customers")
+    except Exception as e:
+        logger.warning(f"[Insights] DB load failed: {e}")
+
+
+def _save_customer_insights_to_db():
+    """Persist current customer insights to DB."""
+    try:
+        from core.database import is_db_available, kv_set
+        if not is_db_available():
+            return
+        kv_set("customer_insights", {
+            "message_counts": _customer_message_counts,
+            "names": _customer_names,
+            "hourly": _hourly_message_counts,
+        })
+    except Exception as e:
+        logger.warning(f"[Insights] DB save failed: {e}")
 
 
 def _load_prompt_config() -> dict:
@@ -153,6 +191,9 @@ def generate_reply(
     # Add current message
     messages = messages + [{"role": "user", "content": message}]
 
+    # Load insights from DB on first call (survives deploys)
+    _load_customer_insights_from_db()
+
     # Track customer insights
     from datetime import datetime, timezone, timedelta
     ist = timezone(timedelta(hours=5, minutes=30))
@@ -164,6 +205,9 @@ def generate_reply(
         _customer_message_counts[key] = _customer_message_counts.get(key, 0) + 1
         if customer_name:
             _customer_names[key] = customer_name
+
+    # Persist to DB
+    _save_customer_insights_to_db()
 
     # Add customer context if available
     system = _build_system_prompt()
@@ -217,6 +261,7 @@ def track_faq_hit(question: str):
 
 def get_customer_insights() -> dict:
     """Get customer message insights."""
+    _load_customer_insights_from_db()
     # Top 10 customers by message count
     sorted_customers = sorted(
         _customer_message_counts.items(), key=lambda x: x[1], reverse=True
