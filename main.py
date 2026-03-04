@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -195,7 +196,8 @@ async def api_reply(req: ReplyRequest):
 
     wwbun sends customer message → Digital Ketu returns reply.
     """
-    reply = generate_reply(
+    reply = await asyncio.to_thread(
+        generate_reply,
         message=req.message,
         customer_phone=req.customer_phone,
         customer_name=req.customer_name,
@@ -275,8 +277,8 @@ async def learn_from_whatsapp_export(req: LearnWhatsAppRequest):
     if not messages:
         return {"status": "no_messages_found"}
 
-    knowledge = extract_knowledge_from_messages(messages, req.ketu_name)
-    result = apply_knowledge_updates(knowledge)
+    knowledge = await asyncio.to_thread(extract_knowledge_from_messages, messages, req.ketu_name)
+    result = await asyncio.to_thread(apply_knowledge_updates, knowledge)
 
     invalidate_cache()
 
@@ -318,11 +320,12 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     - content: message text
     - is_ai_generated: bool (true if AI sent it, false if manual)
     """
-    knowledge = extract_knowledge_from_wwbun_messages(
+    knowledge = await asyncio.to_thread(
+        extract_knowledge_from_wwbun_messages,
         messages=req.messages,
         owner_user_id=req.owner_user_id,
     )
-    result = apply_knowledge_updates(knowledge)
+    result = await asyncio.to_thread(apply_knowledge_updates, knowledge)
 
     invalidate_cache()
 
@@ -366,9 +369,9 @@ async def learn_from_youtube(req: LearnYouTubeRequest):
 
     Extracts product info, pricing, business knowledge from video.
     """
-    result = process_video(req.video_url, req.video_title)
+    result = await asyncio.to_thread(process_video, req.video_url, req.video_title)
     if result.get("knowledge"):
-        applied = apply_knowledge_updates(result["knowledge"])
+        applied = await asyncio.to_thread(apply_knowledge_updates, result["knowledge"])
         invalidate_cache()
         log_activity(
             source="youtube",
@@ -570,7 +573,8 @@ async def learn_correction(req: CorrectionRequest):
     - ai_reply: what Digital Ketu replied (wrong/incomplete)
     - ketu_correction: what Ketu actually sent instead
     """
-    result = learn_from_correction(
+    result = await asyncio.to_thread(
+        learn_from_correction,
         customer_message=req.customer_message,
         ai_reply=req.ai_reply,
         ketu_correction=req.ketu_correction,

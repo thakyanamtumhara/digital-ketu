@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -278,8 +279,9 @@ async def receive_message(request: Request):
                             )
                     continue
 
-                # Generate AI reply
-                reply = generate_reply(
+                # Generate AI reply (run in thread to avoid blocking event loop)
+                reply = await asyncio.to_thread(
+                    generate_reply,
                     message=text,
                     customer_phone=sender,
                     customer_name=name,

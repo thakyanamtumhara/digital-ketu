@@ -406,11 +406,16 @@ Extract from this voice note (JSON):
 Return ONLY valid JSON. Focus on NEW info not already known."""
 
     try:
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=800,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        import asyncio
+
+        def _call_claude():
+            return client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=800,
+                messages=[{"role": "user", "content": prompt}],
+            )
+
+        response = await asyncio.to_thread(_call_claude)
 
         result_text = response.content[0].text
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
@@ -463,7 +468,7 @@ Return ONLY valid JSON. Focus on NEW info not already known."""
         from learner.chat_learner import apply_knowledge_updates
         from core.knowledge import invalidate_cache
 
-        result = apply_knowledge_updates(updates)
+        result = await asyncio.to_thread(apply_knowledge_updates, updates)
         if result.get("count", 0) > 0:
             invalidate_cache()
 

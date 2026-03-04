@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, Request
@@ -75,8 +76,9 @@ async def handle_indiamart_lead(request: Request):
             "Pehle greet karo, product info do, price batao, aur next step batao."
         )
 
-        # Generate AI reply
-        reply = generate_reply(
+        # Generate AI reply (run in thread to avoid blocking event loop)
+        reply = await asyncio.to_thread(
+            generate_reply,
             message=message,
             customer_phone=phone,
             customer_name=lead_info["name"],

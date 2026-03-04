@@ -287,7 +287,9 @@ async def backfill_youtube_channel(batch_size: int | None = None) -> dict:
         logger.info(f"Backfill: Processing [{len(processed) + 1}/{state['total']}] {title}")
 
         try:
-            result = process_video(
+            # Run synchronous process_video in thread to avoid blocking event loop
+            result = await asyncio.to_thread(
+                process_video,
                 video_url=f"https://www.youtube.com/watch?v={video_id}",
                 video_title=title,
             )
@@ -295,7 +297,7 @@ async def backfill_youtube_channel(batch_size: int | None = None) -> dict:
             if result.get("status") == "ok" and result.get("knowledge"):
                 knowledge = result["knowledge"]
                 mapped_updates = _map_youtube_knowledge(knowledge)
-                applied = apply_knowledge_updates(mapped_updates)
+                applied = await asyncio.to_thread(apply_knowledge_updates, mapped_updates)
 
                 if applied.get("count", 0) > 0:
                     logger.info(f"Backfill: Applied {applied['count']} updates from: {title}")
@@ -398,8 +400,9 @@ async def check_youtube_channel():
 
             logger.info(f"New video found: {title} ({video_id})")
 
-            # Process video — get transcript and extract knowledge
-            result = process_video(
+            # Process video in thread — avoid blocking event loop
+            result = await asyncio.to_thread(
+                process_video,
                 video_url=f"https://www.youtube.com/watch?v={video_id}",
                 video_title=title,
             )
@@ -409,7 +412,7 @@ async def check_youtube_channel():
 
                 # Map YouTube extraction format to apply_knowledge_updates format
                 mapped_updates = _map_youtube_knowledge(knowledge)
-                applied = apply_knowledge_updates(mapped_updates)
+                applied = await asyncio.to_thread(apply_knowledge_updates, mapped_updates)
 
                 if applied.get("count", 0) > 0:
                     logger.info(f"Applied {applied['count']} updates from video: {title}")
@@ -505,7 +508,7 @@ async def catalog_sync_loop():
 
                 # Validate FAQs against updated catalog
                 try:
-                    validation = validate_faqs_against_catalog()
+                    validation = await asyncio.to_thread(validate_faqs_against_catalog)
                     if validation.get("deactivated") or validation.get("price_warnings"):
                         log_activity(
                             source="faq-validator",

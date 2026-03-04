@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import httpx
@@ -143,7 +144,7 @@ async def check_and_reply_comments():
                 "sale91.com ka mention karo."
             )
 
-            reply = generate_reply(message=message)
+            reply = await asyncio.to_thread(generate_reply, message=message)
             await reply_to_comment(comment_id, reply)
 
             _replied_comments.add(comment_id)
