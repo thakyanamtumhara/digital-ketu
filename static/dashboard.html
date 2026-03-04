@@ -1698,17 +1698,6 @@ function renderScheduler() {
     document.getElementById('whatsappLast').textContent = `Last sync: ${formatAgo(wa.last_run_ago)}`;
     document.getElementById('whatsappTime').textContent = 'On Demand';
   }
-
-  // Also update the detail line from wwbun stats
-  try {
-    const ws = await fetchJSON('/api/wwbun/stats');
-    if (ws) {
-      const det = document.getElementById('whatsappSyncDetail');
-      if (ws.total_syncs > 0) {
-        det.textContent = `${ws.today_messages || 0} msgs today | ${ws.today_quality || 0} quality | ${ws.total_syncs} total syncs`;
-      }
-    }
-  } catch(e) {}
 }
 
 // Local countdown ticker — updates every second without hitting API
@@ -2051,6 +2040,12 @@ async function loadWwbunStats() {
   const lastSync = document.getElementById('wwbunLastSync');
   lastSync.textContent = data.last_sync_time ? 'Last sync: ' + data.last_sync_time : '';
 
+  // Update WhatsApp Sync card detail line too
+  const det = document.getElementById('whatsappSyncDetail');
+  if (det && data.total_syncs > 0) {
+    det.textContent = `${data.today_messages || 0} msgs today | ${data.today_quality || 0} quality | ${data.total_syncs} total syncs`;
+  }
+
   // Recent quality messages
   const listEl = document.getElementById('wwbunRecentList');
   const recent = data.recent_quality_messages || [];
@@ -2106,20 +2101,25 @@ async function loadAudioStats() {
 
 // ---- INIT & AUTO-REFRESH ----
 
+// Safely run a function — never let one failure break the whole dashboard
+function safe(fn) {
+  return fn().catch(e => console.error('Dashboard load error:', e));
+}
+
 async function init() {
-  await Promise.all([
-    checkHealth(),
-    loadDashboard(),
-    loadStorage(),
-    loadKnowledge(),
-    loadScheduler(),
-    loadBackfillStatus(),
-    loadErrors(),
-    loadInsights(),
-    loadConversations(),
-    loadCosts(),
-    loadAudioStats(),
-    loadWwbunStats(),
+  await Promise.allSettled([
+    safe(checkHealth),
+    safe(loadDashboard),
+    safe(loadStorage),
+    safe(loadKnowledge),
+    safe(loadScheduler),
+    safe(loadBackfillStatus),
+    safe(loadErrors),
+    safe(loadInsights),
+    safe(loadConversations),
+    safe(loadCosts),
+    safe(loadAudioStats),
+    safe(loadWwbunStats),
   ]);
 
   // Countdown ticks every second (local, no API call)
@@ -2127,17 +2127,17 @@ async function init() {
 
   // Full refresh from API every 30 seconds
   autoRefreshInterval = setInterval(async () => {
-    await Promise.all([
-      checkHealth(),
-      loadDashboard(),
-      loadStorage(),
-      loadScheduler(),
-      loadBackfillStatus(),
-      loadErrors(),
-      loadInsights(),
-      loadCosts(),
-      loadAudioStats(),
-      loadWwbunStats(),
+    await Promise.allSettled([
+      safe(checkHealth),
+      safe(loadDashboard),
+      safe(loadStorage),
+      safe(loadScheduler),
+      safe(loadBackfillStatus),
+      safe(loadErrors),
+      safe(loadInsights),
+      safe(loadCosts),
+      safe(loadAudioStats),
+      safe(loadWwbunStats),
     ]);
   }, 30000);
 }
