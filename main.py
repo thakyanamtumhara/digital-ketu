@@ -45,6 +45,11 @@ from learner.realtime_learner import (
     learn_from_voice_note,
     get_realtime_stats,
 )
+from core.conversation_log import (
+    get_recent_conversations,
+    get_last_ai_reply,
+    init_conversation_log_table,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,6 +70,7 @@ async def lifespan(app: FastAPI):
         db_ready = init_db()
         if db_ready:
             seed_from_json_files(KNOWLEDGE_DIR)
+            init_conversation_log_table()
             logger.info("PostgreSQL ready — data persists across deploys")
         else:
             logger.info("No DATABASE_URL — running in JSON-only mode")
@@ -548,6 +554,32 @@ async def learn_voice_note(req: VoiceNoteRequest):
         )
 
     return result
+
+
+# --- Conversation Log (for correction review) ---
+
+
+@app.get("/api/conversations/recent")
+async def recent_conversations(limit: int = 20):
+    """Recent AI conversations for review.
+
+    Ketu uses this to check what AI replied to customers.
+    Also used by wwbun to detect corrections.
+    """
+    return {"conversations": get_recent_conversations(limit)}
+
+
+@app.get("/api/conversations/last-reply")
+async def last_reply_to_customer(phone: str):
+    """Get the last AI reply to a specific customer.
+
+    wwbun calls this when Ketu manually messages a customer —
+    to check if AI already replied (potential correction scenario).
+    """
+    entry = get_last_ai_reply(phone)
+    if not entry:
+        return {"found": False}
+    return {"found": True, "conversation": entry}
 
 
 # --- Realtime Learner Stats ---

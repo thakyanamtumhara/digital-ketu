@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     # PostgreSQL (primary storage — Railway auto-sets DATABASE_URL)
     database_url: str = ""
 
+    # Admin (Ketu's personal WhatsApp number for corrections)
+    admin_phone: str = ""
+
     # Server
     port: int = 8000
     auto_reply_enabled: bool = True
