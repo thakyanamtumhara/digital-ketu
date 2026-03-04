@@ -32,10 +32,13 @@ class Settings(BaseSettings):
     youtube_api_key: str = ""
     youtube_channel_id: str = ""
 
-    # GitHub Auto-Persist (saves learned knowledge back to repo)
+    # GitHub Auto-Persist (backup — saves learned knowledge back to repo)
     github_token: str = ""
     github_repo: str = "thakyanamtumhara/digital-ketu"
     github_branch: str = "main"
+
+    # PostgreSQL (primary storage — Railway auto-sets DATABASE_URL)
+    database_url: str = ""
 
     # Server
     port: int = 8000

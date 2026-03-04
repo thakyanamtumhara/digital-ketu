@@ -19,12 +19,24 @@ def load_knowledge() -> dict:
 
     knowledge = {}
 
-    # Load main knowledge files
-    for file in KNOWLEDGE_DIR.glob("*.json"):
-        with open(file, "r", encoding="utf-8") as f:
-            knowledge[file.stem] = json.load(f)
+    # Try DB first, fall back to JSON files
+    from core.database import is_db_available, load_all_knowledge_from_db
+    if is_db_available():
+        db_data = load_all_knowledge_from_db()
+        if db_data:
+            knowledge = db_data
+            logger.debug("Knowledge loaded from DB")
 
-    # Load learned knowledge (from YouTube videos, chat learning, etc.)
+    # Fall back to JSON files (or fill gaps)
+    if not knowledge:
+        for file in KNOWLEDGE_DIR.glob("*.json"):
+            if file.name == "activity_log.json":
+                continue
+            with open(file, "r", encoding="utf-8") as f:
+                knowledge[file.stem] = json.load(f)
+        logger.debug("Knowledge loaded from JSON files")
+
+    # Load learned knowledge
     learned_knowledge = _load_learned_knowledge()
     if learned_knowledge:
         knowledge["learned"] = learned_knowledge
@@ -35,14 +47,33 @@ def load_knowledge() -> dict:
 
 
 def _load_learned_knowledge() -> list[dict]:
-    """Load all learned knowledge files from the learned/ directory."""
+    """Load learned knowledge from DB first, then JSON files."""
+    learned = []
+
+    # Try DB
+    from core.database import is_db_available, list_learned_files, load_learned_file
+    if is_db_available():
+        files = list_learned_files()
+        for f in files:
+            fname = f["file"]
+            if fname.startswith("_") or not fname.endswith(".json"):
+                continue
+            content = load_learned_file(fname)
+            if content:
+                try:
+                    learned.append(json.loads(content))
+                except Exception:
+                    pass
+        if learned:
+            return learned
+
+    # Fall back to JSON files
     if not LEARNED_DIR.exists():
         return []
 
-    learned = []
     for file in LEARNED_DIR.glob("*.json"):
         if file.name.startswith("_"):
-            continue  # Skip internal files like _processed_videos.json
+            continue
         try:
             with open(file, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -92,7 +123,6 @@ def format_context() -> str:
         for item in p.get("catalog", []):
             colors = ", ".join(item.get("colors", []))
             sizes = ", ".join(item.get("sizes", []))
-            # Handle both old format (price_range) and new format (bulk_price/sample_price)
             if "bulk_price" in item:
                 price_str = f"Rs {item['bulk_price']}/pc (bulk) | Rs {item['sample_price']}/pc (sample)"
             else:
@@ -195,11 +225,8 @@ def format_context() -> str:
             title = item.get("title", "Unknown video")
             k = item.get("knowledge", {})
 
-            # Extract useful info
             key_points = k.get("key_points", [])
-            product_info = k.get("product_info", [])
             pricing = k.get("pricing", [])
-            business = k.get("business_knowledge", [])
 
             parts = [f"**{title}**:"]
             if key_points:

@@ -451,9 +451,27 @@ def apply_knowledge_updates(updates: dict) -> dict:
         except Exception as e:
             logger.error(f"Prompt evolution error: {e}")
 
-    # Auto-persist to GitHub so knowledge survives deploys
+    # Persist to DB (primary) + GitHub (backup)
     if applied:
+        _sync_knowledge_to_db()
         from core.git_persist import persist_knowledge_files
         persist_knowledge_files(source="knowledge-update")
 
     return {"applied": applied, "count": len(applied)}
+
+
+def _sync_knowledge_to_db():
+    """Sync all knowledge JSON files to PostgreSQL after updates."""
+    from core.database import is_db_available, save_knowledge
+    if not is_db_available():
+        return
+
+    for name in ["faq", "style", "prompt", "products", "company"]:
+        path = KNOWLEDGE_DIR / f"{name}.json"
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                save_knowledge(name, data)
+            except Exception as e:
+                logger.error(f"DB sync {name} failed: {e}")

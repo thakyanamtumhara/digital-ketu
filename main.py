@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from core.config import settings, init_knowledge_dir
+from core.config import settings, init_knowledge_dir, KNOWLEDGE_DIR
 from core.engine import generate_reply
 from core.knowledge import load_knowledge, invalidate_cache
 from core.activity_log import log_activity, get_activity_log, get_today_summary, get_storage_stats
@@ -49,14 +49,28 @@ async def lifespan(app: FastAPI):
     # Ensure knowledge directories exist
     init_knowledge_dir()
 
-    # Restore evolved knowledge from GitHub (survives ephemeral deploys)
-    from core.git_persist import restore_knowledge_from_github
+    # Initialize PostgreSQL (create tables, seed from JSON if first run)
+    from core.database import init_db, seed_from_json_files, is_db_available
+    db_ready = False
     try:
-        restored = restore_knowledge_from_github()
-        if restored:
-            logger.info(f"Knowledge restored from GitHub: {restored}")
+        db_ready = init_db()
+        if db_ready:
+            seed_from_json_files(KNOWLEDGE_DIR)
+            logger.info("PostgreSQL ready — data persists across deploys")
+        else:
+            logger.info("No DATABASE_URL — running in JSON-only mode")
     except Exception as e:
-        logger.error(f"Knowledge restore failed (non-fatal): {e}")
+        logger.error(f"DB init failed (non-fatal, using JSON fallback): {e}")
+
+    # Restore evolved knowledge from GitHub (backup for JSON-only mode)
+    if not db_ready:
+        from core.git_persist import restore_knowledge_from_github
+        try:
+            restored = restore_knowledge_from_github()
+            if restored:
+                logger.info(f"Knowledge restored from GitHub: {restored}")
+        except Exception as e:
+            logger.error(f"Knowledge restore failed (non-fatal): {e}")
 
     # Startup: load knowledge base
     logger.info("Loading knowledge base...")
@@ -65,7 +79,10 @@ async def lifespan(app: FastAPI):
     # Start background scheduler (YouTube auto-check, knowledge refresh)
     start_scheduler()
 
-    logger.info("Digital Ketu is ready! Auto-learning scheduler active.")
+    logger.info(
+        f"Digital Ketu is ready! Storage: {'PostgreSQL' if db_ready else 'JSON files'}. "
+        f"Auto-learning scheduler active."
+    )
     yield
     # Shutdown
     logger.info("Digital Ketu shutting down")

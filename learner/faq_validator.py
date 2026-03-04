@@ -32,6 +32,10 @@ def _save_faq(faq_data: dict):
     faq_path = KNOWLEDGE_DIR / "faq.json"
     with open(faq_path, "w", encoding="utf-8") as f:
         json.dump(faq_data, f, indent=2, ensure_ascii=False)
+    # Also save to DB
+    from core.database import is_db_available, save_knowledge
+    if is_db_available():
+        save_knowledge("faq", faq_data)
 
 
 def _load_catalog() -> list[dict]:

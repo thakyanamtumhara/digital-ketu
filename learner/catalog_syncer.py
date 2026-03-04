@@ -128,6 +128,11 @@ async def sync_catalog() -> dict:
     with open(products_path, "w", encoding="utf-8") as f:
         json.dump(knowledge_products, f, indent=2, ensure_ascii=False)
 
+    # Save to DB
+    from core.database import is_db_available, save_knowledge, save_learned_file
+    if is_db_available():
+        save_knowledge("products", knowledge_products)
+
     # Also fetch and save llms-full.txt for reference
     llms_text = await fetch_catalog_llms_text()
     if llms_text:
@@ -135,6 +140,8 @@ async def sync_catalog() -> dict:
         llms_path.parent.mkdir(exist_ok=True)
         with open(llms_path, "w", encoding="utf-8") as f:
             f.write(llms_text)
+        if is_db_available():
+            save_learned_file("catalog_llms_full.txt", llms_text)
 
     logger.info(f"Catalog synced: {product_count} products updated from GitHub repo")
 

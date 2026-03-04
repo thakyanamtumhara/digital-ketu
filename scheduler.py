@@ -85,7 +85,13 @@ def get_scheduler_status() -> dict:
 
 
 def _load_processed_videos() -> set[str]:
-    """Load set of already-processed YouTube video IDs."""
+    """Load set of already-processed YouTube video IDs. DB first, JSON fallback."""
+    from core.database import is_db_available, kv_get
+    if is_db_available():
+        data = kv_get("_processed_videos", {})
+        if data and isinstance(data, dict) and data.get("video_ids"):
+            return set(data["video_ids"])
+
     if _processed_videos_file.exists():
         try:
             with open(_processed_videos_file, "r") as f:
@@ -97,14 +103,23 @@ def _load_processed_videos() -> set[str]:
 
 
 def _save_processed_video(video_id: str):
-    """Add a video ID to the processed list."""
+    """Add a video ID to the processed list. Save to DB + JSON + GitHub."""
     LEARNED_DIR.mkdir(exist_ok=True)
     processed = _load_processed_videos()
     processed.add(video_id)
-    with open(_processed_videos_file, "w") as f:
-        json.dump({"video_ids": list(processed)}, f)
 
-    # Persist to GitHub so we don't re-process videos after deploy
+    data = {"video_ids": list(processed)}
+
+    # Save to JSON file
+    with open(_processed_videos_file, "w") as f:
+        json.dump(data, f)
+
+    # Save to DB (primary)
+    from core.database import is_db_available, kv_set
+    if is_db_available():
+        kv_set("_processed_videos", data)
+
+    # Persist to GitHub (backup)
     from core.git_persist import persist_single_file
     persist_single_file(
         "knowledge/learned/_processed_videos.json",
@@ -114,7 +129,13 @@ def _save_processed_video(video_id: str):
 
 
 def _load_backfill_state() -> dict:
-    """Load backfill state — tracks which old videos are pending."""
+    """Load backfill state. DB first, JSON fallback."""
+    from core.database import is_db_available, kv_get
+    if is_db_available():
+        data = kv_get("_backfill_state", {})
+        if data and isinstance(data, dict) and data.get("fetched"):
+            return data
+
     if _backfill_state_file.exists():
         try:
             with open(_backfill_state_file, "r") as f:
@@ -125,12 +146,17 @@ def _load_backfill_state() -> dict:
 
 
 def _save_backfill_state(state: dict):
-    """Save backfill state."""
+    """Save backfill state to DB + JSON + GitHub."""
     LEARNED_DIR.mkdir(exist_ok=True)
     with open(_backfill_state_file, "w") as f:
         json.dump(state, f)
 
-    # Persist to GitHub so backfill progress survives deploys
+    # Save to DB (primary)
+    from core.database import is_db_available, kv_set
+    if is_db_available():
+        kv_set("_backfill_state", state)
+
+    # Persist to GitHub (backup)
     from core.git_persist import persist_single_file
     persist_single_file(
         "knowledge/learned/_backfill_state.json",
