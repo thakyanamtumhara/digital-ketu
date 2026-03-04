@@ -225,7 +225,7 @@ async def receive_message(request: Request):
                     audio_info = msg.get("audio", {})
                     media_id = audio_info.get("id", "")
                     if media_id and settings.openai_api_key:
-                        text = await process_whatsapp_audio(media_id) or ""
+                        text = await process_whatsapp_audio(media_id, customer_phone=sender) or ""
                         if text:
                             logger.info(f"Audio transcribed from {sender}: {text[:60]}...")
                     else:

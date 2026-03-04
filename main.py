@@ -879,6 +879,17 @@ async def api_costs():
     return get_cost_summary()
 
 
+@app.get("/api/audio/stats")
+async def audio_stats():
+    """Audio transcription stats — how many voice notes transcribed today/total.
+
+    Shows that Digital Ketu is receiving audio messages, converting them to text
+    via Whisper, and using the text for replies and knowledge.
+    """
+    from learner.audio_transcriber import get_audio_stats
+    return get_audio_stats()
+
+
 @app.get("/api/rate-limit/stats")
 async def rate_limit_stats():
     """Rate limiting stats for dashboard.

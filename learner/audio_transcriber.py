@@ -16,6 +16,100 @@ from core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# --- Audio Transcription Tracking ---
+_audio_stats = {
+    "total_transcribed": 0,
+    "total_failed": 0,
+    "today_transcribed": 0,
+    "today_failed": 0,
+    "today_date": "",
+    "recent_transcriptions": [],  # Last 20 transcription previews
+}
+_audio_stats_loaded = False
+
+
+def _load_audio_stats():
+    """Load audio stats from DB on first access."""
+    global _audio_stats, _audio_stats_loaded
+    if _audio_stats_loaded:
+        return
+    _audio_stats_loaded = True
+    try:
+        from core.database import is_db_available, kv_get
+        if is_db_available():
+            saved = kv_get("audio_transcription_stats")
+            if saved and isinstance(saved, dict):
+                _audio_stats.update(saved)
+    except Exception as e:
+        logger.warning(f"[Audio Stats] DB load failed: {e}")
+
+
+def _save_audio_stats():
+    """Persist audio stats to DB."""
+    try:
+        from core.database import is_db_available, kv_set
+        if is_db_available():
+            kv_set("audio_transcription_stats", _audio_stats)
+    except Exception:
+        pass
+
+
+def _reset_today_if_needed():
+    """Reset today's counters if it's a new day."""
+    from datetime import datetime, timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    today = datetime.now(ist).strftime("%d %b %Y")
+    if _audio_stats["today_date"] != today:
+        _audio_stats["today_date"] = today
+        _audio_stats["today_transcribed"] = 0
+        _audio_stats["today_failed"] = 0
+
+
+def _track_transcription(text: str, customer_phone: str = "", source: str = "whatsapp"):
+    """Track a successful audio transcription."""
+    _load_audio_stats()
+    _reset_today_if_needed()
+
+    from datetime import datetime, timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+
+    _audio_stats["total_transcribed"] += 1
+    _audio_stats["today_transcribed"] += 1
+
+    _audio_stats["recent_transcriptions"].append({
+        "text_preview": text[:100],
+        "phone_last4": customer_phone[-4:] if customer_phone else "",
+        "source": source,
+        "time": datetime.now(ist).strftime("%I:%M %p"),
+        "date": _audio_stats["today_date"],
+    })
+    # Keep only last 20
+    _audio_stats["recent_transcriptions"] = _audio_stats["recent_transcriptions"][-20:]
+
+    _save_audio_stats()
+
+
+def _track_transcription_failure():
+    """Track a failed audio transcription."""
+    _load_audio_stats()
+    _reset_today_if_needed()
+    _audio_stats["total_failed"] += 1
+    _audio_stats["today_failed"] += 1
+    _save_audio_stats()
+
+
+def get_audio_stats() -> dict:
+    """Get audio transcription stats for dashboard."""
+    _load_audio_stats()
+    _reset_today_if_needed()
+    return {
+        "total_transcribed": _audio_stats["total_transcribed"],
+        "total_failed": _audio_stats["total_failed"],
+        "today_transcribed": _audio_stats["today_transcribed"],
+        "today_failed": _audio_stats["today_failed"],
+        "recent_transcriptions": _audio_stats["recent_transcriptions"][-10:],
+    }
+
 
 async def download_whatsapp_media(media_id: str) -> bytes | None:
     """Download media from WhatsApp Business API using media ID.
@@ -84,21 +178,38 @@ async def transcribe_audio(audio_bytes: bytes, language: str = "hi") -> str | No
                 return text
             else:
                 logger.warning("Whisper returned empty transcription")
+                _track_transcription_failure()
                 return None
 
     except Exception as e:
         logger.error(f"Whisper transcription failed: {e}")
+        _track_transcription_failure()
         return None
 
 
-async def process_whatsapp_audio(media_id: str, language: str = "hi") -> str | None:
+async def process_whatsapp_audio(
+    media_id: str,
+    language: str = "hi",
+    customer_phone: str = "",
+) -> str | None:
     """Full pipeline: download WhatsApp audio → transcribe → return text.
 
     Audio bytes are NOT stored — only returned as text.
+    Tracks transcription stats for dashboard visibility.
     """
     audio_bytes = await download_whatsapp_media(media_id)
     if not audio_bytes:
+        _track_transcription_failure()
         return None
 
     text = await transcribe_audio(audio_bytes, language=language)
+    if text:
+        _track_transcription(text, customer_phone=customer_phone, source="whatsapp")
+
+        # Track Whisper cost
+        from core.cost_tracker import track_whisper_cost
+        # Estimate audio duration from file size (OGG ~16kbps for voice)
+        estimated_seconds = len(audio_bytes) / 2000  # rough estimate
+        track_whisper_cost(duration_seconds=estimated_seconds, source="whatsapp-audio")
+
     return text
