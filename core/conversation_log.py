@@ -54,7 +54,7 @@ def log_conversation(
                 (customer_phone, customer_name, customer_message, ai_reply, now),
             )
     except Exception as e:
-        logger.debug(f"DB conversation log save failed (non-fatal): {e}")
+        logger.warning(f"[ConvoLog] DB save failed: {e}")
 
 
 def get_recent_conversations(limit: int = 20) -> list[dict]:
@@ -92,12 +92,54 @@ def get_recent_conversations(limit: int = 20) -> list[dict]:
                     })
                 return result
     except Exception as e:
-        logger.debug(f"DB conversation log read failed: {e}")
+        logger.warning(f"[ConvoLog] DB read failed: {e}")
 
     # Fallback to in-memory
     entries = list(_conversation_log)
     entries.reverse()  # newest first
-    return entries[:limit]
+    if entries:
+        return entries[:limit]
+
+    # Second fallback: use activity_log entries (always has AI reply data)
+    try:
+        from core.database import is_db_available, _execute
+        if is_db_available():
+            rows = _execute(
+                """SELECT details, timestamp
+                   FROM activity_log
+                   WHERE action = 'ai-reply' AND source = 'whatsapp'
+                   ORDER BY timestamp DESC
+                   LIMIT %s""",
+                (limit,),
+                fetch=True,
+            )
+            if rows:
+                result = []
+                for r in rows:
+                    details = r.get("details", {}) or {}
+                    if isinstance(details, str):
+                        import json
+                        try:
+                            details = json.loads(details)
+                        except Exception:
+                            details = {}
+                    ts = r["timestamp"]
+                    if hasattr(ts, "astimezone"):
+                        ts = ts.astimezone(IST)
+                    result.append({
+                        "customer_phone": details.get("customer_phone", ""),
+                        "customer_name": details.get("customer_name", ""),
+                        "customer_message": details.get("customer_message", details.get("message", "")),
+                        "ai_reply": details.get("ai_reply", details.get("reply", "")),
+                        "time": ts.strftime("%I:%M %p") if hasattr(ts, "strftime") else str(ts),
+                        "date": ts.strftime("%d %b") if hasattr(ts, "strftime") else "",
+                        "corrected": False,
+                    })
+                return result
+    except Exception as e:
+        logger.warning(f"[ConvoLog] Activity log fallback failed: {e}")
+
+    return []
 
 
 def get_last_ai_reply(customer_phone: str) -> dict | None:

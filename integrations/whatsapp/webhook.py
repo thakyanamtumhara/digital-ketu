@@ -21,6 +21,75 @@ _seen_messages: OrderedDict[str, float] = OrderedDict()
 _SEEN_MAX = 1000
 _SEEN_TTL = 300  # 5 minutes
 
+# --- Rate Limiting ---
+# Per-customer: max messages per window to prevent spam/cost burning
+_customer_msg_timestamps: dict[str, list[float]] = {}
+_RATE_LIMIT_PER_CUSTOMER = 10  # max 10 msgs per customer per window
+_RATE_LIMIT_WINDOW = 3600  # 1 hour window
+
+# Global: total AI calls per hour to protect API budget
+_global_reply_timestamps: list[float] = []
+_GLOBAL_RATE_LIMIT = 100  # max 100 AI replies per hour
+
+# Night hours (IST): restrict auto-replies during sleeping hours
+_NIGHT_START = 23  # 11 PM IST
+_NIGHT_END = 7  # 7 AM IST
+_NIGHT_LIMIT_PER_CUSTOMER = 3  # only 3 replies per customer at night
+
+
+def _is_rate_limited(phone: str) -> str | None:
+    """Check if this customer or global rate is exceeded.
+    Returns reason string if limited, None if OK.
+    """
+    now = time.time()
+
+    # Clean old entries
+    cutoff = now - _RATE_LIMIT_WINDOW
+
+    # Per-customer check
+    if phone in _customer_msg_timestamps:
+        _customer_msg_timestamps[phone] = [
+            t for t in _customer_msg_timestamps[phone] if t > cutoff
+        ]
+        count = len(_customer_msg_timestamps[phone])
+        if count >= _RATE_LIMIT_PER_CUSTOMER:
+            return f"customer_limit ({count}/{_RATE_LIMIT_PER_CUSTOMER} per hour)"
+    else:
+        _customer_msg_timestamps[phone] = []
+
+    # Night mode check (IST)
+    from datetime import datetime, timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    hour_ist = datetime.now(ist).hour
+    is_night = hour_ist >= _NIGHT_START or hour_ist < _NIGHT_END
+    if is_night:
+        count = len(_customer_msg_timestamps.get(phone, []))
+        if count >= _NIGHT_LIMIT_PER_CUSTOMER:
+            return f"night_limit ({count}/{_NIGHT_LIMIT_PER_CUSTOMER} between {_NIGHT_START}:00-{_NIGHT_END}:00 IST)"
+
+    # Global check
+    _global_reply_timestamps[:] = [t for t in _global_reply_timestamps if t > cutoff]
+    if len(_global_reply_timestamps) >= _GLOBAL_RATE_LIMIT:
+        return f"global_limit ({len(_global_reply_timestamps)}/{_GLOBAL_RATE_LIMIT} per hour)"
+
+    return None
+
+
+def _record_reply(phone: str):
+    """Record that a reply was sent (for rate tracking)."""
+    now = time.time()
+    _customer_msg_timestamps.setdefault(phone, []).append(now)
+    _global_reply_timestamps.append(now)
+
+    # Trim old data to prevent memory growth
+    if len(_customer_msg_timestamps) > 500:
+        oldest_phones = sorted(
+            _customer_msg_timestamps.keys(),
+            key=lambda p: _customer_msg_timestamps[p][-1] if _customer_msg_timestamps[p] else 0,
+        )[:250]
+        for p in oldest_phones:
+            del _customer_msg_timestamps[p]
+
 
 def _is_duplicate(message_id: str) -> bool:
     """Check if message was already processed. Returns True if duplicate."""
@@ -153,6 +222,21 @@ async def receive_message(request: Request):
 
                 logger.info(f"Message from {sender} ({name}): {text}")
 
+                # Rate limit check — prevent spam/abuse/cost burning
+                rate_reason = _is_rate_limited(sender)
+                if rate_reason:
+                    logger.warning(f"Rate limited {sender}: {rate_reason}")
+                    # Don't reply — silently skip to avoid engaging spammers
+                    # Only send a polite message for the first rate-limit hit
+                    if "customer_limit" in rate_reason or "night_limit" in rate_reason:
+                        count = len(_customer_msg_timestamps.get(sender, []))
+                        if count == _RATE_LIMIT_PER_CUSTOMER or count == _NIGHT_LIMIT_PER_CUSTOMER:
+                            await send_text_message(
+                                to=sender,
+                                message="Ji, bahut saare messages aa rahe hain. Thodi der mein reply karta hun. Aap sale91.com pe bhi dekh sakte hain.",
+                            )
+                    continue
+
                 # Generate AI reply
                 reply = generate_reply(
                     message=text,
@@ -162,6 +246,7 @@ async def receive_message(request: Request):
 
                 # Send reply
                 await send_text_message(to=sender, message=reply)
+                _record_reply(sender)
                 logger.info(f"Replied to {sender}: {reply[:50]}...")
 
                 # Log conversation for later review/correction
@@ -170,6 +255,19 @@ async def receive_message(request: Request):
                     customer_name=name,
                     customer_message=text,
                     ai_reply=reply,
+                )
+
+                # Also log to activity (backup — visible in dashboard)
+                from core.activity_log import log_activity
+                log_activity(
+                    source="whatsapp",
+                    action="ai-reply",
+                    details={
+                        "customer_phone": sender,
+                        "customer_name": name,
+                        "customer_message": text[:200],
+                        "ai_reply": reply[:200],
+                    },
                 )
 
                 # Buffer for realtime learning (non-blocking)

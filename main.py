@@ -478,6 +478,47 @@ async def youtube_backfill_status_short():
     return get_backfill_status()
 
 
+@app.get("/api/youtube/processed-videos")
+async def youtube_processed_videos():
+    """Get list of all YouTube videos with their processing status.
+
+    Combines backfill state (all video IDs + titles) with processed_videos
+    set to show which videos have been processed and which are pending.
+    """
+    from core.database import is_db_available, kv_get
+
+    all_videos = []
+    processed_ids = set()
+
+    if is_db_available():
+        # Get backfill state (has all video IDs with titles)
+        backfill = kv_get("_backfill_state", {})
+        if backfill and isinstance(backfill, dict):
+            all_videos = backfill.get("all_video_ids", [])
+
+        # Get processed video IDs
+        pv = kv_get("_processed_videos", {})
+        if pv and isinstance(pv, dict):
+            processed_ids = set(pv.get("video_ids", []))
+
+    videos = []
+    for v in all_videos:
+        vid = v.get("video_id", "") if isinstance(v, dict) else str(v)
+        title = v.get("title", "Untitled") if isinstance(v, dict) else "Untitled"
+        videos.append({
+            "video_id": vid,
+            "title": title,
+            "processed": vid in processed_ids,
+        })
+
+    return {
+        "total": len(videos),
+        "processed": len([v for v in videos if v["processed"]]),
+        "pending": len([v for v in videos if not v["processed"]]),
+        "videos": videos,
+    }
+
+
 @app.post("/api/learn/catalog-sync")
 async def sync_catalog_endpoint():
     """Manually trigger catalog sync from GitHub repo.

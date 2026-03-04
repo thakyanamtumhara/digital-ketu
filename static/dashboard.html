@@ -1259,13 +1259,12 @@ async function loadYouTubeVideos() {
   const tab = document.getElementById('tab-ytvideos');
   tab.innerHTML = '<div class="empty-state">Loading YouTube data...</div>';
 
-  const [learnedData, backfillData, activityData] = await Promise.all([
-    fetchJSON('/api/learned-files'),
+  const [videoData, backfillData] = await Promise.all([
+    fetchJSON('/api/youtube/processed-videos'),
     fetchJSON('/api/learn/youtube-backfill/status'),
-    fetchJSON('/api/dashboard/activity?source=youtube&limit=100'),
   ]);
 
-  if (!learnedData && !backfillData && !activityData) {
+  if (!videoData && !backfillData) {
     tab.innerHTML = '<div class="empty-state">Could not load YouTube data</div>';
     return;
   }
@@ -1273,17 +1272,19 @@ async function loadYouTubeVideos() {
   let html = '';
 
   // Backfill progress summary
-  if (backfillData) {
-    const total = backfillData.total || 0;
-    const done = backfillData.processed || 0;
-    const remaining = backfillData.remaining || 0;
-    const pct = backfillData.progress_pct || 0;
-    const statusColor = backfillData.status === 'complete' ? 'var(--green)' : 'var(--orange)';
+  const total = videoData ? videoData.total : (backfillData ? backfillData.total : 0);
+  const done = videoData ? videoData.processed : (backfillData ? backfillData.processed : 0);
+  const pending = videoData ? videoData.pending : (backfillData ? backfillData.remaining : 0);
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const statusColor = pending === 0 ? 'var(--green)' : 'var(--orange)';
+
+  if (total > 0) {
     html += `<div class="knowledge-section" style="padding:12px;background:rgba(214,48,49,0.05);border:1px solid rgba(214,48,49,0.15);border-radius:8px;margin-bottom:12px;">
-      <h4 style="color:var(--red);margin-bottom:8px;">Backfill Progress</h4>
+      <h4 style="color:var(--red);margin-bottom:8px;">YouTube Channel Processing</h4>
       <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:13px;">
-        <span><strong style="color:${statusColor}">${done}</strong> / ${total} videos done</span>
-        <span><strong style="color:var(--orange)">${remaining}</strong> remaining</span>
+        <span><strong style="color:var(--green)">${done}</strong> processed</span>
+        <span><strong style="color:var(--orange)">${pending}</strong> remaining</span>
+        <span>of <strong>${total}</strong> total</span>
         <span style="color:${statusColor};font-weight:600;">${pct}%</span>
       </div>
       <div style="margin-top:8px;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;">
@@ -1292,95 +1293,45 @@ async function loadYouTubeVideos() {
     </div>`;
   }
 
-  // Build video list from activity log (confirmed processed) + learned files (detailed)
-  const activityEntries = (activityData && activityData.entries) || [];
-  const ytActivity = activityEntries.filter(e => e.source === 'youtube');
+  // Video list from processed-videos endpoint
+  const videos = (videoData && videoData.videos) || [];
+  const processedVideos = videos.filter(v => v.processed);
+  const pendingVideos = videos.filter(v => !v.processed);
 
-  // Learned files with rich data
-  const files = (learnedData && learnedData.files) || [];
-  const learnedMap = {};
-  files.filter(f => f.file && f.file.startsWith('yt_')).forEach(f => {
-    const vid = f.file.replace('yt_', '').replace('.json', '');
-    learnedMap[vid] = f;
-  });
-
-  // Merge: use activity log as base (confirmed processed), enrich with learned file data
-  const videoList = [];
-  const seenIds = new Set();
-
-  for (const e of ytActivity) {
-    const d = e.details || {};
-    const videoId = d.video_id || '';
-    if (!videoId || seenIds.has(videoId)) continue;
-    seenIds.add(videoId);
-    const learned = learnedMap[videoId] || {};
-    videoList.push({
-      videoId,
-      title: d.video_title || learned.title || 'Untitled',
-      time: e.time || '',
-      date: e.date || '',
-      isBackfill: d.backfill || false,
-      updatesApplied: d.updates_applied || [],
-      keyPoints: learned.key_points || [],
-      hasProduct: learned.has_product_info || false,
-      hasPricing: learned.has_pricing || false,
-      hasFaqs: learned.has_faqs || false,
-      hasLearnedFile: !!learnedMap[videoId],
-    });
-  }
-
-  // Add any learned files not in activity
-  for (const [vid, f] of Object.entries(learnedMap)) {
-    if (!seenIds.has(vid)) {
-      videoList.push({
-        videoId: vid,
-        title: f.title || 'Untitled',
-        time: '',
-        date: f.updated_at ? new Date(f.updated_at).toLocaleDateString('en-IN', {day:'numeric',month:'short'}) : '',
-        isBackfill: false,
-        updatesApplied: [],
-        keyPoints: f.key_points || [],
-        hasProduct: f.has_product_info || false,
-        hasPricing: f.has_pricing || false,
-        hasFaqs: f.has_faqs || false,
-        hasLearnedFile: true,
-      });
-    }
-  }
-
-  if (videoList.length) {
-    html += `<div class="knowledge-section"><h4 style="margin-bottom:10px;">Processed Videos (${videoList.length})</h4>`;
-    html += videoList.slice(0, 60).map(v => {
-      let tags = '';
-      if (v.hasProduct) tags += '<span style="background:rgba(0,206,201,0.12);color:var(--accent2);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">Product</span>';
-      if (v.hasPricing) tags += '<span style="background:rgba(0,184,148,0.12);color:var(--green);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">Pricing</span>';
-      if (v.hasFaqs) tags += '<span style="background:rgba(253,203,110,0.12);color:var(--orange);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">FAQ</span>';
-      if (v.isBackfill) tags += '<span style="background:rgba(108,92,231,0.12);color:var(--accent);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;">Backfill</span>';
-
-      const updates = v.updatesApplied.slice(0, 2);
-      let detailHTML = '';
-      if (v.keyPoints.length) {
-        detailHTML = '<div style="margin-top:4px;">' + v.keyPoints.slice(0, 2).map(p => `<div style="font-size:11px;color:var(--text-dim);padding:1px 0;">- ${p}</div>`).join('') + '</div>';
-      } else if (updates.length) {
-        detailHTML = '<div style="margin-top:4px;">' + updates.map(u => `<div style="font-size:11px;color:var(--text-dim);padding:1px 0;">- ${u}</div>`).join('') + '</div>';
-      }
-
-      return `<div style="padding:10px 12px;margin-bottom:5px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-          <span style="background:rgba(214,48,49,0.15);color:var(--red);padding:3px 8px;border-radius:4px;font-weight:600;font-size:11px;">YT</span>
+  if (processedVideos.length) {
+    html += `<div class="knowledge-section"><h4 style="margin-bottom:10px;color:var(--green);">Read & Learned (${processedVideos.length})</h4>`;
+    html += processedVideos.slice(0, 80).map(v => {
+      return `<div style="padding:8px 12px;margin-bottom:4px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="background:rgba(0,184,148,0.15);color:var(--green);padding:3px 8px;border-radius:4px;font-weight:600;font-size:10px;">DONE</span>
           <span style="color:var(--text-bright);font-size:12px;font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${v.title}</span>
-          <span style="color:var(--text-dim);font-size:10px;white-space:nowrap;">${v.date} ${v.time}</span>
         </div>
-        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${tags || '<span style="font-size:10px;color:var(--green);">Processed</span>'}</div>
-        ${detailHTML}
       </div>`;
     }).join('');
-    if (videoList.length > 60) {
-      html += `<div style="text-align:center;padding:8px;color:var(--text-dim);font-size:12px;">+ ${videoList.length - 60} more videos</div>`;
+    if (processedVideos.length > 80) {
+      html += `<div style="text-align:center;padding:8px;color:var(--text-dim);font-size:12px;">+ ${processedVideos.length - 80} more</div>`;
     }
     html += '</div>';
-  } else {
-    html += '<div class="empty-state">No YouTube videos learned yet. Backfill will start automatically.</div>';
+  }
+
+  if (pendingVideos.length) {
+    html += `<div class="knowledge-section"><h4 style="margin-bottom:10px;color:var(--orange);">Pending (${pendingVideos.length})</h4>`;
+    html += pendingVideos.slice(0, 20).map(v => {
+      return `<div style="padding:6px 12px;margin-bottom:3px;background:rgba(255,255,255,0.01);border:1px solid rgba(255,255,255,0.03);border-radius:6px;opacity:0.7;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="background:rgba(253,203,110,0.12);color:var(--orange);padding:2px 6px;border-radius:4px;font-size:10px;">QUEUE</span>
+          <span style="color:var(--text-dim);font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${v.title}</span>
+        </div>
+      </div>`;
+    }).join('');
+    if (pendingVideos.length > 20) {
+      html += `<div style="text-align:center;padding:8px;color:var(--text-dim);font-size:12px;">+ ${pendingVideos.length - 20} more in queue</div>`;
+    }
+    html += '</div>';
+  }
+
+  if (!processedVideos.length && !pendingVideos.length) {
+    html += '<div class="empty-state">No YouTube videos found. Backfill will start automatically.</div>';
   }
 
   tab.innerHTML = html;
