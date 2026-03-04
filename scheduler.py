@@ -155,14 +155,48 @@ def _youtube_record_rate_limit():
     )
 
 
+def _load_scheduler_timestamps():
+    """Load last_run timestamps from DB — survives deploys."""
+    try:
+        from core.database import is_db_available, kv_get
+        if not is_db_available():
+            return
+        saved = kv_get("_scheduler_timestamps", {})
+        if saved and isinstance(saved, dict):
+            now = time.time()
+            for name, ts in saved.items():
+                if name in _scheduler_state and isinstance(ts, (int, float)):
+                    _scheduler_state[name]["last_run"] = ts
+                    interval = _scheduler_state[name].get("interval", 0)
+                    if interval > 0:
+                        _scheduler_state[name]["next_run"] = ts + interval
+                    ago = int(now - ts)
+                    logger.info(f"[Scheduler] {name} last ran {ago}s ago")
+    except Exception as e:
+        logger.warning(f"[Scheduler] Failed to load timestamps from DB: {e}")
+
+
 def _mark_run(task_name: str):
-    """Mark a task as just completed, compute next_run."""
+    """Mark a task as just completed, compute next_run. Persists to DB."""
     now = time.time()
     state = _scheduler_state[task_name]
     state["last_run"] = now
     state["status"] = "completed"
     if state["interval"] > 0:
         state["next_run"] = now + state["interval"]
+
+    # Persist all timestamps to DB so they survive deploys
+    try:
+        from core.database import is_db_available, kv_set
+        if is_db_available():
+            timestamps = {
+                name: s["last_run"]
+                for name, s in _scheduler_state.items()
+                if s.get("last_run") is not None
+            }
+            kv_set("_scheduler_timestamps", timestamps)
+    except Exception:
+        pass
 
 
 def get_scheduler_status() -> dict:
@@ -669,9 +703,21 @@ def _map_youtube_knowledge(knowledge: dict) -> dict:
 
 
 async def catalog_sync_loop():
-    """Background loop that syncs product catalog from GitHub repo."""
-    # Sync immediately on startup (after 30 second delay)
+    """Background loop that syncs product catalog from GitHub repo.
+
+    Respects DB-persisted last_run — won't re-run after deploy if recent.
+    """
+    # Wait 30 seconds after startup
     await asyncio.sleep(30)
+
+    # Check if we ran recently (survives deploys)
+    last_run = _scheduler_state["catalog"].get("last_run")
+    if last_run:
+        elapsed = time.time() - last_run
+        remaining = CATALOG_SYNC_INTERVAL - elapsed
+        if remaining > 0:
+            logger.info(f"Catalog sync: Last ran {int(elapsed)}s ago, sleeping {int(remaining)}s")
+            await asyncio.sleep(remaining)
 
     while True:
         _scheduler_state["catalog"]["status"] = "running"
@@ -726,9 +772,21 @@ async def catalog_sync_loop():
 
 
 async def youtube_check_loop():
-    """Background loop that checks YouTube channel periodically."""
+    """Background loop that checks YouTube channel periodically.
+
+    Respects DB-persisted last_run — won't re-run after deploy if recent.
+    """
     # Wait 60 seconds after startup before first check
     await asyncio.sleep(60)
+
+    # Check if we ran recently (survives deploys)
+    last_run = _scheduler_state["youtube"].get("last_run")
+    if last_run:
+        elapsed = time.time() - last_run
+        remaining = YOUTUBE_CHECK_INTERVAL - elapsed
+        if remaining > 0:
+            logger.info(f"YouTube check: Last ran {int(elapsed)}s ago, sleeping {int(remaining)}s")
+            await asyncio.sleep(remaining)
 
     while True:
         _scheduler_state["youtube"]["status"] = "running"
@@ -742,9 +800,25 @@ async def youtube_check_loop():
 
 
 async def youtube_backfill_loop():
-    """Background loop that processes old YouTube videos in batches."""
+    """Background loop that processes old YouTube videos in batches.
+
+    Persists last_run to DB so the 24h cooldown survives deploys.
+    On startup, skips if the last run was less than YOUTUBE_BACKFILL_INTERVAL ago.
+    """
     # Wait 2 minutes after startup (let other things initialize first)
     await asyncio.sleep(120)
+
+    # Check if we ran recently (survives deploys) — skip if within interval
+    last_run = _scheduler_state["youtube_backfill"].get("last_run")
+    if last_run:
+        elapsed = time.time() - last_run
+        remaining = YOUTUBE_BACKFILL_INTERVAL - elapsed
+        if remaining > 0:
+            logger.info(
+                f"YouTube backfill: Last ran {int(elapsed)}s ago, "
+                f"sleeping {int(remaining)}s until next run"
+            )
+            await asyncio.sleep(remaining)
 
     while True:
         _scheduler_state["youtube_backfill"]["status"] = "running"
@@ -830,6 +904,9 @@ async def data_cleanup_loop():
 
 def start_scheduler():
     """Start all background tasks. Call this from FastAPI lifespan."""
+    # Load last_run timestamps from DB so intervals survive deploys
+    _load_scheduler_timestamps()
+
     loop = asyncio.get_event_loop()
     loop.create_task(catalog_sync_loop())
     loop.create_task(youtube_check_loop())
