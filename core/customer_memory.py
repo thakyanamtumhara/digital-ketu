@@ -178,6 +178,15 @@ def update_profile(
     # Detect buying stage progression
     current_stage = profile.get("stage", STAGE_NEW)
 
+    # Bought/completed signals — customer already purchased, no follow-up needed
+    bought_words = {
+        "bill", "invoice", "receipt", "billno", "bill no",
+        "dispatch", "dispatched", "shipped", "ship ho gaya",
+        "payment done", "payment ho gaya", "paid", "pay kar diya",
+        "order confirm", "order ho gaya", "order done",
+        "parcel", "tracking", "delivery", "deliver ho",
+        "received", "mil gaya", "aa gaya", "godam",
+    }
     buying_intent_words = {
         "order", "khareed", "kharidna", "buy", "purchase", "lena hai",
         "chahiye", "bhej do", "send", "ship", "payment", "pay",
@@ -187,8 +196,13 @@ def update_profile(
     price_words = {"price", "rate", "cost", "kitna", "kitne", "kya rate", "kya price", "mehnga", "sasta"}
     ready_words = {"website", "sale91", "order karta", "payment kar", "link", "checkout"}
 
-    if any(w in msg_lower for w in ready_words):
-        profile["stage"] = STAGE_READY
+    # Stage progression: bought > ready > interested > inquiry
+    if any(w in msg_lower for w in bought_words):
+        if current_stage not in (STAGE_REPEAT,):
+            profile["stage"] = STAGE_BOUGHT
+    elif any(w in msg_lower for w in ready_words):
+        if current_stage not in (STAGE_BOUGHT, STAGE_REPEAT):
+            profile["stage"] = STAGE_READY
     elif any(w in msg_lower for w in buying_intent_words):
         if current_stage in (STAGE_NEW, STAGE_INQUIRY):
             profile["stage"] = STAGE_INTERESTED
