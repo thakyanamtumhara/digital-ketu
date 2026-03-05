@@ -1412,6 +1412,61 @@ async def send_all_followups():
     }
 
 
+# --- WhatsApp Message Editing ---
+
+
+class EditMessageRequest(BaseModel):
+    phone: str
+    new_text: str
+    message_id: str = ""  # Optional — if empty, edits the last sent message
+
+
+@app.post("/api/whatsapp/edit")
+async def edit_whatsapp_message(req: EditMessageRequest):
+    """Edit a previously sent WhatsApp message.
+
+    Works within 15 minutes of sending (WhatsApp API limit).
+    Customer sees the updated message with "(edited)" label.
+
+    If message_id is empty, edits the LAST message sent to that phone.
+    """
+    from integrations.whatsapp.sender import edit_message, edit_last_message, get_last_sent_message
+
+    if req.message_id:
+        result = await edit_message(to=req.phone, message_id=req.message_id, new_text=req.new_text)
+    else:
+        result = await edit_last_message(to=req.phone, new_text=req.new_text)
+
+    if result:
+        log_activity(
+            source="whatsapp",
+            action="message-edited",
+            details={
+                "customer_phone": req.phone[-4:] if req.phone else "unknown",
+                "new_text": req.new_text[:100],
+            },
+        )
+        return {"status": "edited", "result": result}
+
+    # Check why it failed
+    last = get_last_sent_message(req.phone)
+    if not last:
+        return {"status": "error", "detail": "No sent message found for this phone number"}
+    if not last["editable"]:
+        return {"status": "error", "detail": f"Edit window expired ({last['seconds_ago']}s ago, limit is 15 min)"}
+    return {"status": "error", "detail": "Edit failed — check error logs"}
+
+
+@app.get("/api/whatsapp/last-sent/{phone}")
+async def last_sent_message(phone: str):
+    """Check the last message sent to a customer — is it still editable?"""
+    from integrations.whatsapp.sender import get_last_sent_message
+    last = get_last_sent_message(phone)
+    if not last:
+        return {"found": False}
+    return {"found": True, **last}
+
+
 # --- Ketu-Only Queue (Questions deferred to real Ketu) ---
 
 
