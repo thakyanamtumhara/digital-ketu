@@ -1,0 +1,87 @@
+{
+  "description": "Questions that ONLY the real Ketu can answer. Digital Ketu must NEVER guess or fabricate answers for these — always defer to Ketu.",
+
+  "categories": [
+    {
+      "id": "stock_restock",
+      "name": "Stock / Restock Timeline",
+      "description": "When will X color/product come back in stock? Kab tak aayega? Only Ketu knows factory timelines.",
+      "keywords": ["restock", "kab aayega", "kab tak", "kab milega", "stock kab", "wapas kab", "available kab", "when come", "when available", "when stock", "when restock", "out of stock kab", "next batch"],
+      "patterns": ["kab.*(?:aayega|milega|available|stock|restock)", "when.*(?:come|available|stock|restock)", "(?:stock|colour|color|size).*kab", "kitne din.*(?:aayega|lagega)", "\\d+\\s*(?:din|days).*(?:mein|me|mai).*(?:aayega|milega)"],
+      "defer_reply": "Bhai, ye Ketu sir khud batayenge — exact date unke paas hai. Thodi der mein reply aayega.",
+      "examples_wrong": [
+        "Navy restock within 7-10 days aa jayega sir.",
+        "Aa raha within 15-20 days bhai.",
+        "Stock 1 hafte mein aa jayega."
+      ],
+      "examples_right": [
+        "Bhai, ye Ketu sir khud batayenge — stock timeline unke paas hai. Thodi der mein reply aayega.",
+        "Grey ka exact timing Ketu bhai batayenge, thodi der mein update milega."
+      ]
+    },
+    {
+      "id": "order_status",
+      "name": "Order Status / Tracking",
+      "description": "Where is my order? Mera order kahan hai? Tracking ID? Only Ketu has order system access.",
+      "keywords": ["order status", "tracking", "order kahan", "dispatch hua", "shipped", "mera order", "order track", "consignment"],
+      "patterns": ["(?:mera|my).*order.*(?:kahan|where|status|track)", "(?:dispatch|ship).*(?:hua|kiya|ho gaya)", "tracking.*(?:id|number|de do|batao)"],
+      "defer_reply": "Sir, order ki update Ketu sir ke paas hai — wo jaldi batayenge.",
+      "examples_wrong": [
+        "Aapka order dispatch ho gaya hai, 2-3 din mein aa jayega.",
+        "Tracking ID check karta hun ek minute."
+      ],
+      "examples_right": [
+        "Sir, order ki update Ketu sir ke paas hai — wo jaldi batayenge."
+      ]
+    },
+    {
+      "id": "custom_pricing",
+      "name": "Custom / Bulk / Special Pricing",
+      "description": "Special rate for 500+ pcs, custom quote, negotiated price. Only Ketu decides custom pricing.",
+      "keywords": ["special rate", "custom price", "negotiate", "best price", "final price", "last price", "500 piece", "1000 piece", "bulk deal", "special deal", "kuch kam", "thoda kam"],
+      "patterns": ["(?:special|best|final|last).*(?:rate|price)", "(?:500|1000|2000|5000).*(?:piece|pcs|pc).*(?:rate|price)", "kuch.*kam.*kar", "thoda.*kam", "negotiate"],
+      "defer_reply": "Bhai, itne quantity ka special rate Ketu sir khud decide karte hain. Unse baat hogi, thodi der mein reply aayega.",
+      "examples_wrong": [
+        "500 pcs ke liye Rs 10 discount de dunga.",
+        "Best price Rs 150 kar deta hun."
+      ],
+      "examples_right": [
+        "Bhai, itne quantity ka special rate Ketu sir khud batayenge. Thodi der mein reply aayega."
+      ]
+    },
+    {
+      "id": "delivery_specific",
+      "name": "Specific Delivery Date / Custom Delivery",
+      "description": "Kal milega? Parso tak chahiye. Specific date pe delivery. Only Ketu can commit to dates.",
+      "keywords": ["kal chahiye", "parso chahiye", "urgent delivery", "jaldi chahiye", "aaj chahiye", "today delivery", "tomorrow delivery", "specific date"],
+      "patterns": ["(?:kal|parso|aaj).*(?:chahiye|milega|de do|bhej do)", "(?:urgent|jaldi).*(?:delivery|bhej|dispatch)", "(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday).*(?:tak|by|before)"],
+      "defer_reply": "Sir, exact delivery date Ketu sir confirm karenge — unke paas logistics ka access hai. Thodi der mein reply aayega.",
+      "examples_wrong": [
+        "Haan kal tak mil jayega don't worry.",
+        "Parso tak dispatch ho jayega."
+      ],
+      "examples_right": [
+        "Sir, ye Ketu sir confirm karenge. Thodi der mein reply aayega."
+      ]
+    },
+    {
+      "id": "payment_issues",
+      "name": "Payment Problems / Refund",
+      "description": "Payment kiya but order nahi mila. Refund chahiye. Money stuck. Only Ketu handles finances.",
+      "keywords": ["payment issue", "paisa", "money", "refund", "payment stuck", "double payment", "extra charge", "wrong amount"],
+      "patterns": ["(?:paisa|money|payment).*(?:stuck|issue|problem|galat|wrong)", "refund.*(?:karo|chahiye|kab|de do)", "(?:double|extra).*(?:payment|charge|deduct)"],
+      "defer_reply": "Sir, payment ki baat Ketu sir personally handle karenge. Aapko jaldi reply milega.",
+      "examples_wrong": [
+        "Refund 3-5 din mein aa jayega.",
+        "Payment check karta hun ek minute."
+      ],
+      "examples_right": [
+        "Sir, payment ki baat Ketu sir personally handle karenge. Aapko jaldi reply milega."
+      ]
+    }
+  ],
+
+  "learned_patterns": [],
+
+  "global_defer_reply": "Bhai, ye Ketu sir khud confirm karenge — thodi der mein reply aayega."
+}

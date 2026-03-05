@@ -1357,6 +1357,46 @@ async def send_all_followups():
     }
 
 
+# --- Ketu-Only Queue (Questions deferred to real Ketu) ---
+
+
+@app.get("/api/ketu-only/queue")
+async def ketu_only_queue(limit: int = 50, pending_only: bool = False):
+    """Get questions deferred to real Ketu.
+
+    These are questions the AI cannot answer (stock timelines, order status,
+    custom pricing, etc.) and has told the customer to wait for Ketu's reply.
+    """
+    from core.ketu_only import get_deferred_queue, get_deferred_stats
+    return {
+        "queue": get_deferred_queue(limit=limit, pending_only=pending_only),
+        "stats": get_deferred_stats(),
+    }
+
+
+@app.post("/api/ketu-only/resolve/{index}")
+async def ketu_only_resolve(index: int):
+    """Mark a deferred question as resolved (Ketu replied manually)."""
+    from core.ketu_only import mark_resolved
+    ok = mark_resolved(index)
+    return {"resolved": ok}
+
+
+@app.get("/api/ketu-only/categories")
+async def ketu_only_categories():
+    """Get the current ketu-only question categories."""
+    from core.ketu_only import _load_config
+    config = _load_config()
+    return {
+        "categories": [
+            {"id": c["id"], "name": c["name"], "description": c.get("description", ""),
+             "keywords_count": len(c.get("keywords", [])), "patterns_count": len(c.get("patterns", []))}
+            for c in config.get("categories", [])
+        ],
+        "learned_count": len(config.get("learned_patterns", [])),
+    }
+
+
 # --- Knowledge Backup/Export ---
 
 

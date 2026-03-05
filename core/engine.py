@@ -12,6 +12,7 @@ from core.customer_memory import (
     get_profile, update_profile, format_customer_context, reset_follow_up_flag,
 )
 from core.escalation import detect_escalation, format_escalation_notice, LEVEL_ESCALATE
+from core.ketu_only import detect_ketu_only, log_deferred_question
 
 logger = logging.getLogger(__name__)
 
@@ -236,10 +237,11 @@ def _build_system_prompt(
     sections.append("## SABSE ZAROORI RULES:\n"
         "1. Reply MAXIMUM 1-2 lines. Bas. 3 line se zyada KABHI nahi. Ketu WhatsApp pe chhota likhta hai — ek do line mein baat khatam. Jitna kam utna better. Cost bhi bachta hai.\n"
         "2. KABHI fake promise mat karo. Nahi pata toh bol: 'Ye Ketu sir batayenge, thodi der mein reply aayega.'\n"
-        "3. 'WhatsApp karo' ya WhatsApp number KABHI mat de — customer ALREADY isi WhatsApp pe baat kar raha hai.\n"
-        "4. Website link har reply mein mat daal — ek conversation mein ek baar kaafi hai.\n"
-        "5. Same line baar baar repeat mat kar — robot lagta hai, natural baat kar.\n"
-        "6. FIRST MESSAGE RULE: Agar customer PEHLI BAAR message kar raha hai (conversation mein sirf 1 user message hai), toh reply ke end mein catalogue link naturally add kar: 'Poora catalogue yahan dekho: sale91.com/catalog' — push mat kar, bas casually share kar taaki customer website pe browse kare. Baad ke messages mein link DUBARA mat de.")
+        "3. STOCK/RESTOCK TIMELINE: Tu KABHI mat bol 'X din mein aa jayega', '7-10 days', '15-20 days', 'next week' etc. Tujhe NAHI pata stock kab aayega — sirf Ketu jaanta hai. Agar koi puche kab aayega, toh bol: 'Bhai ye Ketu sir khud batayenge, thodi der mein reply aayega.' KABHI timeline fabricate mat kar.\n"
+        "4. 'WhatsApp karo' ya WhatsApp number KABHI mat de — customer ALREADY isi WhatsApp pe baat kar raha hai.\n"
+        "5. Website link har reply mein mat daal — ek conversation mein ek baar kaafi hai.\n"
+        "6. Same line baar baar repeat mat kar — robot lagta hai, natural baat kar.\n"
+        "7. FIRST MESSAGE RULE: Agar customer PEHLI BAAR message kar raha hai (conversation mein sirf 1 user message hai), toh reply ke end mein catalogue link naturally add kar: 'Poora catalogue yahan dekho: sale91.com/catalog' — push mat kar, bas casually share kar taaki customer website pe browse kare. Baad ke messages mein link DUBARA mat de.")
 
     return "\n\n".join(sections)
 
@@ -419,6 +421,31 @@ def generate_reply(
             # Update customer profile even for enders
             update_profile(customer_phone, customer_name, message)
         return ""  # Empty = don't send
+
+    # Check if this is a "Ketu Only" question (stock timeline, order status, etc.)
+    # AI must NOT fabricate answers — defer to real Ketu
+    ketu_check = detect_ketu_only(message, customer_phone, customer_name)
+    if ketu_check:
+        logger.info(f"[KetuOnly] Deferring to Ketu: {ketu_check['category_name']} | {message[:50]}")
+        log_deferred_question(
+            customer_phone=customer_phone,
+            customer_name=customer_name,
+            message=message,
+            category_id=ketu_check["category_id"],
+            category_name=ketu_check["category_name"],
+            reason=ketu_check["reason"],
+            defer_reply=ketu_check["defer_reply"],
+        )
+        # Store in conversation history so context is maintained
+        defer_reply = ketu_check["defer_reply"]
+        if customer_phone:
+            _conversations[customer_phone] = messages + [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": defer_reply},
+            ]
+            _conversation_timestamps[customer_phone] = time.time()
+            update_profile(customer_phone, customer_name, message)
+        return defer_reply
 
     # Add current message
     messages = messages + [{"role": "user", "content": message}]

@@ -770,6 +770,17 @@
       </div>
     </div>
 
+    <!-- Ketu-Only Queue (Questions deferred to real Ketu) -->
+    <div class="card">
+      <div class="card-header" style="border-left:3px solid var(--orange);">
+        <h3>Needs Ketu's Reply</h3>
+        <span class="badge" id="ketuOnlyBadge" style="background:rgba(253,203,110,0.15);color:var(--orange);">0 pending</span>
+      </div>
+      <div class="card-body" id="ketuOnlyBody">
+        <div class="empty-state">Loading...</div>
+      </div>
+    </div>
+
     <!-- WhatsApp Chat Data (Live Sync Stats) -->
     <div class="card full-width">
       <div class="card-header">
@@ -1716,6 +1727,79 @@ function tickCountdowns() {
   renderScheduler();
 }
 
+// ---- KETU-ONLY QUEUE ----
+
+async function loadKetuOnly() {
+  const data = await fetchJSON('/api/ketu-only/queue?limit=30');
+  if (!data) return;
+
+  const stats = data.stats || {};
+  const queue = data.queue || [];
+
+  // Update badge
+  const badge = document.getElementById('ketuOnlyBadge');
+  const pending = stats.pending || 0;
+  badge.textContent = pending > 0 ? `${pending} pending` : 'All clear';
+  badge.style.background = pending > 0 ? 'rgba(253,203,110,0.15)' : 'rgba(0,184,148,0.15)';
+  badge.style.color = pending > 0 ? 'var(--orange)' : 'var(--green)';
+
+  const body = document.getElementById('ketuOnlyBody');
+
+  if (queue.length === 0) {
+    body.innerHTML = '<div class="empty-state" style="padding:20px;text-align:center;color:var(--text-dim);">No questions deferred yet. When the AI gets a question only you can answer (stock timeline, order status, custom pricing), it will show here.</div>';
+    return;
+  }
+
+  // Stats row
+  let html = `<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+    <div style="background:rgba(253,203,110,0.08);border-radius:6px;padding:8px 14px;text-align:center;flex:1;min-width:80px;">
+      <div style="font-size:20px;font-weight:700;color:var(--orange);">${stats.today || 0}</div>
+      <div style="font-size:10px;color:var(--text-dim);">Today</div>
+    </div>
+    <div style="background:rgba(214,48,49,0.08);border-radius:6px;padding:8px 14px;text-align:center;flex:1;min-width:80px;">
+      <div style="font-size:20px;font-weight:700;color:var(--red);">${pending}</div>
+      <div style="font-size:10px;color:var(--text-dim);">Pending</div>
+    </div>
+    <div style="background:rgba(0,184,148,0.08);border-radius:6px;padding:8px 14px;text-align:center;flex:1;min-width:80px;">
+      <div style="font-size:20px;font-weight:700;color:var(--green);">${stats.total || 0}</div>
+      <div style="font-size:10px;color:var(--text-dim);">Total</div>
+    </div>
+  </div>`;
+
+  // Category breakdown
+  const cats = stats.by_category || {};
+  if (Object.keys(cats).length > 0) {
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">';
+    for (const [cat, count] of Object.entries(cats)) {
+      html += `<span style="background:rgba(108,92,231,0.1);color:var(--accent);font-size:11px;padding:3px 8px;border-radius:10px;">${cat}: ${count}</span>`;
+    }
+    html += '</div>';
+  }
+
+  // Queue items
+  html += '<div style="max-height:350px;overflow-y:auto;">';
+  queue.forEach((q, i) => {
+    const resolved = q.resolved;
+    const statusColor = resolved ? 'var(--green)' : 'var(--orange)';
+    const statusText = resolved ? 'Resolved' : 'Pending';
+    html += `
+      <div style="padding:10px;border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:8px;background:rgba(255,255,255,0.02);${resolved ? 'opacity:0.6;' : ''}border-left:3px solid ${statusColor};">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-size:11px;color:var(--accent2);font-weight:600;">...${q.phone_last4} ${q.customer_name !== 'Unknown' ? '(' + q.customer_name + ')' : ''}</span>
+          <span style="font-size:10px;color:var(--text-dim);">${q.time} | ${q.date}</span>
+        </div>
+        <div style="font-size:13px;color:var(--text-bright);margin-bottom:4px;">${q.message}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(108,92,231,0.1);color:var(--accent);">${q.category_name}</span>
+          <span style="font-size:10px;color:${statusColor};font-weight:600;">${statusText}</span>
+        </div>
+      </div>`;
+  });
+  html += '</div>';
+
+  body.innerHTML = html;
+}
+
 // ---- ERRORS ----
 
 async function loadErrors() {
@@ -2120,6 +2204,7 @@ async function init() {
     safe(loadCosts),
     safe(loadAudioStats),
     safe(loadWwbunStats),
+    safe(loadKetuOnly),
   ]);
 
   // Countdown ticks every second (local, no API call)
@@ -2138,6 +2223,7 @@ async function init() {
       safe(loadCosts),
       safe(loadAudioStats),
       safe(loadWwbunStats),
+      safe(loadKetuOnly),
     ]);
   }, 30000);
 }
