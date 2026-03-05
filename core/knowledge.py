@@ -90,6 +90,77 @@ def invalidate_cache():
     _cache_time = 0
 
 
+def auto_deactivate_stale_faqs(days_threshold: int = 30) -> list[str]:
+    """Auto-deactivate FAQs that haven't been hit in `days_threshold` days.
+
+    Checks FAQ hit counts from the cost/tracking system. FAQs with zero hits
+    in the last 30 days get marked as inactive (not deleted — can reactivate).
+
+    Returns list of deactivated FAQ question strings.
+    """
+    try:
+        from core.database import is_db_available, load_knowledge_from_db, save_knowledge_to_db, kv_get
+
+        if not is_db_available():
+            logger.info("[FAQ Cleanup] DB not available, skipping")
+            return []
+
+        # Get FAQ hit counts
+        hit_counts = kv_get("faq_hit_counts")
+        if not hit_counts or not isinstance(hit_counts, dict):
+            logger.info("[FAQ Cleanup] No hit data yet, skipping (need at least 30 days of data)")
+            return []
+
+        # Load current FAQs
+        faq_data = load_knowledge_from_db("faq")
+        if not faq_data:
+            return []
+
+        faqs = faq_data.get("faqs", [])
+        deactivated = []
+
+        for faq in faqs:
+            if faq.get("status") == "inactive":
+                continue  # Already inactive
+
+            question = faq.get("question", "")
+            # Check if this FAQ has any hits (key is first 60 chars of question)
+            key = question[:60]
+            hits = hit_counts.get(key, 0)
+
+            if hits == 0:
+                faq["status"] = "inactive"
+                faq["deactivated_reason"] = f"No hits in tracking period (auto-deactivated)"
+                deactivated.append(question)
+                logger.info(f"[FAQ Cleanup] Deactivated: '{question[:50]}' — 0 hits")
+
+        if deactivated:
+            # Save updated FAQs
+            save_knowledge_to_db("faq", faq_data)
+            invalidate_cache()
+
+            # Log activity
+            from core.activity_log import log_activity
+            log_activity(
+                source="faq-cleanup",
+                action="auto-deactivated",
+                details={
+                    "count": len(deactivated),
+                    "faqs": [q[:60] for q in deactivated],
+                },
+                items_count=len(deactivated),
+            )
+            logger.info(f"[FAQ Cleanup] Deactivated {len(deactivated)} unused FAQs")
+        else:
+            logger.info("[FAQ Cleanup] All FAQs are being used, nothing to deactivate")
+
+        return deactivated
+
+    except Exception as e:
+        logger.warning(f"[FAQ Cleanup] Error: {e}")
+        return []
+
+
 def format_context() -> str:
     knowledge = load_knowledge()
     sections = []

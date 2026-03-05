@@ -892,6 +892,12 @@ async def data_cleanup_loop():
                     )
                 else:
                     logger.info(f"Data cleanup: nothing to clean (all within {DATA_RETENTION_DAYS} days)")
+
+                # FAQ auto-deactivation — mark unused FAQs inactive
+                from core.knowledge import auto_deactivate_stale_faqs
+                deactivated = auto_deactivate_stale_faqs(days_threshold=30)
+                if deactivated:
+                    logger.info(f"FAQ cleanup: deactivated {len(deactivated)} unused FAQs")
             else:
                 logger.info("Data cleanup skipped — no DB available")
 

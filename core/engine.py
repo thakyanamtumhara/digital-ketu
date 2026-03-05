@@ -42,6 +42,21 @@ _last_escalation: dict[str, dict] = {}  # phone -> escalation result
 _shutup_until: dict[str, float] = {}  # phone -> timestamp until which AI stays silent
 SHUTUP_COOLDOWN = 300  # 5 minutes — AI won't reply to this customer for 5 min after ender
 
+# Prompt cache — caches the knowledge portion of system prompt by intent combo
+# Key: frozenset of (intents + product_ids), Value: (prompt_text, timestamp)
+_prompt_cache: dict[str, tuple[str, float]] = {}
+PROMPT_CACHE_TTL = 60  # seconds — same as knowledge cache TTL
+
+# Simple intents that can use Haiku (10x cheaper) instead of Sonnet
+HAIKU_INTENTS = {"greeting", "shipping_delivery", "payment", "location_visit",
+                 "gst_invoice", "moq", "return_complaint", "dropshipping", "order_how"}
+HAIKU_MODEL = "claude-haiku-4-5-20251001"
+SONNET_MODEL = "claude-sonnet-4-20250514"
+
+# Estimated full context token count (for savings tracking)
+# Updated periodically from actual API responses using full context
+_estimated_full_tokens: int = 5500  # conservative default
+
 
 def _load_customer_insights_from_db():
     """Load customer insights from DB on first access (survives deploys)."""
@@ -127,11 +142,18 @@ def _load_repeat_buyer_style() -> list[str]:
         return []
 
 
+def _make_prompt_cache_key(classification: dict) -> str:
+    """Create a cache key from classification results."""
+    intents = tuple(sorted(classification.get("intents", [])))
+    products = tuple(sorted(classification.get("product_ids", [])))
+    return f"{intents}|{products}"
+
+
 def _build_system_prompt(
     customer_phone: str = "",
     escalation_modifier: str = "",
     customer_message: str = "",
-) -> str:
+) -> tuple[str, dict | None]:
     """Build system prompt dynamically from prompt.json + knowledge context.
 
     This prompt evolves over time as Digital Ketu learns from Ketu's real messages.
@@ -140,20 +162,32 @@ def _build_system_prompt(
     Smart context: When customer_message is provided, classifies the question and
     includes only relevant knowledge sections (60-70% token savings).
     Falls back to full context if classification fails.
+
+    Returns (system_prompt, classification_dict_or_None).
     """
     config = _load_prompt_config()
 
     # Smart context selection — classify message and pick relevant sections only
     if customer_message:
         classification = classify_message(customer_message)
-        knowledge = load_knowledge()
-        knowledge_context = format_smart_context(knowledge, classification)
-        logger.info(
-            f"[SmartContext] intents={classification['intents']}, "
-            f"products={len(classification['product_ids'])}, "
-            f"complex={classification['is_complex']}"
-        )
+
+        # Check prompt cache — same intent combo = same knowledge context
+        cache_key = _make_prompt_cache_key(classification)
+        cached = _prompt_cache.get(cache_key)
+        if cached and (time.time() - cached[1]) < PROMPT_CACHE_TTL:
+            knowledge_context = cached[0]
+            logger.info(f"[SmartContext] Cache HIT for {cache_key[:40]}")
+        else:
+            knowledge = load_knowledge()
+            knowledge_context = format_smart_context(knowledge, classification)
+            _prompt_cache[cache_key] = (knowledge_context, time.time())
+            logger.info(
+                f"[SmartContext] intents={classification['intents']}, "
+                f"products={len(classification['product_ids'])}, "
+                f"complex={classification['is_complex']}"
+            )
     else:
+        classification = None
         knowledge_context = format_context()
 
     identity = config.get("identity", {})
@@ -266,7 +300,7 @@ def _build_system_prompt(
         "6. Same line baar baar repeat mat kar — robot lagta hai, natural baat kar.\n"
         "7. FIRST MESSAGE RULE: Agar customer PEHLI BAAR message kar raha hai (conversation mein sirf 1 user message hai), toh reply ke end mein catalogue link naturally add kar: 'Poora catalogue yahan dekho: sale91.com/catalog' — push mat kar, bas casually share kar taaki customer website pe browse kare. Baad ke messages mein link DUBARA mat de.")
 
-    return "\n\n".join(sections)
+    return "\n\n".join(sections), classification
 
 
 def _cleanup_old_conversations():
@@ -603,7 +637,7 @@ def generate_reply(
         )
 
     # Build system prompt with customer context, escalation modifier, and smart context
-    system = _build_system_prompt(
+    system, classification = _build_system_prompt(
         customer_phone=customer_phone,
         escalation_modifier=escalation_modifier,
         customer_message=message,
@@ -616,12 +650,22 @@ def generate_reply(
     if user_msg_count == 1:
         system += "\n\n>> YE CUSTOMER KA PEHLA MESSAGE HAI. Catalogue link share kar end mein: sale91.com/catalog"
 
+    # Model selection — use Haiku for simple questions (10x cheaper)
+    use_smart = classification is not None and not classification.get("is_complex", True)
+    intents = set(classification.get("intents", [])) if classification else set()
+
+    if use_smart and intents and intents.issubset(HAIKU_INTENTS):
+        model = HAIKU_MODEL
+        logger.info(f"[ModelSelect] Using Haiku for simple intents: {intents}")
+    else:
+        model = SONNET_MODEL
+
     # Retry with exponential backoff (max 3 attempts)
     last_error = None
     for attempt in range(3):
         try:
             response = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=model,
                 max_tokens=200,
                 system=system,
                 messages=messages,
@@ -630,13 +674,15 @@ def generate_reply(
 
             reply = response.content[0].text
 
-            # Track API cost
+            # Track API cost with smart context savings
             track_api_cost(
                 model=response.model,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
                 source="whatsapp-reply",
                 customer_phone=customer_phone[-4:] if customer_phone else "",
+                smart_context_used=use_smart,
+                estimated_full_tokens=_estimated_full_tokens,
             )
 
             # Store conversation history

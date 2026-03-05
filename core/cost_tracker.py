@@ -79,10 +79,13 @@ def track_api_cost(
     output_tokens: int,
     source: str = "unknown",
     customer_phone: str = "",
+    smart_context_used: bool = False,
+    estimated_full_tokens: int = 0,
 ):
     """Track cost of a single Claude API call.
 
     Called after every API call to accumulate daily costs.
+    When smart_context_used=True, also tracks estimated token savings.
     """
     _load_cost_state()
 
@@ -123,6 +126,31 @@ def track_api_cost(
     mdl = day["by_model"][model]
     mdl["calls"] += 1
     mdl["cost_usd"] = round(mdl["cost_usd"] + cost_usd, 6)
+
+    # Track smart context savings
+    if smart_context_used and estimated_full_tokens > 0:
+        tokens_saved = max(0, estimated_full_tokens - input_tokens)
+        cost_saved = _calculate_cost(model, tokens_saved, 0)
+
+        if "smart_context" not in day:
+            day["smart_context"] = {
+                "calls_with_smart": 0,
+                "tokens_saved": 0,
+                "cost_saved_usd": 0,
+                "haiku_calls": 0,
+            }
+        sc = day["smart_context"]
+        sc["calls_with_smart"] += 1
+        sc["tokens_saved"] += tokens_saved
+        sc["cost_saved_usd"] = round(sc["cost_saved_usd"] + cost_saved, 6)
+
+        if "haiku" in model:
+            sc["haiku_calls"] += 1
+
+        logger.info(
+            f"[Cost] Smart context saved ~{tokens_saved} input tokens "
+            f"(${cost_saved:.4f}) on this call"
+        )
 
     # Keep only last 90 days of data
     dates = sorted(_cost_state["daily"].keys())
@@ -247,6 +275,15 @@ def get_cost_summary() -> dict:
             "avg_cost_usd": avg_cost_per_reply,
             "avg_cost_inr": round(avg_cost_per_reply * usd_to_inr, 4),
             "replies_today": reply_calls,
+        },
+        "smart_context_savings": {
+            "today": today_data.get("smart_context", {
+                "calls_with_smart": 0, "tokens_saved": 0,
+                "cost_saved_usd": 0, "haiku_calls": 0,
+            }),
+            "today_cost_saved_inr": round(
+                today_data.get("smart_context", {}).get("cost_saved_usd", 0) * usd_to_inr, 2
+            ),
         },
         "pricing_info": {
             "haiku_input_per_mtok": "$0.80",

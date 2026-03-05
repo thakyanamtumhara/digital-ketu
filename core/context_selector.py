@@ -105,6 +105,7 @@ INTENT_KEYWORDS = {
     "moq": {
         "keywords": {
             "minimum", "moq", "kam se kam", "least", "kitne se",
+            "minimum order", "kitna order",
         },
         "sections": ["pricing_note", "relevant_faqs"],
     },
