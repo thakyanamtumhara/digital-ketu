@@ -280,6 +280,20 @@ def extract_knowledge_from_wwbun_messages(
     # Smart filter: remove junk messages BEFORE sending to Claude
     filtered, filter_stats = filter_messages(messages, owner_key="sender_id", owner_value=owner_user_id)
 
+    # Check if we have any quality Ketu messages BEFORE calling Claude API
+    quality_ketu_msgs = [
+        m for m in filtered
+        if m.get("sender_id") == owner_user_id and not m.get("is_ai_generated", False)
+    ]
+    if not quality_ketu_msgs:
+        logger.info(f"[wwbun-learn] 0 quality Ketu messages after filtering — skipping API call (saved money)")
+        return {
+            "status": "no_quality_messages",
+            "updates": [],
+            "filter_stats": filter_stats,
+            "quality_messages": [],
+        }
+
     # Include customer messages for context (to understand what Ketu was replying to)
     # but only learn FROM Ketu's messages
     chat_context = []
