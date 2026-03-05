@@ -511,6 +511,52 @@ async def wwbun_sync_stats():
     }
 
 
+def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
+    """Extract customer→Ketu pairs from wwbun messages and learn ketu-only patterns.
+
+    Groups messages by conversation (same chat). For each Ketu manual reply,
+    finds the preceding customer message to form a Q→A pair. Feeds these pairs
+    to the ketu-only learner which detects if Ketu gave info only he could know.
+    """
+    # Group by chat_id (same conversation)
+    by_chat: dict[str, list] = {}
+    for m in messages:
+        chat_id = m.get("chat_id", m.get("remote_jid", "unknown"))
+        by_chat.setdefault(chat_id, []).append(m)
+
+    pairs_checked = 0
+    for chat_id, chat_msgs in by_chat.items():
+        # Sort by timestamp if available
+        chat_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
+
+        last_customer_msg = ""
+        customer_phone = chat_id.split("@")[0] if "@" in chat_id else chat_id
+
+        for msg in chat_msgs:
+            content = msg.get("content", "").strip()
+            if not content:
+                continue
+
+            is_owner = msg.get("sender_id") == owner_user_id
+            is_ai = msg.get("is_ai_generated", False)
+
+            if not is_owner:
+                # Customer message — remember it
+                last_customer_msg = content
+            elif is_owner and not is_ai and last_customer_msg:
+                # Ketu's MANUAL reply to a customer message
+                learn_fn(
+                    customer_message=last_customer_msg,
+                    ketu_reply=content,
+                    customer_phone=customer_phone,
+                )
+                pairs_checked += 1
+                last_customer_msg = ""  # Reset
+
+    if pairs_checked > 0:
+        logger.info(f"[KetuOnly] Checked {pairs_checked} customer→Ketu pairs from wwbun sync")
+
+
 @app.post("/api/learn/wwbun-sync")
 async def learn_from_wwbun(req: LearnWwbunRequest):
     """Learn from wwbun database messages.
@@ -562,6 +608,15 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
 
     # Invalidate ender cache so new patterns take effect immediately
     invalidate_ender_cache()
+
+    # Learn Ketu-Only patterns from manual chats
+    # Pair customer messages with Ketu's manual replies to detect
+    # questions that only the real Ketu can answer
+    try:
+        from learner.realtime_learner import learn_ketu_only_from_manual_chat
+        _learn_ketu_only_pairs(req.messages, req.owner_user_id, learn_ketu_only_from_manual_chat)
+    except Exception as e:
+        logger.warning(f"Ketu-only learning from wwbun failed (non-fatal): {e}")
 
     log_activity(
         source="wwbun-sync",

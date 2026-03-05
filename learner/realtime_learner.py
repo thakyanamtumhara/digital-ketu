@@ -331,6 +331,16 @@ Return ONLY valid JSON."""
         if result.get("count", 0) > 0:
             invalidate_cache()
 
+        # Learn Ketu-Only patterns from corrections
+        # If the AI fabricated info (timeline, status, price) and Ketu corrected
+        # with real info only HE could know, this is a "Ketu Only" signal
+        _learn_ketu_only_from_correction(
+            customer_message=customer_message,
+            ai_reply=ai_reply,
+            ketu_correction=ketu_correction,
+            what_went_wrong=analysis.get("what_went_wrong", ""),
+        )
+
         return {
             "status": "learned",
             "what_went_wrong": analysis.get("what_went_wrong", ""),
@@ -343,6 +353,192 @@ Return ONLY valid JSON."""
         from core.error_tracker import track_error
         track_error("correction-learner", str(e))
         return {"status": "error", "detail": str(e)}
+
+
+# --- Ketu-Only Learning from Corrections & Manual Chats ---
+
+# Patterns that indicate the AI fabricated something only Ketu should know
+_FABRICATION_SIGNALS = [
+    # AI gave a timeline but Ketu gave a different/specific one
+    (r"\d+[\s-]*(?:to|se)?\s*\d*\s*(?:din|days|hafte|weeks?|mahine|months?)", "stock_restock"),
+    # AI said "check karta hun" but can't actually check anything
+    (r"check\s*kart?a?\s*(?:hun|hu|hoon)", "order_status"),
+    # AI made up a delivery promise
+    (r"(?:kal|parso|aaj)\s*(?:tak|mein|me|by)\s*(?:aa|mil|dispatch|deliver)", "delivery_specific"),
+    # AI gave a custom/negotiated price
+    (r"(?:special|best|discount)\s*(?:rate|price).*(?:rs|₹|rupee)\s*\d+", "custom_pricing"),
+]
+
+
+def _learn_ketu_only_from_correction(
+    customer_message: str,
+    ai_reply: str,
+    ketu_correction: str,
+    what_went_wrong: str = "",
+):
+    """Learn new Ketu-Only patterns from corrections.
+
+    When Ketu corrects an AI reply, check if the AI fabricated information
+    that only Ketu could know. If so, learn the customer's question pattern
+    as a new "Ketu Only" trigger.
+
+    This runs automatically on every correction — zero extra API cost.
+    """
+    try:
+        from core.ketu_only import detect_ketu_only, add_learned_pattern, _load_config
+
+        ai_lower = ai_reply.lower()
+        cust_lower = customer_message.lower()
+
+        # Check if the AI fabricated a timeline/status/price
+        fabrication_detected = False
+        detected_category = "learned"
+
+        for pattern, category_id in _FABRICATION_SIGNALS:
+            if re.search(pattern, ai_lower):
+                fabrication_detected = True
+                detected_category = category_id
+                break
+
+        # Also check the "what went wrong" analysis for fabrication signals
+        wrong_lower = what_went_wrong.lower()
+        fabrication_words = ["fabricat", "made up", "fake", "didn't know", "couldn't know",
+                            "wrong timeline", "wrong date", "wrong price", "assumed",
+                            "guessed", "invented", "incorrect"]
+        if any(w in wrong_lower for w in fabrication_words):
+            fabrication_detected = True
+
+        if not fabrication_detected:
+            return
+
+        # Already detected by existing patterns? Skip learning
+        existing = detect_ketu_only(customer_message)
+        if existing:
+            return
+
+        # Extract the key question pattern from the customer message
+        # Look for the core question (2-5 meaningful words)
+        # Remove filler words to get the actual question
+        filler = {"bhai", "sir", "ji", "bro", "yaar", "please", "pls",
+                  "kya", "hai", "ho", "ka", "ki", "ke", "mein", "me",
+                  "aur", "or", "the", "is", "a", "my", "mera", "meri"}
+        words = [w for w in cust_lower.split() if w not in filler and len(w) > 1]
+        if len(words) < 2:
+            return  # Too short to be a meaningful pattern
+
+        # Use the cleaned question as a learned pattern
+        pattern = " ".join(words[:6])  # Max 6 words
+
+        # Map category_id to name
+        config = _load_config()
+        cat_name = "Learned Pattern"
+        for cat in config.get("categories", []):
+            if cat["id"] == detected_category:
+                cat_name = cat["name"]
+                break
+
+        add_learned_pattern(pattern, detected_category, cat_name)
+
+        from core.activity_log import log_activity
+        log_activity(
+            source="ketu-only",
+            action="learned-from-correction",
+            details={
+                "pattern": pattern,
+                "category": cat_name,
+                "customer_asked": customer_message[:80],
+                "ai_fabricated": ai_reply[:80],
+                "ketu_said": ketu_correction[:80],
+            },
+            items_count=1,
+        )
+        logger.info(f"[KetuOnly] Learned new pattern from correction: '{pattern}' -> {cat_name}")
+
+    except Exception as e:
+        logger.warning(f"[KetuOnly] Learning from correction failed (non-fatal): {e}")
+
+
+def learn_ketu_only_from_manual_chat(
+    customer_message: str,
+    ketu_reply: str,
+    customer_phone: str = "",
+):
+    """Learn Ketu-Only patterns from Ketu's manual chat messages.
+
+    Called during wwbun sync when we detect Ketu manually replying to
+    questions about stock, timing, pricing, etc. — things only he knows.
+
+    This teaches the system which TYPES of questions need Ketu's intervention,
+    not the actual answers (which change over time).
+    """
+    try:
+        from core.ketu_only import detect_ketu_only, add_learned_pattern, _load_config
+
+        cust_lower = customer_message.lower()
+        ketu_lower = ketu_reply.lower()
+
+        # Signals that Ketu gave info only HE could know
+        ketu_only_signals = [
+            # Ketu gave a specific date/day
+            (r"(?:kal|parso|monday|tuesday|wednesday|thursday|friday|saturday|sunday|somvar|mangalvar)", "delivery_specific"),
+            # Ketu gave exact stock info
+            (r"(?:aa gaya|aa jayega|nahi aayega|nahi hai|khatam|next\s*(?:week|month|batch|lot|winter|summer))", "stock_restock"),
+            # Ketu shared tracking/dispatch info
+            (r"(?:tracking|dispatch\s*(?:kar diya|ho gaya)|bhej diya|courier)", "order_status"),
+            # Ketu gave a custom price
+            (r"(?:rs|₹)\s*\d+.*(?:special|tumhare liye|aapke liye|extra discount)", "custom_pricing"),
+        ]
+
+        matched_category = None
+        for pattern, category_id in ketu_only_signals:
+            if re.search(pattern, ketu_lower):
+                matched_category = category_id
+                break
+
+        if not matched_category:
+            return
+
+        # Already detected by existing patterns? Skip
+        existing = detect_ketu_only(customer_message)
+        if existing:
+            return
+
+        # Extract question pattern
+        filler = {"bhai", "sir", "ji", "bro", "yaar", "please", "pls",
+                  "kya", "hai", "ho", "ka", "ki", "ke", "mein", "me",
+                  "aur", "or", "the", "is", "a", "my", "mera", "meri"}
+        words = [w for w in cust_lower.split() if w not in filler and len(w) > 1]
+        if len(words) < 2:
+            return
+
+        pattern = " ".join(words[:6])
+
+        config = _load_config()
+        cat_name = "Learned Pattern"
+        for cat in config.get("categories", []):
+            if cat["id"] == matched_category:
+                cat_name = cat["name"]
+                break
+
+        add_learned_pattern(pattern, matched_category, cat_name)
+
+        from core.activity_log import log_activity
+        log_activity(
+            source="ketu-only",
+            action="learned-from-chat",
+            details={
+                "pattern": pattern,
+                "category": cat_name,
+                "customer_asked": customer_message[:80],
+                "ketu_replied": ketu_reply[:80],
+                "phone_last4": customer_phone[-4:] if customer_phone else "",
+            },
+            items_count=1,
+        )
+        logger.info(f"[KetuOnly] Learned from manual chat: '{pattern}' -> {cat_name}")
+
+    except Exception as e:
+        logger.warning(f"[KetuOnly] Learning from chat failed (non-fatal): {e}")
 
 
 # --- Voice Note Learning ---
