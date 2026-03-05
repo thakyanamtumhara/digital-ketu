@@ -72,11 +72,23 @@ def buffer_conversation(
     """Buffer a conversation pair for background learning.
 
     Called after every AI reply. When buffer hits threshold,
-    triggers batch analysis.
+    triggers batch analysis. Junk messages are filtered out
+    before buffering to keep learning data high-quality.
     """
     global _conversation_count
 
     _load_buffer_from_db()
+
+    # Filter out junk messages — no point learning from "ok", "hmm", emojis etc.
+    from learner.chat_learner import is_junk_message
+    if is_junk_message(customer_message) and is_junk_message(ai_reply):
+        logger.debug(f"[Buffer] Skipped junk pair: '{customer_message[:30]}' / '{ai_reply[:30]}'")
+        return
+    # If customer sent junk but AI gave a real reply, still skip —
+    # the AI reply to "ok" or "👍" has no learning value
+    if is_junk_message(customer_message):
+        logger.debug(f"[Buffer] Skipped junk customer msg: '{customer_message[:30]}'")
+        return
 
     _conversation_buffer.append({
         "customer": customer_message,
