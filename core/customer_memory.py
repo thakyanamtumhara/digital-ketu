@@ -154,6 +154,9 @@ def update_profile(
 
     msg_lower = message.lower()
 
+    # Detect buying stage progression
+    current_stage = profile.get("stage", STAGE_NEW)
+
     # Detect returning buyer — bought customer messaging again after gap
     if current_stage == STAGE_BOUGHT:
         last_purchase = profile.get("last_purchase_at", "")
@@ -193,7 +196,7 @@ def update_profile(
         if gsm not in profile.get("preferred_gsm", []):
             profile.setdefault("preferred_gsm", []).append(gsm)
 
-    # Detect buying stage progression
+    # Re-read current_stage (may have been updated by returning buyer detection above)
     current_stage = profile.get("stage", STAGE_NEW)
 
     # Bought/completed signals — customer already purchased, no follow-up needed
