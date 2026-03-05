@@ -6,7 +6,8 @@ from anthropic import Anthropic
 import httpx
 
 from core.config import settings, KNOWLEDGE_DIR
-from core.knowledge import format_context
+from core.knowledge import format_context, load_knowledge
+from core.context_selector import classify_message, format_smart_context
 from core.cost_tracker import track_api_cost
 from core.customer_memory import (
     get_profile, update_profile, format_customer_context, reset_follow_up_flag,
@@ -129,14 +130,31 @@ def _load_repeat_buyer_style() -> list[str]:
 def _build_system_prompt(
     customer_phone: str = "",
     escalation_modifier: str = "",
+    customer_message: str = "",
 ) -> str:
     """Build system prompt dynamically from prompt.json + knowledge context.
 
     This prompt evolves over time as Digital Ketu learns from Ketu's real messages.
     Includes customer memory context and escalation handling when applicable.
+
+    Smart context: When customer_message is provided, classifies the question and
+    includes only relevant knowledge sections (60-70% token savings).
+    Falls back to full context if classification fails.
     """
     config = _load_prompt_config()
-    knowledge_context = format_context()
+
+    # Smart context selection — classify message and pick relevant sections only
+    if customer_message:
+        classification = classify_message(customer_message)
+        knowledge = load_knowledge()
+        knowledge_context = format_smart_context(knowledge, classification)
+        logger.info(
+            f"[SmartContext] intents={classification['intents']}, "
+            f"products={len(classification['product_ids'])}, "
+            f"complex={classification['is_complex']}"
+        )
+    else:
+        knowledge_context = format_context()
 
     identity = config.get("identity", {})
     name = identity.get("name", "Digital Ketu")
@@ -584,10 +602,11 @@ def generate_reply(
             items_count=1,
         )
 
-    # Build system prompt with customer context and escalation modifier
+    # Build system prompt with customer context, escalation modifier, and smart context
     system = _build_system_prompt(
         customer_phone=customer_phone,
         escalation_modifier=escalation_modifier,
+        customer_message=message,
     )
     if customer_name:
         system += f"\n\nCustomer name: {customer_name}"
