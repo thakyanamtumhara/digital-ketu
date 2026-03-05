@@ -98,6 +98,28 @@ def _load_prompt_config() -> dict:
         return {}
 
 
+def _load_repeat_buyer_style() -> list[str]:
+    """Load learned repeat buyer reply examples from knowledge base."""
+    try:
+        from core.database import is_db_available, load_knowledge_from_db
+        data = None
+        if is_db_available():
+            data = load_knowledge_from_db("repeat_buyer_style")
+        if not data:
+            style_file = KNOWLEDGE_DIR / "repeat_buyer_style.json"
+            with open(style_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        # Extract reply strings
+        replies = []
+        for r in data.get("repeat_buyer_replies", []) + data.get("returning_buyer_replies", []):
+            reply = r.get("reply", r) if isinstance(r, dict) else r
+            if reply and len(reply) > 5:
+                replies.append(reply)
+        return replies[-10:]  # Last 10 examples
+    except Exception:
+        return []
+
+
 def _build_system_prompt(
     customer_phone: str = "",
     escalation_modifier: str = "",
@@ -173,8 +195,25 @@ def _build_system_prompt(
         "- COMPLAINT: Customer naraz hai/issue hai → Empathetic ho, Ketu sir ko connect kar\n"
         "- CLOSING: Customer ready hai order karne ko → Website link de, payment info de, smooth karo\n"
         "- ACKNOWLEDGMENT: Customer ne 'ok', 'thanks' bola → Reply mat kar (conversation ender)\n"
-        "- GREETING: Customer ne 'hi' bola → Warm welcome + kaise help karu"
+        "- GREETING: Customer ne 'hi' bola → Warm welcome + kaise help karu\n"
+        "- REPEAT BUYER: Purana customer phir aaya hai → Chhota, friendly reply. Ye process jaanta hai, haath mat pakad. 'Bhai, website se order kar lo. Koi issue ho toh batao.' bas itna.\n"
+        "- RETURNING BUYER (30+ din baad): Kaafi din baad aaya → Thoda warm welcome: 'Kaise ho bhai? Naya stock aa gaya hai. Batao kya chahiye.'"
     )
+
+    # Repeat buyer learned style (if available)
+    if customer_phone:
+        profile = get_profile(customer_phone)
+        if profile.get("stage") in ("repeat", "bought") and profile.get("purchase_count", 0) >= 1:
+            repeat_style = _load_repeat_buyer_style()
+            if repeat_style:
+                examples = repeat_style[:5]
+                example_lines = "\n".join(f'- "{e}"' for e in examples)
+                sections.append(
+                    f"## REPEAT BUYER KO KAISE BAAT KARO (Ketu ke real replies se seekha):\n"
+                    f"{example_lines}\n"
+                    f"Ye customer {profile.get('purchase_count', 1)} baar order kar chuka hai. "
+                    f"Process jaanta hai. Short, friendly reply de — jaise purane customer ko dete hain."
+                )
 
     # Signature phrases — these are Ketu's real words, use them naturally
     if all_phrases:

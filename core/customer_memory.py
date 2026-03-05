@@ -106,6 +106,9 @@ def _new_profile() -> dict:
         "objections_raised": [],  # Price objections, quality concerns
         "follow_up_sent": False,  # Whether we already sent a follow-up
         "follow_up_at": "",       # When follow-up was sent
+        "purchase_count": 0,      # How many times they've bought
+        "first_purchase_at": "",  # When they first bought
+        "last_purchase_at": "",   # When they last bought
     }
 
 
@@ -150,6 +153,21 @@ def update_profile(
         return profile
 
     msg_lower = message.lower()
+
+    # Detect returning buyer — bought customer messaging again after gap
+    if current_stage == STAGE_BOUGHT:
+        last_purchase = profile.get("last_purchase_at", "")
+        if last_purchase:
+            try:
+                last_dt = datetime.fromisoformat(last_purchase)
+                days_since = (datetime.now(IST) - last_dt).days
+                if days_since >= 3:
+                    # Bought customer returning after 3+ days → likely repeat buyer
+                    profile["stage"] = STAGE_REPEAT
+                    profile["days_since_last_purchase"] = days_since
+                    logger.info(f"[CustomerMemory] {phone[-4:]} returning after {days_since} days → repeat")
+            except (ValueError, TypeError):
+                pass
 
     # Detect product interests
     product_keywords = {
@@ -198,8 +216,21 @@ def update_profile(
 
     # Stage progression: bought > ready > interested > inquiry
     if any(w in msg_lower for w in bought_words):
-        if current_stage not in (STAGE_REPEAT,):
+        if current_stage == STAGE_BOUGHT:
+            # Already bought before → repeat buyer!
+            profile["stage"] = STAGE_REPEAT
+            profile["purchase_count"] = profile.get("purchase_count", 1) + 1
+            profile["last_purchase_at"] = datetime.now(IST).isoformat()
+        elif current_stage == STAGE_REPEAT:
+            # Already repeat, just update purchase count
+            profile["purchase_count"] = profile.get("purchase_count", 1) + 1
+            profile["last_purchase_at"] = datetime.now(IST).isoformat()
+        else:
             profile["stage"] = STAGE_BOUGHT
+            profile["purchase_count"] = max(profile.get("purchase_count", 0), 1)
+            if not profile.get("first_purchase_at"):
+                profile["first_purchase_at"] = datetime.now(IST).isoformat()
+            profile["last_purchase_at"] = datetime.now(IST).isoformat()
     elif any(w in msg_lower for w in ready_words):
         if current_stage not in (STAGE_BOUGHT, STAGE_REPEAT):
             profile["stage"] = STAGE_READY
@@ -267,10 +298,19 @@ def format_customer_context(phone: str) -> str:
         STAGE_NEGOTIATING: "Price negotiate kar raha hai",
         STAGE_READY: "Order karne ko ready hai",
         STAGE_BOUGHT: "Pehle order kar chuka hai",
-        STAGE_REPEAT: "Repeat customer hai — VIP treatment",
+        STAGE_REPEAT: "Repeat customer hai — VIP treatment, regular buyer",
     }
     parts.append(f"- Status: {stage_labels.get(stage, stage)}")
     parts.append(f"- Total messages: {profile.get('total_messages', 0)}")
+
+    # Repeat buyer context
+    if stage == STAGE_REPEAT:
+        purchase_count = profile.get("purchase_count", 1)
+        parts.append(f"- Purchase count: {purchase_count} orders")
+        days_since = profile.get("days_since_last_purchase", 0)
+        if days_since > 0:
+            parts.append(f"- Last purchase: {days_since} din pehle")
+        parts.append("- Ye regular hai — process jaanta hai, chhota reply de, jaise purane customer ko dete hain")
 
     interests = profile.get("interests", [])
     if interests:
@@ -342,6 +382,60 @@ def get_interested_customers(hours: int = 24) -> list[dict]:
         return interested
     except Exception as e:
         logger.warning(f"[CustomerMemory] Failed to get interested customers: {e}")
+        return []
+
+
+def get_repeat_customers(days: int = 30) -> list[dict]:
+    """Get repeat/bought customers who haven't ordered recently.
+
+    These customers know the process — follow-up is lighter:
+    'Website se order kar lo, koi issue ho toh batao'
+    """
+    try:
+        from core.database import is_db_available, _execute
+        if not is_db_available():
+            return []
+
+        cutoff = datetime.now(IST) - timedelta(days=days)
+        rows = _execute(
+            """SELECT phone, name, data, last_seen
+               FROM customer_profiles
+               WHERE last_seen >= %s
+               ORDER BY last_seen DESC""",
+            (cutoff,), fetch=True,
+        )
+        if not rows:
+            return []
+
+        repeat_customers = []
+        for row in rows:
+            data = row["data"] if isinstance(row["data"], dict) else {}
+            stage = data.get("stage", STAGE_NEW)
+            already_followed = data.get("follow_up_sent", False)
+
+            # Repeat or bought customers who haven't been followed up
+            if stage in (STAGE_REPEAT, STAGE_BOUGHT) and not already_followed:
+                last_purchase = data.get("last_purchase_at", "")
+                days_since = 0
+                if last_purchase:
+                    try:
+                        last_dt = datetime.fromisoformat(last_purchase)
+                        days_since = (datetime.now(IST) - last_dt).days
+                    except (ValueError, TypeError):
+                        pass
+
+                repeat_customers.append({
+                    "phone": row["phone"],
+                    "name": row["name"] or "",
+                    "stage": stage,
+                    "interests": data.get("interests", []),
+                    "purchase_count": data.get("purchase_count", 1),
+                    "days_since_last_purchase": days_since,
+                    "last_seen": row["last_seen"].isoformat() if hasattr(row["last_seen"], "isoformat") else str(row["last_seen"]),
+                })
+        return repeat_customers
+    except Exception as e:
+        logger.warning(f"[CustomerMemory] Failed to get repeat customers: {e}")
         return []
 
 

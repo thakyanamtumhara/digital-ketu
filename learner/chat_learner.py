@@ -726,6 +726,137 @@ def learn_conversation_enders(messages: list[dict], owner_user_id: str) -> dict:
     }
 
 
+def learn_repeat_buyer_patterns(messages: list[dict], owner_user_id: str) -> dict:
+    """Learn how Ketu talks to repeat/returning buyers.
+
+    Scans conversations to find customers who bought multiple times, then
+    extracts Ketu's reply patterns for these regulars. Stored separately
+    so the AI knows the difference between first-time and repeat buyer tone.
+
+    Pure Python — zero AI cost. Just keyword matching + pattern extraction.
+    """
+    from core.customer_memory import get_profile, STAGE_BOUGHT, STAGE_REPEAT
+
+    REPEAT_STYLE_FILE = KNOWLEDGE_DIR / "repeat_buyer_style.json"
+
+    # Load existing repeat buyer style
+    repeat_style = None
+    try:
+        from core.database import is_db_available, load_knowledge_from_db
+        if is_db_available():
+            repeat_style = load_knowledge_from_db("repeat_buyer_style")
+    except Exception:
+        pass
+    if not repeat_style:
+        try:
+            with open(REPEAT_STYLE_FILE, "r", encoding="utf-8") as f:
+                repeat_style = json.load(f)
+        except Exception:
+            repeat_style = {
+                "repeat_buyer_replies": [],
+                "returning_buyer_replies": [],
+                "greeting_patterns": [],
+                "learning_log": [],
+            }
+
+    # Group messages by customer phone
+    conversations: dict[str, list] = {}
+    for msg in messages:
+        phone = msg.get("contact_phone", "") or msg.get("phone", "")
+        if not phone:
+            continue
+        conversations.setdefault(phone, []).append(msg)
+
+    new_repeat_replies = []
+    new_returning_replies = []
+
+    existing_replies = set(
+        r.get("reply", "").lower()[:50] if isinstance(r, dict) else str(r).lower()[:50]
+        for r in repeat_style.get("repeat_buyer_replies", [])
+        + repeat_style.get("returning_buyer_replies", [])
+    )
+
+    for phone, conv_messages in conversations.items():
+        profile = get_profile(phone)
+        stage = profile.get("stage", "new")
+
+        # Only learn from conversations with bought/repeat customers
+        if stage not in (STAGE_BOUGHT, STAGE_REPEAT):
+            continue
+
+        # Extract Ketu's manual replies to this repeat buyer
+        for msg in conv_messages:
+            if msg.get("sender_id") != owner_user_id:
+                continue
+            if msg.get("is_ai_generated", False):
+                continue
+
+            content = msg.get("content", "").strip()
+            if not content or len(content) < 5:
+                continue
+
+            # Skip junk
+            if is_junk_message(content):
+                continue
+
+            reply_lower = content.lower()[:50]
+            if reply_lower in existing_replies:
+                continue
+
+            entry = {
+                "reply": content,
+                "customer_phone_last4": phone[-4:] if len(phone) >= 4 else phone,
+                "purchase_count": profile.get("purchase_count", 1),
+            }
+
+            days_since = profile.get("days_since_last_purchase", 0)
+            if days_since >= 30:
+                new_returning_replies.append(entry)
+            else:
+                new_repeat_replies.append(entry)
+            existing_replies.add(reply_lower)
+
+    # Save if new patterns found
+    if new_repeat_replies or new_returning_replies:
+        from datetime import datetime, timezone, timedelta
+        ist = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(ist).strftime("%d %b %Y, %I:%M %p IST")
+
+        repeat_style.setdefault("repeat_buyer_replies", []).extend(new_repeat_replies)
+        repeat_style.setdefault("returning_buyer_replies", []).extend(new_returning_replies)
+
+        # Keep only last 50 of each to avoid bloat
+        repeat_style["repeat_buyer_replies"] = repeat_style["repeat_buyer_replies"][-50:]
+        repeat_style["returning_buyer_replies"] = repeat_style["returning_buyer_replies"][-50:]
+
+        repeat_style.setdefault("learning_log", []).append({
+            "timestamp": now,
+            "new_repeat": len(new_repeat_replies),
+            "new_returning": len(new_returning_replies),
+        })
+
+        # Save to DB + file
+        try:
+            from core.database import is_db_available, save_knowledge
+            if is_db_available():
+                save_knowledge("repeat_buyer_style", repeat_style)
+        except Exception:
+            pass
+
+        with open(REPEAT_STYLE_FILE, "w", encoding="utf-8") as f:
+            json.dump(repeat_style, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"[RepeatBuyer] Learned {len(new_repeat_replies)} repeat replies, {len(new_returning_replies)} returning replies")
+
+    return {
+        "status": "ok",
+        "new_repeat_replies": len(new_repeat_replies),
+        "new_returning_replies": len(new_returning_replies),
+        "total_repeat_patterns": len(repeat_style.get("repeat_buyer_replies", [])),
+        "total_returning_patterns": len(repeat_style.get("returning_buyer_replies", [])),
+    }
+
+
 def detect_bought_customers_from_chat(messages: list[dict], owner_user_id: str) -> dict:
     """Detect customers who already bought by scanning BOTH owner and customer messages.
 

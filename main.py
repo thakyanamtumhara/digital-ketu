@@ -25,6 +25,7 @@ from learner.chat_learner import (
     apply_knowledge_updates,
     learn_conversation_enders,
     detect_bought_customers_from_chat,
+    learn_repeat_buyer_patterns,
 )
 from learner.youtube_learner import process_video
 from scheduler import (
@@ -544,6 +545,14 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         owner_user_id=req.owner_user_id,
     )
 
+    # Learn how Ketu talks to repeat/returning buyers — separate style section
+    # Pure keyword matching, zero AI cost
+    repeat_result = await asyncio.to_thread(
+        learn_repeat_buyer_patterns,
+        messages=req.messages,
+        owner_user_id=req.owner_user_id,
+    )
+
     invalidate_cache()
 
     _mark_run("whatsapp")
@@ -573,6 +582,10 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
             "bought_detection": {
                 "customers_marked": bought_result.get("customers_marked_bought", 0),
                 "phones": bought_result.get("phones", []),
+            },
+            "repeat_buyer_learning": {
+                "new_repeat_replies": repeat_result.get("new_repeat_replies", 0),
+                "new_returning_replies": repeat_result.get("new_returning_replies", 0),
             },
         },
         items_count=result.get("count", 0),
