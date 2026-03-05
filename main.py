@@ -557,83 +557,237 @@ def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
         logger.info(f"[KetuOnly] Checked {pairs_checked} customer→Ketu pairs from wwbun sync")
 
 
+# --- Message Accumulator for Batch Learning ---
+# wwbun sends small batches (2-3 msgs) frequently.
+# We buffer them and only call Claude when we have 10+ quality pairs.
+# Free features (enders, bought detection, repeat buyer) still run immediately.
+
+_LEARNING_BUFFER_MIN_PAIRS = 10  # Need 10 quality Ketu manual messages before learning
+
+
+def _get_learning_buffer() -> list[dict]:
+    """Load accumulated messages from DB."""
+    try:
+        from core.database import is_db_available, kv_get
+        if is_db_available():
+            data = kv_get("wwbun_learning_buffer")
+            if data and isinstance(data, list):
+                return data
+    except Exception as e:
+        logger.warning(f"[Buffer] Load failed: {e}")
+    return []
+
+
+def _save_learning_buffer(buffer: list[dict]):
+    """Save accumulated messages to DB."""
+    try:
+        from core.database import is_db_available, kv_set
+        if is_db_available():
+            kv_set("wwbun_learning_buffer", buffer)
+    except Exception as e:
+        logger.warning(f"[Buffer] Save failed: {e}")
+
+
+def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int:
+    """Count how many quality manual Ketu messages are in the buffer."""
+    from learner.chat_learner import is_junk_message
+    count = 0
+    for m in buffer:
+        if m.get("sender_id") != owner_user_id:
+            continue
+        if m.get("is_ai_generated"):
+            continue
+        text = m.get("content", "")
+        if is_junk_message(text):
+            continue
+        if len(text.split()) < 3:
+            continue
+        count += 1
+    return count
+
+
+def _flush_learning_buffer(owner_user_id: str) -> dict:
+    """Flush the buffer: send all accumulated messages to Claude for learning."""
+    buffer = _get_learning_buffer()
+    if not buffer:
+        return {"status": "empty_buffer", "count": 0}
+
+    knowledge = extract_knowledge_from_wwbun_messages(
+        messages=buffer,
+        owner_user_id=owner_user_id,
+    )
+    result = apply_knowledge_updates(knowledge)
+    invalidate_cache()
+
+    filter_stats = knowledge.get("filter_stats", {})
+    quality_messages = knowledge.get("quality_messages", [])
+
+    log_activity(
+        source="wwbun-sync",
+        action="batch-learned",
+        details={
+            "total_buffered": len(buffer),
+            "quality_messages_count": filter_stats.get("kept", 0),
+            "junk_skipped": filter_stats.get("junk", 0),
+            "too_short_skipped": filter_stats.get("too_short", 0),
+            "quality_messages_preview": quality_messages[:5],
+            "updates_applied": result.get("applied", []),
+        },
+        items_count=result.get("count", 0),
+    )
+
+    # Clear buffer after successful learning
+    _save_learning_buffer([])
+
+    logger.info(
+        f"[Buffer] Flushed {len(buffer)} messages → "
+        f"{filter_stats.get('kept', 0)} quality → "
+        f"{result.get('count', 0)} knowledge updates"
+    )
+
+    return {
+        "status": "learned",
+        "buffer_flushed": len(buffer),
+        "filter_stats": filter_stats,
+        "quality_messages": quality_messages,
+        "updates_applied": result,
+    }
+
+
 @app.post("/api/learn/wwbun-sync")
 async def learn_from_wwbun(req: LearnWwbunRequest):
     """Learn from wwbun database messages.
 
-    wwbun sends recent messages → Digital Ketu extracts knowledge
-    from ONLY Ketu's manual messages (not AI-generated ones).
+    Messages are ACCUMULATED in a buffer. Claude is only called when
+    we have 10+ quality manual message pairs — this gives Haiku enough
+    data to extract meaningful patterns (traits, phrases, rules).
 
-    Each message should have:
-    - sender_id: who sent it
-    - content: message text
-    - is_ai_generated: bool (true if AI sent it, false if manual)
+    Free features (enders, bought detection, repeat buyer) run immediately
+    on every call — they use keyword matching, zero AI cost.
     """
-    knowledge = await asyncio.to_thread(
-        extract_knowledge_from_wwbun_messages,
-        messages=req.messages,
-        owner_user_id=req.owner_user_id,
-    )
-    result = await asyncio.to_thread(apply_knowledge_updates, knowledge)
+    # --- FREE features: run immediately on every call (zero AI cost) ---
 
-    # Learn conversation-ending patterns (when Ketu doesn't reply)
+    # Learn conversation-ending patterns
     ender_result = await asyncio.to_thread(
         learn_conversation_enders,
         messages=req.messages,
         owner_user_id=req.owner_user_id,
     )
 
-    # Detect bought customers from chat signals (bill sent, dispatch discussed, etc.)
-    # Scans BOTH owner and customer messages — pure keyword matching, zero AI cost
+    # Detect bought customers from chat signals
     bought_result = await asyncio.to_thread(
         detect_bought_customers_from_chat,
         messages=req.messages,
         owner_user_id=req.owner_user_id,
     )
 
-    # Learn how Ketu talks to repeat/returning buyers — separate style section
-    # Pure keyword matching, zero AI cost
+    # Learn repeat/returning buyer patterns
     repeat_result = await asyncio.to_thread(
         learn_repeat_buyer_patterns,
         messages=req.messages,
         owner_user_id=req.owner_user_id,
     )
 
-    invalidate_cache()
-
-    _mark_run("whatsapp")
-
-    filter_stats = knowledge.get("filter_stats", {})
-    quality_messages = knowledge.get("quality_messages", [])
-
-    # Invalidate ender cache so new patterns take effect immediately
-    invalidate_ender_cache()
-
-    # Learn Ketu-Only patterns from manual chats
-    # Pair customer messages with Ketu's manual replies to detect
-    # questions that only the real Ketu can answer
+    # Learn Ketu-Only patterns from manual chats (keyword matching, free)
     try:
         from learner.realtime_learner import learn_ketu_only_from_manual_chat
         _learn_ketu_only_pairs(req.messages, req.owner_user_id, learn_ketu_only_from_manual_chat)
     except Exception as e:
         logger.warning(f"Ketu-only learning from wwbun failed (non-fatal): {e}")
 
-    log_activity(
-        source="wwbun-sync",
-        action="learned",
-        details={
-            "total_messages": len(req.messages),
-            "manual_messages": len([m for m in req.messages if not m.get("is_ai_generated")]),
-            "quality_messages_count": filter_stats.get("kept", 0),
-            "junk_skipped": filter_stats.get("junk", 0),
-            "too_short_skipped": filter_stats.get("too_short", 0),
-            "quality_messages_preview": quality_messages[:5],
-            "updates_applied": result.get("applied", []),
-            "conversation_enders": {
-                "new_enders": ender_result.get("new_enders", 0),
-                "new_non_enders": ender_result.get("new_non_enders", 0),
-                "examples": ender_result.get("examples", []),
+    invalidate_ender_cache()
+    _mark_run("whatsapp")
+
+    # --- PAID feature: accumulate messages for batch Claude learning ---
+
+    # Add new messages to buffer
+    buffer = _get_learning_buffer()
+    buffer.extend(req.messages)
+
+    # Cap buffer at 500 messages to prevent unbounded growth
+    if len(buffer) > 500:
+        buffer = buffer[-500:]
+
+    _save_learning_buffer(buffer)
+
+    # Count quality manual messages in buffer
+    quality_count = _count_quality_owner_messages(buffer, req.owner_user_id)
+
+    # Decide: learn now or wait for more messages
+    learn_result = {"status": "buffered", "count": 0}
+    filter_stats = {"total": len(req.messages), "kept": 0, "junk": 0, "too_short": 0}
+    quality_messages = []
+
+    if quality_count >= _LEARNING_BUFFER_MIN_PAIRS:
+        # Enough data! Flush buffer and learn
+        learn_result = await asyncio.to_thread(
+            _flush_learning_buffer, req.owner_user_id
+        )
+        filter_stats = learn_result.get("filter_stats", filter_stats)
+        quality_messages = learn_result.get("quality_messages", [])
+        invalidate_cache()
+
+        # Track wwbun sync stats for dashboard
+        _track_wwbun_sync(
+            total_messages=learn_result.get("buffer_flushed", len(req.messages)),
+            quality_count=filter_stats.get("kept", 0),
+            junk_count=filter_stats.get("junk", 0),
+            short_count=filter_stats.get("too_short", 0),
+            knowledge_count=learn_result.get("updates_applied", {}).get("count", 0),
+            enders_learned=ender_result.get("new_enders", 0),
+            quality_previews=quality_messages,
+            details={
+                "filter_stats": filter_stats,
+                "updates_applied": learn_result.get("updates_applied", {}).get("applied", [])[:5],
+                "enders": ender_result.get("examples", [])[:3],
             },
+        )
+    else:
+        # Not enough yet — just log the buffering
+        log_activity(
+            source="wwbun-sync",
+            action="buffered",
+            details={
+                "messages_added": len(req.messages),
+                "buffer_total": len(buffer),
+                "quality_in_buffer": quality_count,
+                "needed": _LEARNING_BUFFER_MIN_PAIRS,
+                "remaining": _LEARNING_BUFFER_MIN_PAIRS - quality_count,
+            },
+            items_count=0,
+        )
+
+        # Still track sync stats even when buffering
+        _track_wwbun_sync(
+            total_messages=len(req.messages),
+            quality_count=0,
+            junk_count=0,
+            short_count=0,
+            knowledge_count=0,
+            enders_learned=ender_result.get("new_enders", 0),
+            quality_previews=[],
+            details={
+                "buffered": True,
+                "quality_in_buffer": quality_count,
+                "needed": _LEARNING_BUFFER_MIN_PAIRS,
+            },
+        )
+
+    return {
+        "status": learn_result.get("status", "buffered"),
+        "buffer": {
+            "quality_pairs": quality_count,
+            "threshold": _LEARNING_BUFFER_MIN_PAIRS,
+            "total_buffered": len(buffer) if learn_result.get("status") == "buffered" else 0,
+        },
+        "learning": {
+            "filter_stats": filter_stats,
+            "quality_messages": quality_messages,
+            "knowledge_extracted": {k: v for k, v in learn_result.items() if k not in ("status", "buffer_flushed", "filter_stats", "quality_messages", "updates_applied")},
+            "updates_applied": learn_result.get("updates_applied", {}),
+        },
+        "free_features": {
+            "conversation_enders": ender_result,
             "bought_detection": {
                 "customers_marked": bought_result.get("customers_marked_bought", 0),
                 "phones": bought_result.get("phones", []),
@@ -643,32 +797,47 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
                 "new_returning_replies": repeat_result.get("new_returning_replies", 0),
             },
         },
-        items_count=result.get("count", 0),
-    )
+    }
 
-    # Track persistent wwbun sync stats for dashboard
-    _track_wwbun_sync(
-        total_messages=len(req.messages),
-        quality_count=filter_stats.get("kept", 0),
-        junk_count=filter_stats.get("junk", 0),
-        short_count=filter_stats.get("too_short", 0),
-        knowledge_count=result.get("count", 0),
-        enders_learned=ender_result.get("new_enders", 0),
-        quality_previews=quality_messages,
-        details={
-            "filter_stats": filter_stats,
-            "updates_applied": result.get("applied", [])[:5],
-            "enders": ender_result.get("examples", [])[:3],
-        },
-    )
+
+class FlushBufferRequest(BaseModel):
+    owner_user_id: str
+
+
+@app.post("/api/learn/flush-buffer")
+async def flush_learning_buffer(req: FlushBufferRequest):
+    """Manually flush the learning buffer — force Claude to learn from whatever is buffered.
+
+    Use this if you want to force learning even with fewer than 10 quality pairs.
+    """
+    buffer = _get_learning_buffer()
+    if not buffer:
+        return {"status": "empty", "message": "No messages in buffer"}
+
+    quality_count = _count_quality_owner_messages(buffer, req.owner_user_id)
+
+    result = await asyncio.to_thread(_flush_learning_buffer, req.owner_user_id)
 
     return {
-        "status": "ok",
-        "filter_stats": filter_stats,
-        "quality_messages": quality_messages,
-        "knowledge_extracted": {k: v for k, v in knowledge.items() if k not in ("filter_stats", "quality_messages")},
-        "updates_applied": result,
-        "conversation_enders": ender_result,
+        "status": result.get("status", "error"),
+        "messages_flushed": result.get("buffer_flushed", 0),
+        "quality_pairs": quality_count,
+        "updates_applied": result.get("updates_applied", {}),
+    }
+
+
+@app.get("/api/learn/buffer-status")
+async def learning_buffer_status(owner_user_id: str = ""):
+    """Check current learning buffer status."""
+    buffer = _get_learning_buffer()
+    quality = _count_quality_owner_messages(buffer, owner_user_id) if owner_user_id else 0
+
+    return {
+        "total_buffered": len(buffer),
+        "quality_pairs": quality,
+        "threshold": _LEARNING_BUFFER_MIN_PAIRS,
+        "remaining_needed": max(0, _LEARNING_BUFFER_MIN_PAIRS - quality),
+        "ready_to_learn": quality >= _LEARNING_BUFFER_MIN_PAIRS,
     }
 
 
