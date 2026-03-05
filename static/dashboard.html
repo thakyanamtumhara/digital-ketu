@@ -772,6 +772,16 @@
           <div id="tokenTotalOutputCost" style="font-size:11px;color:var(--text-dim);">cost: --</div>
         </div>
       </div>
+      <!-- By Model breakdown -->
+      <h4 style="font-size:13px;color:var(--text-bright);margin:14px 0 8px;">
+        By Model <span style="font-weight:400;color:var(--text-dim);font-size:11px;">(which AI is costing what)</span>
+      </h4>
+      <div id="tokenByModel" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-bottom:14px;"></div>
+
+      <!-- By Source breakdown -->
+      <h4 style="font-size:13px;color:var(--text-bright);margin-bottom:8px;">
+        By Purpose <span style="font-weight:400;color:var(--text-dim);font-size:11px;">(what the tokens are used for)</span>
+      </h4>
       <div id="tokenBySource" style="display:grid;grid-template-columns:1fr;gap:6px;"></div>
     </div>
   </div>
@@ -2104,23 +2114,69 @@ async function loadCosts() {
   document.getElementById('tokenTotalInput').textContent = totalIn.toLocaleString();
   document.getElementById('tokenTotalOutput').textContent = totalOut.toLocaleString();
 
-  // Estimate input/output cost split (use weighted avg pricing)
-  const models = t.by_model || {};
-  let totalInputCost = 0, totalOutputCost = 0;
-  const modelPricing = {
-    'claude-haiku-4-5-20251001': {input: 0.80, output: 4.00},
-    'claude-sonnet-4-20250514': {input: 3.00, output: 15.00},
-  };
-  // If we have by_model data, use proportional split; otherwise estimate
-  if (Object.keys(models).length > 0) {
-    // Simple: total cost is known, split proportionally
-    totalInputCost = (t.cost_usd || 0) * 0.3; // rough split
-    totalOutputCost = (t.cost_usd || 0) * 0.7;
-  }
+  // Input/output cost estimate
+  const totalCostUsd = t.cost_usd || 0;
   document.getElementById('tokenTotalInputCost').textContent =
-    'sending to AI: $' + totalInputCost.toFixed(4) + ' (\u20B9' + (totalInputCost * 83.5).toFixed(2) + ')';
+    'context sent to AI (' + ((totalIn / (totalIn + totalOut || 1)) * 100).toFixed(0) + '% of tokens)';
   document.getElementById('tokenTotalOutputCost').textContent =
-    'AI replies: $' + totalOutputCost.toFixed(4) + ' (\u20B9' + (totalOutputCost * 83.5).toFixed(2) + ')';
+    'AI-generated replies (' + ((totalOut / (totalIn + totalOut || 1)) * 100).toFixed(0) + '% of tokens)';
+
+  // ---- BY MODEL BREAKDOWN ----
+  const models = t.by_model || {};
+  const allModelDefs = {
+    'claude-haiku-4-5-20251001': {
+      label: 'Claude Haiku 4.5', color: '#0f8', icon: '\u26A1',
+      desc: 'Fast & cheap — simple replies, classification',
+      pricing: '$0.80 in / $4.00 out per 1M tokens',
+    },
+    'claude-sonnet-4-20250514': {
+      label: 'Claude Sonnet 4', color: 'var(--accent)', icon: '\uD83E\uDDE0',
+      desc: 'Smart — complex replies, learning, analysis',
+      pricing: '$3.00 in / $15.00 out per 1M tokens',
+    },
+    'whisper-1': {
+      label: 'OpenAI Whisper', color: 'var(--orange)', icon: '\uD83C\uDFA4',
+      desc: 'Voice note transcription',
+      pricing: '$0.006 per minute of audio',
+    },
+  };
+
+  const modelEl = document.getElementById('tokenByModel');
+  let modelHtml = '';
+
+  // Merge all known models + any from API
+  const allModelKeys = new Set([...Object.keys(allModelDefs), ...Object.keys(models)]);
+  for (const modelId of allModelKeys) {
+    const mInfo = models[modelId] || {calls: 0, cost_usd: 0};
+    const meta = allModelDefs[modelId] || {
+      label: modelId, color: 'var(--text-dim)', icon: '\uD83E\uDD16',
+      desc: 'Unknown model', pricing: '',
+    };
+    const isActive = (mInfo.calls || 0) > 0;
+    const costUsd = mInfo.cost_usd || 0;
+    const costInr = costUsd * 83.5;
+    const pctOfTotal = totalCostUsd > 0 ? ((costUsd / totalCostUsd) * 100).toFixed(0) : 0;
+
+    modelHtml += '<div style="background:rgba(255,255,255,0.03);border:1px solid ' +
+      (isActive ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)') +
+      ';border-radius:8px;padding:12px 14px;opacity:' + (isActive ? '1' : '0.4') + ';">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">' +
+        '<span style="font-size:13px;font-weight:600;color:' + meta.color + ';">' + meta.icon + ' ' + meta.label + '</span>' +
+        '<span style="font-size:13px;font-weight:700;color:' + meta.color + ';">' +
+        (isActive ? ('\u20B9' + costInr.toFixed(2)) : '--') + '</span>' +
+      '</div>' +
+      '<div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">' + meta.desc + '</div>' +
+      '<div style="font-size:11px;color:var(--text-dim);">' +
+        (isActive
+          ? (mInfo.calls + ' calls | $' + costUsd.toFixed(4) + ' | ' + pctOfTotal + '% of total cost')
+          : ('No calls today')
+        ) +
+      '</div>' +
+      '<div style="font-size:10px;color:var(--text-dim);margin-top:4px;opacity:0.6;">' + meta.pricing + '</div>' +
+    '</div>';
+  }
+
+  modelEl.innerHTML = modelHtml;
 
   // Per-source token breakdown — show ALL sources, even with 0 calls
   const sources = t.by_source || {};
