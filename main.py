@@ -24,6 +24,7 @@ from learner.chat_learner import (
     extract_knowledge_from_wwbun_messages,
     apply_knowledge_updates,
     learn_conversation_enders,
+    detect_bought_customers_from_chat,
 )
 from learner.youtube_learner import process_video
 from scheduler import (
@@ -535,6 +536,14 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         owner_user_id=req.owner_user_id,
     )
 
+    # Detect bought customers from chat signals (bill sent, dispatch discussed, etc.)
+    # Scans BOTH owner and customer messages — pure keyword matching, zero AI cost
+    bought_result = await asyncio.to_thread(
+        detect_bought_customers_from_chat,
+        messages=req.messages,
+        owner_user_id=req.owner_user_id,
+    )
+
     invalidate_cache()
 
     _mark_run("whatsapp")
@@ -560,6 +569,10 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
                 "new_enders": ender_result.get("new_enders", 0),
                 "new_non_enders": ender_result.get("new_non_enders", 0),
                 "examples": ender_result.get("examples", []),
+            },
+            "bought_detection": {
+                "customers_marked": bought_result.get("customers_marked_bought", 0),
+                "phones": bought_result.get("phones", []),
             },
         },
         items_count=result.get("count", 0),

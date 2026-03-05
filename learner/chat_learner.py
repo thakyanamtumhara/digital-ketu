@@ -724,3 +724,62 @@ def learn_conversation_enders(messages: list[dict], owner_user_id: str) -> dict:
         "examples": [e["pattern"] for e in unique_enders[:10]],
         "non_ender_examples": [e["pattern"] for e in new_non_enders[:5]],
     }
+
+
+def detect_bought_customers_from_chat(messages: list[dict], owner_user_id: str) -> dict:
+    """Detect customers who already bought by scanning BOTH owner and customer messages.
+
+    When Ketu sends a bill, discusses dispatch, or confirms payment — the customer
+    has bought. Mark them as 'bought' so follow-up system skips them.
+
+    Pure Python keyword matching — zero AI cost.
+    """
+    from core.customer_memory import get_profile, STAGE_BOUGHT, STAGE_REPEAT
+
+    # Signals that a purchase is complete (from EITHER side of conversation)
+    bought_signals = {
+        "bill", "invoice", "receipt", "billno", "bill no",
+        "dispatch", "dispatched", "shipped", "ship ho gaya", "ship kar diya",
+        "payment done", "payment ho gaya", "paid", "pay kar diya", "payment received",
+        "order confirm", "order ho gaya", "order done", "order ready",
+        "parcel", "tracking", "delivery", "deliver ho", "courier",
+        "received", "mil gaya", "aa gaya", "godam", "warehouse",
+        "packed", "packing done", "ready for dispatch",
+    }
+
+    # Group messages by conversation (customer phone)
+    # wwbun messages have contact_phone or we derive from conversation context
+    conversations: dict[str, list] = {}
+    for msg in messages:
+        # Try to identify the customer phone from the message
+        phone = msg.get("contact_phone", "") or msg.get("phone", "")
+        if not phone:
+            continue
+        conversations.setdefault(phone, []).append(msg)
+
+    updated = []
+    for phone, conv_messages in conversations.items():
+        # Check ALL messages in conversation (both owner and customer)
+        has_bought_signal = False
+        for msg in conv_messages:
+            content = (msg.get("content", "") or "").lower()
+            if any(signal in content for signal in bought_signals):
+                has_bought_signal = True
+                break
+
+        if has_bought_signal:
+            profile = get_profile(phone)
+            current_stage = profile.get("stage", "new")
+            if current_stage not in (STAGE_BOUGHT, STAGE_REPEAT):
+                profile["stage"] = STAGE_BOUGHT
+                from core.customer_memory import _save_profile_to_db, _profiles
+                _profiles[phone] = profile
+                _save_profile_to_db(phone, "", profile)
+                updated.append(phone[-4:] if len(phone) >= 4 else phone)
+                logger.info(f"[BoughtDetect] Marked {phone[-4:]} as bought (from chat signals)")
+
+    return {
+        "status": "ok",
+        "customers_marked_bought": len(updated),
+        "phones": updated,
+    }
