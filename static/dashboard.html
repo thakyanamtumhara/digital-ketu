@@ -2122,55 +2122,73 @@ async function loadCosts() {
   document.getElementById('tokenTotalOutputCost').textContent =
     'AI replies: $' + totalOutputCost.toFixed(4) + ' (\u20B9' + (totalOutputCost * 83.5).toFixed(2) + ')';
 
-  // Per-source token breakdown
+  // Per-source token breakdown — show ALL sources, even with 0 calls
   const sources = t.by_source || {};
   const sourceLabels = {
-    'whatsapp-reply': {label: 'WhatsApp Replies', icon: '💬', desc: 'Generating customer replies'},
-    'youtube-analysis': {label: 'YouTube Analysis', icon: '📺', desc: 'Understanding video content'},
-    'whatsapp-learning': {label: 'WA Chat Learning', icon: '📚', desc: 'Learning from your chats'},
-    'wwbun-learning': {label: 'wwbun Sync', icon: '🔄', desc: 'Learning from your manual replies'},
-    'realtime-analysis': {label: 'Realtime Buffer', icon: '⚡', desc: 'Analyzing conversation patterns'},
-    'correction-analysis': {label: 'Corrections', icon: '✏️', desc: 'Learning from your overrides'},
-    'voice-analysis': {label: 'Voice Notes', icon: '🎤', desc: 'Transcribing & understanding audio'},
+    'whatsapp-reply': {label: 'WhatsApp Replies', icon: '\uD83D\uDCAC', desc: 'Generating customer replies'},
+    'youtube-analysis': {label: 'YouTube Analysis', icon: '\uD83D\uDCFA', desc: 'Understanding video content'},
+    'whatsapp-learning': {label: 'WA Chat Learning', icon: '\uD83D\uDCDA', desc: 'Learning from your chats'},
+    'wwbun-learning': {label: 'wwbun Sync', icon: '\uD83D\uDD04', desc: 'Learning from your manual replies'},
+    'realtime-analysis': {label: 'Realtime Buffer', icon: '\u26A1', desc: 'Analyzing conversation patterns'},
+    'correction-analysis': {label: 'Corrections', icon: '\u270F\uFE0F', desc: 'Learning from your overrides'},
+    'voice-analysis': {label: 'Voice Notes', icon: '\uD83C\uDFA4', desc: 'Transcribing & understanding audio'},
   };
 
   const tokenBySourceEl = document.getElementById('tokenBySource');
   let srcHtml = '';
-  // Sort by tokens used (highest first)
-  const sortedSources = Object.entries(sources).sort((a, b) =>
-    ((b[1].input_tokens || 0) + (b[1].output_tokens || 0)) -
-    ((a[1].input_tokens || 0) + (a[1].output_tokens || 0))
-  );
 
-  for (const [src, info] of sortedSources) {
+  // Merge: all known sources + any unknown ones from API
+  const allSourceKeys = new Set([...Object.keys(sourceLabels), ...Object.keys(sources)]);
+  // Build array with data (0 defaults for missing)
+  const allSources = [];
+  for (const src of allSourceKeys) {
+    const info = sources[src] || {input_tokens: 0, output_tokens: 0, calls: 0, cost_usd: 0};
+    allSources.push([src, info]);
+  }
+  // Sort: active sources first (by tokens desc), then inactive ones alphabetically
+  allSources.sort((a, b) => {
+    const aTok = (a[1].input_tokens || 0) + (a[1].output_tokens || 0);
+    const bTok = (b[1].input_tokens || 0) + (b[1].output_tokens || 0);
+    if (aTok > 0 && bTok === 0) return -1;
+    if (aTok === 0 && bTok > 0) return 1;
+    if (aTok > 0 && bTok > 0) return bTok - aTok;
+    return (a[0]).localeCompare(b[0]);
+  });
+
+  for (const [src, info] of allSources) {
     const meta = sourceLabels[src] || {label: src, icon: '📊', desc: ''};
     const inTok = (info.input_tokens || 0);
     const outTok = (info.output_tokens || 0);
     const totalTok = inTok + outTok;
+    const calls = info.calls || 0;
+    const isActive = calls > 0;
     const pct = (totalIn + totalOut) > 0 ? ((totalTok / (totalIn + totalOut)) * 100).toFixed(0) : 0;
     const barWidth = Math.max(2, pct);
+    const opacity = isActive ? '1' : '0.4';
+    const borderColor = isActive ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)';
 
-    srcHtml += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;">' +
+    srcHtml += '<div style="background:rgba(255,255,255,0.03);border:1px solid ' + borderColor + ';border-radius:8px;padding:10px 14px;opacity:' + opacity + ';">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">' +
         '<span style="font-size:12px;color:var(--text-bright);">' + meta.icon + ' ' + meta.label + '</span>' +
-        '<span style="font-size:12px;font-weight:600;color:var(--accent2);">$' + (info.cost_usd || 0).toFixed(4) +
-        ' (\u20B9' + ((info.cost_usd || 0) * 83.5).toFixed(2) + ')</span>' +
+        '<span style="font-size:12px;font-weight:600;color:' + (isActive ? 'var(--accent2)' : 'var(--text-dim)') + ';">' +
+        (isActive ? ('$' + (info.cost_usd || 0).toFixed(4) + ' (\u20B9' + ((info.cost_usd || 0) * 83.5).toFixed(2) + ')') : 'No calls today') +
+        '</span>' +
       '</div>' +
-      '<div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">' + meta.desc + '</div>' +
-      '<div style="display:flex;gap:12px;font-size:11px;color:var(--text-dim);">' +
-        '<span>In: <b style="color:var(--accent2);">' + inTok.toLocaleString() + '</b></span>' +
-        '<span>Out: <b style="color:var(--accent);">' + outTok.toLocaleString() + '</b></span>' +
-        '<span>' + info.calls + ' calls</span>' +
-        '<span style="margin-left:auto;color:var(--text-bright);">' + pct + '%</span>' +
-      '</div>' +
-      '<div style="height:3px;background:rgba(255,255,255,0.05);border-radius:2px;margin-top:4px;">' +
-        '<div style="height:100%;width:' + barWidth + '%;background:var(--accent2);border-radius:2px;"></div>' +
-      '</div>' +
-    '</div>';
-  }
+      '<div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">' + meta.desc + '</div>';
 
-  if (sortedSources.length === 0) {
-    srcHtml = '<div style="text-align:center;color:var(--text-dim);font-size:12px;padding:12px;">No API calls yet today. Token usage will appear here as messages come in.</div>';
+    if (isActive) {
+      srcHtml += '<div style="display:flex;gap:12px;font-size:11px;color:var(--text-dim);">' +
+          '<span>In: <b style="color:var(--accent2);">' + inTok.toLocaleString() + '</b></span>' +
+          '<span>Out: <b style="color:var(--accent);">' + outTok.toLocaleString() + '</b></span>' +
+          '<span>' + calls + ' calls</span>' +
+          '<span style="margin-left:auto;color:var(--text-bright);">' + pct + '%</span>' +
+        '</div>' +
+        '<div style="height:3px;background:rgba(255,255,255,0.05);border-radius:2px;margin-top:4px;">' +
+          '<div style="height:100%;width:' + barWidth + '%;background:var(--accent2);border-radius:2px;"></div>' +
+        '</div>';
+    }
+
+    srcHtml += '</div>';
   }
 
   tokenBySourceEl.innerHTML = srcHtml;
