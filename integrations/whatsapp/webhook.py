@@ -280,12 +280,23 @@ async def receive_message(request: Request):
                     continue
 
                 # Generate AI reply (run in thread to avoid blocking event loop)
-                reply = await asyncio.to_thread(
-                    generate_reply,
-                    message=text,
-                    customer_phone=sender,
-                    customer_name=name,
-                )
+                try:
+                    reply = await asyncio.to_thread(
+                        generate_reply,
+                        message=text,
+                        customer_phone=sender,
+                        customer_name=name,
+                    )
+                except Exception as e:
+                    logger.error(f"generate_reply crashed for {sender}: {e}")
+                    from core.error_tracker import track_error
+                    track_error("generate-reply", str(e), {"phone": sender[-4:], "message": text[:80]})
+                    # Send fallback reply so customer isn't left hanging
+                    await send_text_message(
+                        to=sender,
+                        message="Ji sir, ek chhota sa technical issue aa gaya. Thodi der mein reply karta hun.",
+                    )
+                    continue
 
                 # Empty reply = conversation ender, don't send anything
                 if not reply:
