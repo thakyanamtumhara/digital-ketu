@@ -753,6 +753,11 @@
         <div class="source-count" id="costPerReply" style="color:var(--green);">--</div>
         <div class="source-detail" id="costPerReplyDetail">avg cost per WhatsApp reply</div>
       </div>
+      <div class="today-card" style="border:1px solid rgba(0,255,136,0.15);">
+        <div class="source-name" style="color:#0f8;">Smart Savings</div>
+        <div class="source-count" id="costSaved" style="color:#0f8;">--</div>
+        <div class="source-detail" id="costSavedDetail">tokens saved today</div>
+      </div>
     </div>
     <div id="costBreakdown" style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;"></div>
   </div>
@@ -2078,6 +2083,16 @@ async function loadCosts() {
   document.getElementById('costPerReply').textContent = '\u20B9' + (pr.avg_cost_inr || 0).toFixed(4);
   document.getElementById('costPerReplyDetail').textContent =
     pr.replies_today + ' replies today | $' + (pr.avg_cost_usd || 0).toFixed(4) + '/reply';
+
+  // Smart context savings
+  const sc = (data.smart_context_savings || {}).today || {};
+  const savedINR = (data.smart_context_savings || {}).today_cost_saved_inr || 0;
+  const tokensSaved = sc.tokens_saved || 0;
+  const smartCalls = sc.calls_with_smart || 0;
+  const haikuCalls = sc.haiku_calls || 0;
+  document.getElementById('costSaved').textContent = '\u20B9' + savedINR.toFixed(2);
+  document.getElementById('costSavedDetail').textContent =
+    tokensSaved.toLocaleString() + ' tokens saved | ' + smartCalls + ' smart calls | ' + haikuCalls + ' Haiku';
 
   // Source breakdown
   const sources = t.by_source || {};
