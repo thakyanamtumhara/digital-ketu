@@ -832,6 +832,21 @@
             <div style="font-size:10px;color:var(--text-dim);">Total Knowledge</div>
           </div>
         </div>
+        <!-- Learning Buffer Status -->
+        <div id="bufferStatusBar" style="background:rgba(108,92,231,0.08);border:1px solid rgba(108,92,231,0.15);border-radius:8px;padding:12px 14px;margin-bottom:16px;display:none;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="font-size:12px;font-weight:600;color:var(--accent);">Learning Buffer</span>
+            <span style="font-size:11px;color:var(--text-dim);" id="bufferStatusText">-</span>
+          </div>
+          <div style="background:rgba(255,255,255,0.06);border-radius:4px;height:8px;overflow:hidden;">
+            <div id="bufferProgressFill" style="height:100%;border-radius:4px;background:var(--accent);transition:width 0.5s ease;width:0%;"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:6px;">
+            <span style="font-size:10px;color:var(--text-dim);" id="bufferPairsText">0 quality pairs</span>
+            <span style="font-size:10px;color:var(--text-dim);" id="bufferThresholdText">Need 10 to learn</span>
+          </div>
+        </div>
+
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
           <span style="font-size:12px;color:var(--text-dim);font-weight:600;">Recent Quality Messages (used for learning):</span>
           <span style="font-size:11px;color:var(--text-dim);" id="wwbunLastSync">-</span>
@@ -2128,6 +2143,35 @@ async function loadWwbunStats() {
   const det = document.getElementById('whatsappSyncDetail');
   if (det && data.total_syncs > 0) {
     det.textContent = `${data.today_messages || 0} msgs today | ${data.today_quality || 0} quality | ${data.total_syncs} total syncs`;
+  }
+
+  // Learning Buffer Status
+  const bufferData = await fetchJSON('/api/learn/buffer-status');
+  const bufferBar = document.getElementById('bufferStatusBar');
+  if (bufferData && bufferBar) {
+    bufferBar.style.display = 'block';
+    const pairs = bufferData.quality_pairs || 0;
+    const threshold = bufferData.threshold || 10;
+    const total = bufferData.total_buffered || 0;
+    const pct = Math.min(100, Math.round((pairs / threshold) * 100));
+    const remaining = bufferData.remaining_needed || 0;
+
+    document.getElementById('bufferProgressFill').style.width = pct + '%';
+    document.getElementById('bufferPairsText').textContent = pairs + ' quality pairs buffered (' + total + ' total msgs)';
+    document.getElementById('bufferThresholdText').textContent = remaining > 0 ? remaining + ' more needed to learn' : 'Ready to learn!';
+
+    const statusText = document.getElementById('bufferStatusText');
+    if (bufferData.ready_to_learn) {
+      statusText.textContent = 'Learning triggered!';
+      statusText.style.color = 'var(--green)';
+      document.getElementById('bufferProgressFill').style.background = 'var(--green)';
+    } else if (pairs > 0) {
+      statusText.textContent = pairs + '/' + threshold + ' pairs';
+      statusText.style.color = 'var(--accent)';
+    } else {
+      statusText.textContent = 'Waiting for messages';
+      statusText.style.color = 'var(--text-dim)';
+    }
   }
 
   // Recent quality messages
