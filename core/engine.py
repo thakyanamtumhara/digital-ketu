@@ -519,8 +519,8 @@ def generate_reply(
     for attempt in range(3):
         try:
             response = client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=150,
+                model="claude-sonnet-4-20250514",
+                max_tokens=200,
                 system=system,
                 messages=messages,
                 timeout=httpx.Timeout(30.0, connect=10.0),
