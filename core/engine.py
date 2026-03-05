@@ -642,7 +642,9 @@ def generate_reply(
                 time.sleep(2 ** attempt)  # 1s, 2s backoff
 
     logger.error(f"Claude API failed after 3 attempts: {last_error}")
-    return "Ji sir, ek chhota sa technical issue aa gaya. Thodi der mein reply karta hun. Aap sale91.com pe check kar sakte hain."
+    # Stay silent — don't send confusing "technical issue" message to customer.
+    # Silence is better than a nonsensical reply. Ketu can reply manually if needed.
+    return ""
 
 
 def _load_faq_hits_from_db():

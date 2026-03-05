@@ -291,11 +291,8 @@ async def receive_message(request: Request):
                     logger.error(f"generate_reply crashed for {sender}: {e}")
                     from core.error_tracker import track_error
                     track_error("generate-reply", str(e), {"phone": sender[-4:], "message": text[:80]})
-                    # Send fallback reply so customer isn't left hanging
-                    await send_text_message(
-                        to=sender,
-                        message="Ji sir, ek chhota sa technical issue aa gaya. Thodi der mein reply karta hun.",
-                    )
+                    # Stay silent — don't send confusing "technical issue" to customer.
+                    # Silence is better than a nonsensical reply.
                     continue
 
                 # Empty reply = conversation ender, don't send anything
