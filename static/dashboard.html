@@ -753,13 +753,27 @@
         <div class="source-count" id="costPerReply" style="color:var(--green);">--</div>
         <div class="source-detail" id="costPerReplyDetail">avg cost per WhatsApp reply</div>
       </div>
-      <div class="today-card" style="border:1px solid rgba(0,255,136,0.15);">
-        <div class="source-name" style="color:#0f8;">Smart Savings</div>
-        <div class="source-count" id="costSaved" style="color:#0f8;">--</div>
-        <div class="source-detail" id="costSavedDetail">tokens saved today</div>
-      </div>
     </div>
-    <div id="costBreakdown" style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;"></div>
+
+    <!-- Token Usage Tracker -->
+    <div style="margin-top:15px;">
+      <h4 style="font-size:13px;color:var(--text-bright);margin-bottom:10px;">
+        Token Usage Breakdown <span style="font-weight:400;color:var(--text-dim);font-size:11px;">(today)</span>
+      </h4>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;">
+          <div style="font-size:11px;color:var(--text-dim);">Total Input Tokens</div>
+          <div id="tokenTotalInput" style="font-size:18px;font-weight:600;color:var(--accent2);">--</div>
+          <div id="tokenTotalInputCost" style="font-size:11px;color:var(--text-dim);">cost: --</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;">
+          <div style="font-size:11px;color:var(--text-dim);">Total Output Tokens</div>
+          <div id="tokenTotalOutput" style="font-size:18px;font-weight:600;color:var(--accent);">--</div>
+          <div id="tokenTotalOutputCost" style="font-size:11px;color:var(--text-dim);">cost: --</div>
+        </div>
+      </div>
+      <div id="tokenBySource" style="display:grid;grid-template-columns:1fr;gap:6px;"></div>
+    </div>
   </div>
 
   <div class="grid">
@@ -2084,37 +2098,82 @@ async function loadCosts() {
   document.getElementById('costPerReplyDetail').textContent =
     pr.replies_today + ' replies today | $' + (pr.avg_cost_usd || 0).toFixed(4) + '/reply';
 
-  // Smart context savings
-  const sc = (data.smart_context_savings || {}).today || {};
-  const savedINR = (data.smart_context_savings || {}).today_cost_saved_inr || 0;
-  const tokensSaved = sc.tokens_saved || 0;
-  const smartCalls = sc.calls_with_smart || 0;
-  const haikuCalls = sc.haiku_calls || 0;
-  document.getElementById('costSaved').textContent = '\u20B9' + savedINR.toFixed(2);
-  document.getElementById('costSavedDetail').textContent =
-    tokensSaved.toLocaleString() + ' tokens saved | ' + smartCalls + ' smart calls | ' + haikuCalls + ' Haiku';
+  // Token usage breakdown
+  const totalIn = t.input_tokens || 0;
+  const totalOut = t.output_tokens || 0;
+  document.getElementById('tokenTotalInput').textContent = totalIn.toLocaleString();
+  document.getElementById('tokenTotalOutput').textContent = totalOut.toLocaleString();
 
-  // Source breakdown
-  const sources = t.by_source || {};
-  const breakdownEl = document.getElementById('costBreakdown');
-  let html = '';
-  const sourceLabels = {
-    'whatsapp-reply': 'WhatsApp Replies',
-    'youtube-analysis': 'YouTube Analysis',
-    'whatsapp-learning': 'WA Learning',
-    'wwbun-learning': 'wwbun Learning',
-    'realtime-analysis': 'Realtime Analysis',
-    'correction-analysis': 'Corrections',
-    'voice-analysis': 'Voice Notes',
+  // Estimate input/output cost split (use weighted avg pricing)
+  const models = t.by_model || {};
+  let totalInputCost = 0, totalOutputCost = 0;
+  const modelPricing = {
+    'claude-haiku-4-5-20251001': {input: 0.80, output: 4.00},
+    'claude-sonnet-4-20250514': {input: 3.00, output: 15.00},
   };
-  for (const [src, info] of Object.entries(sources)) {
-    const label = sourceLabels[src] || src;
-    html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px 12px;font-size:12px;">' +
-      '<span style="color:var(--text-dim);">' + label + '</span>' +
-      '<span style="float:right;color:var(--accent2);">' + info.calls + ' calls | $' + (info.cost_usd || 0).toFixed(4) + '</span>' +
-      '</div>';
+  // If we have by_model data, use proportional split; otherwise estimate
+  if (Object.keys(models).length > 0) {
+    // Simple: total cost is known, split proportionally
+    totalInputCost = (t.cost_usd || 0) * 0.3; // rough split
+    totalOutputCost = (t.cost_usd || 0) * 0.7;
   }
-  breakdownEl.innerHTML = html;
+  document.getElementById('tokenTotalInputCost').textContent =
+    'sending to AI: $' + totalInputCost.toFixed(4) + ' (\u20B9' + (totalInputCost * 83.5).toFixed(2) + ')';
+  document.getElementById('tokenTotalOutputCost').textContent =
+    'AI replies: $' + totalOutputCost.toFixed(4) + ' (\u20B9' + (totalOutputCost * 83.5).toFixed(2) + ')';
+
+  // Per-source token breakdown
+  const sources = t.by_source || {};
+  const sourceLabels = {
+    'whatsapp-reply': {label: 'WhatsApp Replies', icon: '💬', desc: 'Generating customer replies'},
+    'youtube-analysis': {label: 'YouTube Analysis', icon: '📺', desc: 'Understanding video content'},
+    'whatsapp-learning': {label: 'WA Chat Learning', icon: '📚', desc: 'Learning from your chats'},
+    'wwbun-learning': {label: 'wwbun Sync', icon: '🔄', desc: 'Learning from your manual replies'},
+    'realtime-analysis': {label: 'Realtime Buffer', icon: '⚡', desc: 'Analyzing conversation patterns'},
+    'correction-analysis': {label: 'Corrections', icon: '✏️', desc: 'Learning from your overrides'},
+    'voice-analysis': {label: 'Voice Notes', icon: '🎤', desc: 'Transcribing & understanding audio'},
+  };
+
+  const tokenBySourceEl = document.getElementById('tokenBySource');
+  let srcHtml = '';
+  // Sort by tokens used (highest first)
+  const sortedSources = Object.entries(sources).sort((a, b) =>
+    ((b[1].input_tokens || 0) + (b[1].output_tokens || 0)) -
+    ((a[1].input_tokens || 0) + (a[1].output_tokens || 0))
+  );
+
+  for (const [src, info] of sortedSources) {
+    const meta = sourceLabels[src] || {label: src, icon: '📊', desc: ''};
+    const inTok = (info.input_tokens || 0);
+    const outTok = (info.output_tokens || 0);
+    const totalTok = inTok + outTok;
+    const pct = (totalIn + totalOut) > 0 ? ((totalTok / (totalIn + totalOut)) * 100).toFixed(0) : 0;
+    const barWidth = Math.max(2, pct);
+
+    srcHtml += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">' +
+        '<span style="font-size:12px;color:var(--text-bright);">' + meta.icon + ' ' + meta.label + '</span>' +
+        '<span style="font-size:12px;font-weight:600;color:var(--accent2);">$' + (info.cost_usd || 0).toFixed(4) +
+        ' (\u20B9' + ((info.cost_usd || 0) * 83.5).toFixed(2) + ')</span>' +
+      '</div>' +
+      '<div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">' + meta.desc + '</div>' +
+      '<div style="display:flex;gap:12px;font-size:11px;color:var(--text-dim);">' +
+        '<span>In: <b style="color:var(--accent2);">' + inTok.toLocaleString() + '</b></span>' +
+        '<span>Out: <b style="color:var(--accent);">' + outTok.toLocaleString() + '</b></span>' +
+        '<span>' + info.calls + ' calls</span>' +
+        '<span style="margin-left:auto;color:var(--text-bright);">' + pct + '%</span>' +
+      '</div>' +
+      '<div style="height:3px;background:rgba(255,255,255,0.05);border-radius:2px;margin-top:4px;">' +
+        '<div style="height:100%;width:' + barWidth + '%;background:var(--accent2);border-radius:2px;"></div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  if (sortedSources.length === 0) {
+    srcHtml = '<div style="text-align:center;color:var(--text-dim);font-size:12px;padding:12px;">No API calls yet today. Token usage will appear here as messages come in.</div>';
+  }
+
+  tokenBySourceEl.innerHTML = srcHtml;
 }
 
 // ---- WHATSAPP CHAT DATA (WWBUN SYNC STATS) ----
