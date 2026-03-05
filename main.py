@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from core.config import settings, init_knowledge_dir, KNOWLEDGE_DIR
-from core.engine import generate_reply, get_customer_insights, get_faq_hit_rates, invalidate_ender_cache, get_last_escalation
+from core.engine import generate_reply, get_customer_insights, get_faq_hit_rates, invalidate_ender_cache, get_last_escalation, ketu_manual_reply, activate_shutup
 from core.knowledge import load_knowledge, invalidate_cache
 from core.activity_log import log_activity, get_activity_log, get_today_summary, get_storage_stats
 from integrations.whatsapp.webhook import router as whatsapp_router
@@ -1305,6 +1305,42 @@ async def last_reply_to_customer(phone: str):
     if not entry:
         return {"found": False}
     return {"found": True, "conversation": entry}
+
+
+# --- Ketu Manual Reply (Shut Up Mode) ---
+
+
+class KetuRepliedRequest(BaseModel):
+    customer_phone: str
+    ketu_message: str = ""
+    minutes: float = 10
+
+
+@app.post("/api/ketu-replied")
+async def api_ketu_replied(req: KetuRepliedRequest):
+    """Tell Digital Ketu that Ketu manually replied to a customer.
+
+    wwbun calls this when Ketu types a manual message in WhatsApp.
+    This activates "shut up" mode — AI won't reply to this customer
+    for the next N minutes (default 10), because Ketu is handling it.
+
+    If the customer asks a NEW question (contains ?, price, rate, etc.),
+    the cooldown breaks automatically and AI resumes.
+    """
+    ketu_manual_reply(req.customer_phone)
+    log_activity(
+        source="ketu-replied",
+        action="shutup-activated",
+        details={
+            "customer_phone": req.customer_phone[-4:] if req.customer_phone else "unknown",
+            "ketu_message": req.ketu_message[:80] if req.ketu_message else "",
+            "cooldown_minutes": req.minutes,
+        },
+    )
+    return {
+        "status": "ok",
+        "message": f"AI silenced for {req.customer_phone[-4:]} for {req.minutes} minutes",
+    }
 
 
 # --- Realtime Learner Stats ---

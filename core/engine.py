@@ -36,6 +36,11 @@ _faq_hits_loaded = False
 # Last escalation result (per customer, for main.py to check)
 _last_escalation: dict[str, dict] = {}  # phone -> escalation result
 
+# "Shut up" cooldown — when conversation ends (ender detected) or Ketu manually replies,
+# AI stays silent for this customer. Prevents unnecessary follow-up replies.
+_shutup_until: dict[str, float] = {}  # phone -> timestamp until which AI stays silent
+SHUTUP_COOLDOWN = 300  # 5 minutes — AI won't reply to this customer for 5 min after ender
+
 
 def _load_customer_insights_from_db():
     """Load customer insights from DB on first access (survives deploys)."""
@@ -267,6 +272,43 @@ _ender_patterns: set | None = None
 _non_ender_patterns: set | None = None
 
 
+def activate_shutup(customer_phone: str, reason: str = "ender", minutes: float = 0):
+    """Put AI in "shut up" mode for a customer — don't reply for SHUTUP_COOLDOWN seconds.
+
+    Called when:
+    - Conversation ender detected (buyer said "ok", "thanks", etc.)
+    - Ketu manually replied to a customer (AI should back off)
+    """
+    if not customer_phone:
+        return
+    duration = minutes * 60 if minutes > 0 else SHUTUP_COOLDOWN
+    _shutup_until[customer_phone] = time.time() + duration
+    logger.info(f"[ShutUp] Activated for {customer_phone[-4:]} — reason: {reason}, duration: {duration}s")
+
+
+def is_shutup_active(customer_phone: str) -> bool:
+    """Check if AI should stay silent for this customer."""
+    if not customer_phone:
+        return False
+    until = _shutup_until.get(customer_phone, 0)
+    if time.time() < until:
+        remaining = int(until - time.time())
+        logger.info(f"[ShutUp] Active for {customer_phone[-4:]} — {remaining}s remaining")
+        return True
+    # Expired — clean up
+    _shutup_until.pop(customer_phone, None)
+    return False
+
+
+def ketu_manual_reply(customer_phone: str):
+    """Called when Ketu manually replies to a customer.
+
+    Activates shut-up mode so AI doesn't jump back into the conversation.
+    wwbun should call this (via /api/ketu-replied) when it detects Ketu typing.
+    """
+    activate_shutup(customer_phone, reason="ketu_manual_reply", minutes=10)
+
+
 def _load_ender_patterns() -> tuple[set, set]:
     """Load conversation ender patterns from knowledge base (DB → file → hardcoded fallback).
 
@@ -405,15 +447,56 @@ def generate_reply(
     else:
         messages = []
 
-    # Check if this is a conversation-ender (customer just acknowledged, no need to reply)
+    # --- SHUT UP CHECK ---
+    # If AI is in cooldown for this customer (ender detected earlier or Ketu replied),
+    # don't reply at all. This prevents the AI from jumping back into finished conversations.
+    if customer_phone and is_shutup_active(customer_phone):
+        # But if customer asks a NEW question, break the cooldown
+        msg_lower = message.strip().lower().rstrip("!.,")
+        has_question = "?" in message or any(
+            w in msg_lower.split() for w in
+            {"kya", "kab", "kaise", "kitna", "kitne", "kaha", "price", "rate",
+             "sample", "order", "send", "bhej", "batao", "bata", "what", "when",
+             "how", "which", "where", "why"}
+        )
+        if not has_question:
+            logger.info(f"[ShutUp] Skipping reply to {customer_phone[-4:]} — cooldown active, msg: '{message[:50]}'")
+            if customer_phone:
+                _conversations[customer_phone] = messages + [{"role": "user", "content": message}]
+                _conversation_timestamps[customer_phone] = time.time()
+            return ""
+        else:
+            logger.info(f"[ShutUp] Customer {customer_phone[-4:]} asked new question — breaking cooldown: '{message[:50]}'")
+            _shutup_until.pop(customer_phone, None)
+
+    # --- CONVERSATION ENDER CHECK ---
+    # Check if customer is just acknowledging/ending the conversation
     last_ai_msg = ""
     for m in reversed(messages):
         if m.get("role") == "assistant":
             last_ai_msg = m.get("content", "")
             break
 
-    if last_ai_msg and _is_conversation_ender(message, last_ai_msg):
+    # Fix: Even without conversation history, pure enders should still be detected.
+    # "Ok" by itself is ALWAYS an ender — doesn't need last_ai_msg context.
+    is_ender = False
+    if _is_conversation_ender(message, last_ai_msg):
+        if last_ai_msg:
+            # Normal case: we have history, ender detected
+            is_ender = True
+        else:
+            # No history (server restart, etc.) — still detect pure enders
+            # Only skip if it's a clear standalone ender (not a question)
+            msg_clean = message.strip().lower().rstrip("!.,?").strip()
+            enders, _ = _load_ender_patterns()
+            if msg_clean in enders:
+                is_ender = True
+                logger.info(f"[Ender] Pure ender detected without history: '{message[:50]}'")
+
+    if is_ender:
         logger.info(f"Conversation ender detected: '{message[:50]}' — skipping reply")
+        # Activate shut-up cooldown so subsequent messages also get skipped
+        activate_shutup(customer_phone, reason="ender_detected")
         # Still store the message in history but don't generate a reply
         if customer_phone:
             _conversations[customer_phone] = messages + [{"role": "user", "content": message}]
