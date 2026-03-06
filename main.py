@@ -831,7 +831,35 @@ def _is_owner_by_flag(m: dict) -> bool:
 
 
 def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int:
-    """Count quality pairs — just returns len of extracted pairs. Single source of truth."""
+    """Count quality messages for learning readiness threshold.
+
+    When data is GOOD (sender_id works or is_owner is reliable): count pairs.
+    When data is BROKEN (same sender_id + all is_owner same): count individual
+    substantive messages. Claude will figure out roles from conversation context.
+    """
+    from learner.chat_learner import is_junk_message
+
+    broken_sids = _all_sender_ids_same(buffer)
+    use_flag = broken_sids and _is_owner_field_reliable(buffer)
+
+    if broken_sids and not use_flag:
+        # Data is fully broken — count individual quality messages for threshold
+        # Claude can determine roles when it gets the full conversation
+        count = 0
+        for m in buffer:
+            is_ai = _safe_bool(m.get("is_ai_generated"))
+            if is_ai:
+                continue
+            text = m.get("content", "") or m.get("text", "") or m.get("body", "")
+            if not text or is_junk_message(text):
+                continue
+            if len(text.split()) < 2:
+                continue
+            count += 1
+        logger.info(f"[quality-count] broken data → counting individual msgs: {count}")
+        return count
+
+    # Good data — count pairs (more accurate)
     return len(_extract_pairs_from_buffer(buffer, owner_user_id))
 
 
@@ -1008,11 +1036,12 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
 
     _save_learning_buffer(buffer)
 
-    # Extract pairs from buffer — used for BOTH counting AND display (single source of truth)
+    # Extract pairs for display and count quality for threshold (may differ when data is broken)
     buffer_pairs = _extract_pairs_from_buffer(buffer, req.owner_user_id)
-    quality_count = len(buffer_pairs)
+    quality_count = _count_quality_owner_messages(buffer, req.owner_user_id)
     logger.info(
-        f"[wwbun-sync QUALITY] buffer_size={len(buffer)}, quality_pairs={quality_count}, "
+        f"[wwbun-sync QUALITY] buffer_size={len(buffer)}, quality_count={quality_count}, "
+        f"pairs_for_display={len(buffer_pairs)}, "
         f"threshold={_LEARNING_BUFFER_MIN_PAIRS}, will_flush={quality_count >= _LEARNING_BUFFER_MIN_PAIRS}, "
         f"pairs_preview={[p.get('customer','')[:30] + ' → ' + p.get('ketu','')[:30] for p in buffer_pairs[:3]]}"
     )
@@ -1148,9 +1177,10 @@ async def learning_buffer_status(owner_user_id: str = ""):
     if not owner_user_id:
         owner_user_id = _get_owner_user_id()
     buffer = _get_learning_buffer()
-    # Use same pair extraction as sync endpoint — single source of truth
+    # quality_count = threshold count (individual msgs when broken, pairs when good)
+    # buffer_pairs = pairs for display on dashboard
     buffer_pairs = _extract_pairs_from_buffer(buffer, owner_user_id) if owner_user_id else []
-    quality = len(buffer_pairs)
+    quality = _count_quality_owner_messages(buffer, owner_user_id) if owner_user_id else 0
 
     # Show sample messages for debugging
     sample_msgs = []
@@ -1181,6 +1211,7 @@ async def learning_buffer_status(owner_user_id: str = ""):
         "customer_messages": customer_count,
         "unique_sender_ids": unique_sids,
         "quality_pairs": quality,
+        "display_pairs": len(buffer_pairs),
         "threshold": _LEARNING_BUFFER_MIN_PAIRS,
         "remaining_needed": max(0, _LEARNING_BUFFER_MIN_PAIRS - quality),
         "ready_to_learn": quality >= _LEARNING_BUFFER_MIN_PAIRS,
