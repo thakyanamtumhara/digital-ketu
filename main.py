@@ -791,6 +791,7 @@ def _is_owner_by_flag(m: dict) -> bool:
 
 def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int:
     """Count quality messages in the buffer for learning readiness.
+    Groups by chat_id first so pairs are always within the same conversation.
 
     Normal mode: count customer Q + Ketu manual reply PAIRS.
     Broken sender_id mode: when ALL sender_ids are the same (wwbun bug),
@@ -799,18 +800,30 @@ def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int
     """
     from learner.chat_learner import is_junk_message
 
-    # Detect broken sender_id data from wwbun
-    broken_sids = _all_sender_ids_same(buffer)
-    use_is_owner_flag = broken_sids and _is_owner_field_reliable(buffer)
+    # Group messages by chat so we count pairs within same conversation
+    by_chat = {}
+    for m in buffer:
+        chat_id = m.get("chat_id", m.get("remote_jid", "unknown"))
+        by_chat.setdefault(chat_id, []).append(m)
+
+    total_pairs = 0
+    for chat_id, chat_msgs in by_chat.items():
+        total_pairs += _count_quality_in_chat(chat_msgs, owner_user_id)
+
+    return total_pairs
+
+
+def _count_quality_in_chat(chat_msgs: list[dict], owner_user_id: str) -> int:
+    """Count quality customer→Ketu pairs in a SINGLE chat conversation."""
+    from learner.chat_learner import is_junk_message
+
+    broken_sids = _all_sender_ids_same(chat_msgs)
+    use_is_owner_flag = broken_sids and _is_owner_field_reliable(chat_msgs)
 
     if broken_sids and not use_is_owner_flag:
         # is_owner field also unreliable — fall back to counting substantive messages
-        logger.warning(
-            f"[quality-count] ALL sender_ids identical AND is_owner unreliable — "
-            f"falling back to counting all substantive messages as quality."
-        )
         count = 0
-        for m in buffer:
+        for m in chat_msgs:
             is_ai = _safe_bool(m.get("is_ai_generated"))
             if is_ai:
                 continue
@@ -822,16 +835,11 @@ def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int
             count += 1
         return count
 
-    if use_is_owner_flag:
-        logger.info(
-            "[quality-count] sender_ids broken but is_owner field is reliable — using is_owner for pairing"
-        )
-
     # Normal mode (or broken sender_id with reliable is_owner): count customer→owner pairs
     pairs = 0
     last_customer_msg = None
 
-    for m in buffer:
+    for m in chat_msgs:
         is_owner = _is_owner_by_flag(m) if use_is_owner_flag else _is_owner_message(m, owner_user_id)
         is_ai = _safe_bool(m.get("is_ai_generated"))
         text = m.get("content", "") or m.get("text", "") or m.get("body", "")
@@ -861,20 +869,37 @@ def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int
 
 def _extract_pairs_from_buffer(buffer: list[dict], owner_user_id: str) -> list[dict]:
     """Extract customer→Ketu pairs from buffer for dashboard preview.
+    Groups messages by chat_id first so pairs are always within the same conversation.
     Includes AI-generated replies so user can see all conversations.
 
     Priority: use is_owner flag when sender_ids are broken but is_owner is reliable.
     Last resort: word-count heuristic (short=customer, long=Ketu).
     """
+    # Group messages by chat so we never pair messages across different conversations
+    by_chat = {}
+    for m in buffer:
+        chat_id = m.get("chat_id", m.get("remote_jid", "unknown"))
+        by_chat.setdefault(chat_id, []).append(m)
+
+    all_pairs = []
+    for chat_id, chat_msgs in by_chat.items():
+        chat_pairs = _extract_pairs_from_chat(chat_msgs, owner_user_id)
+        all_pairs.extend(chat_pairs)
+
+    return all_pairs
+
+
+def _extract_pairs_from_chat(chat_msgs: list[dict], owner_user_id: str) -> list[dict]:
+    """Extract customer→Ketu pairs from a SINGLE chat conversation."""
     pairs = []
-    broken_sids = _all_sender_ids_same(buffer)
-    use_is_owner_flag = broken_sids and _is_owner_field_reliable(buffer)
+    broken_sids = _all_sender_ids_same(chat_msgs)
+    use_is_owner_flag = broken_sids and _is_owner_field_reliable(chat_msgs)
 
     if broken_sids and not use_is_owner_flag:
         # Last resort: is_owner also unreliable, use word-count heuristic
-        logger.warning("[extract-pairs] sender_ids AND is_owner both unreliable — using word-count heuristic")
+        # Within a single chat, short msgs are likely customer, long msgs are Ketu
         last_short_msg = None
-        for m in buffer:
+        for m in chat_msgs:
             is_ai = _safe_bool(m.get("is_ai_generated"))
             text = m.get("content", "") or m.get("text", "") or m.get("body", "")
             if not text or not text.strip():
@@ -892,7 +917,7 @@ def _extract_pairs_from_buffer(buffer: list[dict], owner_user_id: str) -> list[d
 
     # Normal mode (or broken sender_id with reliable is_owner flag)
     last_customer_msg = None
-    for m in buffer:
+    for m in chat_msgs:
         is_owner = _is_owner_by_flag(m) if use_is_owner_flag else _is_owner_message(m, owner_user_id)
         if not is_owner:
             text = m.get("content", "") or m.get("text", "") or m.get("body", "")
