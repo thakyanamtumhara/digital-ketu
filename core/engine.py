@@ -499,6 +499,21 @@ def generate_reply(
     else:
         messages = []
 
+    # --- TRACK CUSTOMER INSIGHTS (before any early returns) ---
+    # Every incoming message should be counted, regardless of shutup/ender/ketu-only
+    _load_customer_insights_from_db()
+    from datetime import datetime, timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist)
+    hour = now_ist.hour
+    _hourly_message_counts[hour] = _hourly_message_counts.get(hour, 0) + 1
+    if customer_phone:
+        key = customer_phone[-4:] if len(customer_phone) >= 4 else customer_phone
+        _customer_message_counts[key] = _customer_message_counts.get(key, 0) + 1
+        if customer_name:
+            _customer_names[key] = customer_name
+    _save_customer_insights_to_db()
+
     # --- SHUT UP CHECK ---
     # If AI is in cooldown for this customer (ender detected earlier or Ketu replied),
     # don't reply at all. This prevents the AI from jumping back into finished conversations.
@@ -584,24 +599,6 @@ def generate_reply(
 
     # Add current message
     messages = messages + [{"role": "user", "content": message}]
-
-    # Load insights from DB on first call (survives deploys)
-    _load_customer_insights_from_db()
-
-    # Track customer insights
-    from datetime import datetime, timezone, timedelta
-    ist = timezone(timedelta(hours=5, minutes=30))
-    now_ist = datetime.now(ist)
-    hour = now_ist.hour
-    _hourly_message_counts[hour] = _hourly_message_counts.get(hour, 0) + 1
-    if customer_phone:
-        key = customer_phone[-4:] if len(customer_phone) >= 4 else customer_phone
-        _customer_message_counts[key] = _customer_message_counts.get(key, 0) + 1
-        if customer_name:
-            _customer_names[key] = customer_name
-
-    # Persist to DB
-    _save_customer_insights_to_db()
 
     # Update customer memory profile
     if customer_phone:
