@@ -562,9 +562,12 @@ async def wwbun_debug():
 
     quality_count = _count_quality_owner_messages(buffer, owner_user_id) if owner_user_id else -1
 
+    broken_sids = _all_sender_ids_same(buffer) if buffer else False
+
     return {
         "owner_user_id": owner_user_id,
         "buffer_size": len(buffer),
+        "broken_sender_ids": broken_sids,
         "quality_pairs_in_buffer": quality_count,
         "threshold": _LEARNING_BUFFER_MIN_PAIRS,
         "stats_from_db": {
@@ -600,26 +603,41 @@ def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
         last_customer_msg = ""
         customer_phone = chat_id.split("@")[0] if "@" in chat_id else chat_id
 
+        # Detect if sender_ids are broken (all same) for this chat
+        broken_sids = _all_sender_ids_same(chat_msgs)
+
         for msg in chat_msgs:
             content = (msg.get("content", "") or msg.get("text", "") or msg.get("body", "")).strip()
             if not content:
                 continue
 
-            is_owner = _is_owner_message(msg, owner_user_id)
             is_ai = _safe_bool(msg.get("is_ai_generated"))
 
-            if not is_owner:
-                # Customer message — remember it
-                last_customer_msg = content
-            elif is_owner and not is_ai and last_customer_msg:
-                # Ketu's MANUAL reply to a customer message
-                learn_fn(
-                    customer_message=last_customer_msg,
-                    ketu_reply=content,
-                    customer_phone=customer_phone,
-                )
-                pairs_checked += 1
-                last_customer_msg = ""  # Reset
+            if broken_sids:
+                # Heuristic: short messages (≤4 words) = customer, longer = Ketu
+                words = len(content.split())
+                if words <= 4:
+                    last_customer_msg = content
+                elif words >= 3 and not is_ai and last_customer_msg:
+                    learn_fn(
+                        customer_message=last_customer_msg,
+                        ketu_reply=content,
+                        customer_phone=customer_phone,
+                    )
+                    pairs_checked += 1
+                    last_customer_msg = ""
+            else:
+                is_owner = _is_owner_message(msg, owner_user_id)
+                if not is_owner:
+                    last_customer_msg = content
+                elif is_owner and not is_ai and last_customer_msg:
+                    learn_fn(
+                        customer_message=last_customer_msg,
+                        ketu_reply=content,
+                        customer_phone=customer_phone,
+                    )
+                    pairs_checked += 1
+                    last_customer_msg = ""
 
     if pairs_checked > 0:
         logger.info(f"[KetuOnly] Checked {pairs_checked} customer→Ketu pairs from wwbun sync")
@@ -722,14 +740,44 @@ def _is_owner_message(m: dict, owner_user_id: str) -> bool:
     return False
 
 
-def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int:
-    """Count quality PAIRS in the buffer (customer Q + Ketu manual reply = 1 pair).
+def _all_sender_ids_same(buffer: list[dict]) -> bool:
+    """Detect if wwbun sent the same sender_id for ALL messages (broken data).
+    When this happens, we can't distinguish customer vs owner messages.
+    """
+    sids = set(str(m.get("sender_id", "")).strip() for m in buffer if m.get("sender_id"))
+    return len(sids) <= 1
 
-    A pair is: a customer message followed by Ketu's manual (non-AI) reply.
-    Both must pass quality checks (not junk, 3+ words for Ketu's reply).
-    This ensures Claude gets meaningful context for learning.
+
+def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int:
+    """Count quality messages in the buffer for learning readiness.
+
+    Normal mode: count customer Q + Ketu manual reply PAIRS.
+    Broken sender_id mode: when ALL sender_ids are the same (wwbun bug),
+    we can't distinguish customer vs owner, so count all substantive messages.
+    Claude will figure out roles from conversation context when learning.
     """
     from learner.chat_learner import is_junk_message
+
+    # Detect broken sender_id data from wwbun
+    if _all_sender_ids_same(buffer):
+        logger.warning(
+            f"[quality-count] ALL sender_ids identical — wwbun not sending real sender. "
+            f"Falling back to counting all substantive messages as quality."
+        )
+        count = 0
+        for m in buffer:
+            is_ai = _safe_bool(m.get("is_ai_generated"))
+            if is_ai:
+                continue
+            text = m.get("content", "") or m.get("text", "") or m.get("body", "")
+            if is_junk_message(text):
+                continue
+            if len(text.split()) < 3:
+                continue
+            count += 1
+        return count
+
+    # Normal mode: count customer→owner pairs
     pairs = 0
     last_customer_msg = None
 
@@ -764,8 +812,32 @@ def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int
 def _extract_pairs_from_buffer(buffer: list[dict], owner_user_id: str) -> list[dict]:
     """Extract customer→Ketu pairs from buffer for dashboard preview.
     Includes AI-generated replies so user can see all conversations.
+
+    When sender_ids are all the same (wwbun bug), uses heuristic:
+    short messages (≤4 words) = likely customer, longer = likely Ketu.
     """
     pairs = []
+    broken_sids = _all_sender_ids_same(buffer)
+
+    if broken_sids:
+        # Heuristic pairing: short msg → customer question, long msg → Ketu reply
+        last_short_msg = None
+        for m in buffer:
+            is_ai = _safe_bool(m.get("is_ai_generated"))
+            text = m.get("content", "") or m.get("text", "") or m.get("body", "")
+            if not text or not text.strip():
+                continue
+            words = len(text.split())
+            if words <= 4:
+                # Short message — likely customer
+                last_short_msg = text[:100]
+            elif words >= 3 and last_short_msg:
+                # Longer message after a short one — likely Ketu reply
+                pairs.append({"customer": last_short_msg, "ketu": text[:120], "ai": is_ai})
+                last_short_msg = None
+        return pairs
+
+    # Normal mode
     last_customer_msg = None
     for m in buffer:
         is_owner = _is_owner_message(m, owner_user_id)
@@ -1015,38 +1087,13 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         )
 
         # Collect quality PAIRS from this batch for dashboard preview
-        # Include AI-generated replies too (user wants to see all conversations flowing)
-        batch_quality_previews = []
-        last_customer_msg = None
-        _debug_owner_count = 0
-        _debug_customer_count = 0
-        for m in req.messages:
-            is_owner = _is_owner_message(m, req.owner_user_id)
-            if not is_owner:
-                _debug_customer_count += 1
-                text = m.get("content", "") or m.get("text", "") or m.get("body", "")
-                if text and len(text.strip()) > 0:
-                    last_customer_msg = text[:100]
-                continue
-            _debug_owner_count += 1
-            text = m.get("content", "") or m.get("text", "") or m.get("body", "")
-            if not text or len(text.split()) < 2:
-                continue
-            is_ai = _safe_bool(m.get("is_ai_generated"))
-            if last_customer_msg:
-                batch_quality_previews.append({
-                    "customer": last_customer_msg,
-                    "ketu": text[:120],
-                    "ai": is_ai,
-                })
-                last_customer_msg = None
+        # Uses _extract_pairs_from_buffer which handles broken sender_id data
+        batch_quality_previews = _extract_pairs_from_buffer(req.messages, req.owner_user_id)
         logger.info(
             f"[wwbun-sync PAIRS] batch={len(req.messages)} msgs, "
-            f"owner={_debug_owner_count}, customer={_debug_customer_count}, "
+            f"broken_sids={_all_sender_ids_same(req.messages)}, "
             f"pairs_found={len(batch_quality_previews)}"
         )
-
-        logger.info(f"[wwbun-sync] Found {len(batch_quality_previews)} preview pairs in batch of {len(req.messages)} msgs")
 
         # Still track sync stats even when buffering
         _track_wwbun_sync(

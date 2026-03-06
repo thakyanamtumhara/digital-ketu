@@ -308,12 +308,28 @@ def extract_knowledge_from_wwbun_messages(
             return sid == owner_user_id or owner_user_id.endswith(sid) or sid.endswith(owner_user_id)
         return _safe_bool(m.get("is_owner", False))
 
-    # Filter: only messages sent by owner, exclude AI-generated ones
-    manual_messages = [
-        m for m in messages
-        if _is_owner_msg(m)
-        and not _safe_bool(m.get("is_ai_generated", False))
-    ]
+    # Detect broken sender_id: all messages have same sender_id (wwbun bug)
+    unique_sids = set(str(m.get("sender_id", "")).strip() for m in messages if m.get("sender_id"))
+    broken_sids = len(unique_sids) <= 1
+
+    if broken_sids:
+        logger.warning(
+            f"[wwbun-learn] ALL sender_ids identical ({unique_sids}) — "
+            f"can't distinguish customer/owner. Using heuristic: 5+ word non-AI = manual Ketu msg."
+        )
+        # When sender_ids are broken, treat longer non-AI messages as Ketu's manual replies
+        manual_messages = [
+            m for m in messages
+            if not _safe_bool(m.get("is_ai_generated", False))
+            and len((m.get("content", "") or m.get("text", "") or m.get("body", "")).split()) >= 5
+        ]
+    else:
+        # Normal mode: filter by owner
+        manual_messages = [
+            m for m in messages
+            if _is_owner_msg(m)
+            and not _safe_bool(m.get("is_ai_generated", False))
+        ]
 
     if not manual_messages:
         return {"status": "no_manual_messages", "updates": [], "filter_stats": {"total": len(messages), "kept": 0, "junk": 0, "too_short": 0}}
@@ -339,9 +355,14 @@ def extract_knowledge_from_wwbun_messages(
     # but only learn FROM Ketu's messages
     chat_context = []
     for m in filtered[:200]:
-        role = "KETU" if _is_owner_msg(m) else "CUSTOMER"
+        text = m.get("content", "") or m.get("text", "") or m.get("body", "")
+        if broken_sids:
+            # Heuristic: short messages = customer, longer = Ketu
+            role = "KETU" if len(text.split()) >= 5 else "CUSTOMER"
+        else:
+            role = "KETU" if _is_owner_msg(m) else "CUSTOMER"
         is_ai = " [AI]" if m.get("is_ai_generated") else ""
-        chat_context.append(f"{role}{is_ai}: {m.get('content', '') or m.get('text', '') or m.get('body', '')}")
+        chat_context.append(f"{role}{is_ai}: {text}")
 
     chat_text = "\n".join(chat_context)
 
