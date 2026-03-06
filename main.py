@@ -1131,11 +1131,13 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
 
     _save_learning_buffer(buffer)
 
-    # Count quality manual messages in buffer
-    quality_count = _count_quality_owner_messages(buffer, req.owner_user_id)
+    # Extract pairs from buffer — used for BOTH counting AND display (single source of truth)
+    buffer_pairs = _extract_pairs_from_buffer(buffer, req.owner_user_id)
+    quality_count = len(buffer_pairs)
     logger.info(
         f"[wwbun-sync QUALITY] buffer_size={len(buffer)}, quality_pairs={quality_count}, "
-        f"threshold={_LEARNING_BUFFER_MIN_PAIRS}, will_flush={quality_count >= _LEARNING_BUFFER_MIN_PAIRS}"
+        f"threshold={_LEARNING_BUFFER_MIN_PAIRS}, will_flush={quality_count >= _LEARNING_BUFFER_MIN_PAIRS}, "
+        f"pairs_preview={[p.get('customer','')[:30] + ' → ' + p.get('ketu','')[:30] for p in buffer_pairs[:3]]}"
     )
 
     # Decide: learn now or wait for more messages
@@ -1183,36 +1185,16 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
             items_count=0,
         )
 
-        # Count quality in THIS batch for accurate stats tracking
-        # (even though we're not learning yet, dashboard should show quality messages arriving)
-        from learner.chat_learner import filter_messages as _filter_msgs
-        _, batch_stats = _filter_msgs(req.messages, owner_key="sender_id", owner_value=req.owner_user_id)
-        batch_quality = batch_stats.get("kept", 0)
-        logger.info(
-            f"[wwbun-sync BATCH-FILTER] batch_quality={batch_quality}, "
-            f"junk={batch_stats.get('junk', 0)}, too_short={batch_stats.get('too_short', 0)}, "
-            f"total={batch_stats.get('total', 0)}"
-        )
-
-        # Collect quality PAIRS from FULL buffer for dashboard preview
-        # Using full buffer (not just current batch) gives much better pair detection
-        # since small batches often contain only one side of the conversation
-        batch_quality_previews = _extract_pairs_from_buffer(buffer, req.owner_user_id)
-        logger.info(
-            f"[wwbun-sync PAIRS] batch={len(req.messages)} msgs, "
-            f"broken_sids={_all_sender_ids_same(req.messages)}, "
-            f"pairs_found={len(batch_quality_previews)}"
-        )
-
         # Still track sync stats even when buffering
+        # Use buffer_pairs directly — same pairs that were counted = same pairs shown
         _track_wwbun_sync(
             total_messages=len(req.messages),
-            quality_count=batch_quality,
-            junk_count=batch_stats.get("junk", 0),
-            short_count=batch_stats.get("too_short", 0),
+            quality_count=quality_count,
+            junk_count=0,
+            short_count=0,
             knowledge_count=0,
             enders_learned=ender_result.get("new_enders", 0),
-            quality_previews=batch_quality_previews,
+            quality_previews=buffer_pairs,
             details={
                 "buffered": True,
                 "quality_in_buffer": quality_count,
@@ -1271,7 +1253,7 @@ async def flush_learning_buffer(req: FlushBufferRequest):
     if not buffer:
         return {"status": "empty", "message": "No messages in buffer"}
 
-    quality_count = _count_quality_owner_messages(buffer, req.owner_user_id)
+    quality_count = len(_extract_pairs_from_buffer(buffer, req.owner_user_id))
 
     result = await asyncio.to_thread(_flush_learning_buffer, req.owner_user_id)
 
@@ -1289,7 +1271,9 @@ async def learning_buffer_status(owner_user_id: str = ""):
     if not owner_user_id:
         owner_user_id = _get_owner_user_id()
     buffer = _get_learning_buffer()
-    quality = _count_quality_owner_messages(buffer, owner_user_id) if owner_user_id else 0
+    # Use same pair extraction as sync endpoint — single source of truth
+    buffer_pairs = _extract_pairs_from_buffer(buffer, owner_user_id) if owner_user_id else []
+    quality = len(buffer_pairs)
 
     # Show sample messages for debugging
     sample_msgs = []
