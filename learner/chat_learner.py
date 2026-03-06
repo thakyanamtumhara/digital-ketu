@@ -124,7 +124,10 @@ def filter_messages(messages: list[dict], owner_key: str = "sender", owner_value
 
         # Word count check
         word_count = len(text.split())
-        is_owner = m.get("is_owner", False) or (owner_value and owner_value.lower() in str(m.get(owner_key, "")).lower())
+        raw_owner = m.get("is_owner", False)
+        if isinstance(raw_owner, str):
+            raw_owner = raw_owner.lower() in ("true", "1", "yes")
+        is_owner = bool(raw_owner) or (owner_value and owner_value.lower() in str(m.get(owner_key, "")).lower())
 
         min_words = _MIN_WORDS_OWNER if is_owner else _MIN_WORDS_CUSTOMER
         if word_count < min_words:
@@ -267,15 +270,21 @@ def extract_knowledge_from_wwbun_messages(
     """
     client = Anthropic(api_key=settings.anthropic_api_key)
 
+    # Helper: safely parse boolean (wwbun may send string "true"/"false")
+    def _safe_bool(val) -> bool:
+        if isinstance(val, str):
+            return val.lower() in ("true", "1", "yes")
+        return bool(val)
+
     # Helper: check if a message is from the owner (Ketu)
     def _is_owner_msg(m: dict) -> bool:
-        return m.get("is_owner", False) or m.get("sender_id") == owner_user_id
+        return _safe_bool(m.get("is_owner", False)) or m.get("sender_id") == owner_user_id
 
     # Filter: only messages sent by owner, exclude AI-generated ones
     manual_messages = [
         m for m in messages
         if _is_owner_msg(m)
-        and not m.get("is_ai_generated", False)
+        and not _safe_bool(m.get("is_ai_generated", False))
     ]
 
     if not manual_messages:
