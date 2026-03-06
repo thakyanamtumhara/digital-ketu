@@ -366,7 +366,7 @@ Return ONLY valid JSON."""
         if json_match:
             result = json.loads(json_match.group())
             result["filter_stats"] = filter_stats
-            result["quality_messages"] = [m.get("content", "") for m in filtered if m.get("sender_id") == owner_user_id and not m.get("is_ai_generated")]
+            result["quality_messages"] = [m.get("content", "") for m in filtered if _is_owner_msg(m) and not m.get("is_ai_generated")]
             return result
         return {"status": "parse_error", "raw": result_text, "filter_stats": filter_stats}
 

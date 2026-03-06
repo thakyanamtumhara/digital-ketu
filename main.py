@@ -629,6 +629,33 @@ def _flush_learning_buffer(owner_user_id: str) -> dict:
     filter_stats = knowledge.get("filter_stats", {})
     quality_messages = knowledge.get("quality_messages", [])
 
+    # Log what Claude extracted (even if deduplicated as "already known")
+    extracted_summary = []
+    if knowledge.get("new_faqs"):
+        extracted_summary.append(f"{len(knowledge['new_faqs'])} FAQs")
+    if knowledge.get("style_patterns"):
+        extracted_summary.append("style patterns")
+    if knowledge.get("price_updates"):
+        extracted_summary.append(f"{len(knowledge['price_updates'])} prices")
+    if knowledge.get("product_updates"):
+        extracted_summary.append("product info")
+    if knowledge.get("business_updates"):
+        extracted_summary.append("business updates")
+    if knowledge.get("prompt_evolution"):
+        evo = knowledge["prompt_evolution"]
+        evo_parts = []
+        if evo.get("new_traits"): evo_parts.append(f"{len(evo['new_traits'])} traits")
+        if evo.get("new_phrases"): evo_parts.append(f"{len(evo['new_phrases'])} phrases")
+        if evo.get("new_rules"): evo_parts.append(f"{len(evo['new_rules'])} rules")
+        if evo_parts:
+            extracted_summary.append(f"prompt evolution ({', '.join(evo_parts)})")
+
+    logger.info(
+        f"[Buffer] Claude extracted: {extracted_summary or ['nothing']}. "
+        f"Applied (new): {result.get('applied', [])}. "
+        f"Status: {knowledge.get('status', 'unknown')}"
+    )
+
     log_activity(
         source="wwbun-sync",
         action="batch-learned",
@@ -639,6 +666,7 @@ def _flush_learning_buffer(owner_user_id: str) -> dict:
             "too_short_skipped": filter_stats.get("too_short", 0),
             "quality_messages_preview": quality_messages[:5],
             "updates_applied": result.get("applied", []),
+            "extracted_summary": extracted_summary,
         },
         items_count=result.get("count", 0),
     )
