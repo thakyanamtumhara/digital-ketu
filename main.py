@@ -794,55 +794,56 @@ def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int
     return len(_extract_pairs_from_buffer(buffer, owner_user_id))
 
 
-def _detect_owner_simple(m: dict, owner_user_id: str) -> bool:
-    """Simple owner detection. Tries is_owner/fromMe flags FIRST (direct truth from wwbun),
-    then falls back to sender_id matching only if flags are absent."""
-    # 1. Direct flags from wwbun — most reliable when present
-    raw_owner = m.get("is_owner")
-    if raw_owner is not None:
-        return _safe_bool(raw_owner)
-    if m.get("fromMe") is not None:
-        return _safe_bool(m.get("fromMe"))
-    if m.get("from_me") is not None:
-        return _safe_bool(m.get("from_me"))
-
-    # 2. Fallback: sender_id matching (only if no flags at all)
-    sid = m.get("sender_id")
-    if sid and owner_user_id:
-        return sid == owner_user_id or owner_user_id.endswith(sid) or sid.endswith(owner_user_id)
-
-    return False
-
-
 def _extract_pairs_from_buffer(buffer: list[dict], owner_user_id: str) -> list[dict]:
     """Extract customer→Ketu pairs from buffer for dashboard preview.
-    Simple approach: group by chat, use is_owner flag directly, pair customer→owner.
+
+    Uses EXACT same logic as _learn_ketu_only_pairs — group by chat,
+    detect owner (sender_id → is_owner flag → word-count heuristic),
+    pair customer question → Ketu reply.
     """
-    # Group messages by chat so we never pair across different conversations
-    by_chat = {}
+    # Group by chat_id (same as _learn_ketu_only_pairs)
+    by_chat: dict[str, list] = {}
     for m in buffer:
         chat_id = m.get("chat_id", m.get("remote_jid", "unknown"))
         by_chat.setdefault(chat_id, []).append(m)
 
     all_pairs = []
     for chat_id, chat_msgs in by_chat.items():
-        last_customer_msg = None
-        for m in chat_msgs:
-            text = m.get("content", "") or m.get("text", "") or m.get("body", "")
-            if not text or not text.strip():
+        chat_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
+
+        last_customer_msg = ""
+        broken_sids = _all_sender_ids_same(chat_msgs)
+        use_flag = broken_sids and _is_owner_field_reliable(chat_msgs)
+
+        for msg in chat_msgs:
+            content = (msg.get("content", "") or msg.get("text", "") or msg.get("body", "")).strip()
+            if not content:
                 continue
-            is_owner = _detect_owner_simple(m, owner_user_id)
-            is_ai = _safe_bool(m.get("is_ai_generated"))
-            if not is_owner:
-                last_customer_msg = text[:100]
-            else:
-                if last_customer_msg and len(text.split()) >= 2:
+            is_ai = _safe_bool(msg.get("is_ai_generated"))
+
+            if broken_sids and not use_flag:
+                # Same heuristic as _learn_ketu_only_pairs: short=customer, long=Ketu
+                words = len(content.split())
+                if words <= 4:
+                    last_customer_msg = content
+                elif words >= 3 and last_customer_msg:
                     all_pairs.append({
-                        "customer": last_customer_msg,
-                        "ketu": text[:120],
+                        "customer": last_customer_msg[:100],
+                        "ketu": content[:120],
                         "ai": is_ai,
                     })
-                    last_customer_msg = None
+                    last_customer_msg = ""
+            else:
+                is_owner = _is_owner_by_flag(msg) if use_flag else _is_owner_message(msg, owner_user_id)
+                if not is_owner:
+                    last_customer_msg = content
+                elif is_owner and last_customer_msg:
+                    all_pairs.append({
+                        "customer": last_customer_msg[:100],
+                        "ketu": content[:120],
+                        "ai": is_ai,
+                    })
+                    last_customer_msg = ""
 
     logger.info(
         f"[extract-pairs] buffer={len(buffer)} msgs, chats={len(by_chat)}, "
