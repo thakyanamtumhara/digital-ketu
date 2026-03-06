@@ -278,7 +278,11 @@ def extract_knowledge_from_wwbun_messages(
 
     # Helper: check if a message is from the owner (Ketu)
     def _is_owner_msg(m: dict) -> bool:
-        return _safe_bool(m.get("is_owner", False)) or m.get("sender_id") == owner_user_id
+        sid = m.get("sender_id")
+        # sender_id is authoritative — if present and doesn't match owner, it's a customer
+        if sid and owner_user_id:
+            return sid == owner_user_id or owner_user_id.endswith(sid) or sid.endswith(owner_user_id)
+        return _safe_bool(m.get("is_owner", False))
 
     # Filter: only messages sent by owner, exclude AI-generated ones
     manual_messages = [

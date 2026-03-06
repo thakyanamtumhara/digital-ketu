@@ -639,14 +639,25 @@ def _safe_bool(val) -> bool:
 
 
 def _is_owner_message(m: dict, owner_user_id: str) -> bool:
-    """Check if a message is from the owner (Ketu). Handles multiple field formats."""
-    # Check explicit is_owner flag
+    """Check if a message is from the owner (Ketu). Handles multiple field formats.
+
+    IMPORTANT: sender_id match is the most reliable signal. If sender_id is present
+    and doesn't match owner_user_id, the message is from a customer — regardless of
+    what the is_owner flag says (wwbun may incorrectly set is_owner=True for all msgs).
+    """
+    sid = m.get("sender_id")
+
+    # If sender_id is present, use it as the authoritative source
+    if sid and owner_user_id:
+        # Exact match or suffix match (sender_id may be truncated)
+        if sid == owner_user_id or owner_user_id.endswith(sid) or sid.endswith(owner_user_id):
+            return True
+        # sender_id present but doesn't match owner — this is a customer message
+        return False
+
+    # Fallback: no sender_id available, use explicit flags
     if _safe_bool(m.get("is_owner")):
         return True
-    # Check sender_id match
-    if owner_user_id and m.get("sender_id") == owner_user_id:
-        return True
-    # Check fromMe flag (some WhatsApp APIs use this)
     if _safe_bool(m.get("fromMe")) or _safe_bool(m.get("from_me")):
         return True
     return False
