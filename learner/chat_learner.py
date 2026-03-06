@@ -229,13 +229,14 @@ CURRENT personality traits already known:
 CURRENT signature phrases already known:
 {json.dumps(current_phrases, ensure_ascii=False)}
 
+IMPORTANT: Do NOT extract any price information or product details (materials, colors, sizes, GSM, etc.) from these chats.
+The product catalog is the single source of truth for all prices and product info. Only extract conversational knowledge.
+
 Extract the following (in JSON format):
-1. "new_products": Any new products mentioned with prices
-2. "price_updates": Any price changes mentioned
-3. "style_patterns": How Ketu talks — phrases, greetings, closing patterns
-4. "new_faqs": Customer Q + Ketu's A pairs (use customer question for context)
-5. "business_updates": Any new business info (offers, policies, etc.)
-6. "prompt_evolution": {{
+1. "style_patterns": How Ketu talks — phrases, greetings, closing patterns
+2. "new_faqs": Customer Q + Ketu's A pairs (use customer question for context) — but NOT price/product FAQs, those come from catalog
+3. "business_updates": Any new business info (offers, policies, etc.)
+4. "prompt_evolution": {{
      "new_traits": ["NEW personality traits you noticed that are NOT already in the list above"],
      "new_phrases": ["NEW signature phrases/words Ketu uses repeatedly that are NOT already known"],
      "new_rules": ["NEW reply rules/patterns you noticed — how Ketu handles specific situations"],
@@ -402,13 +403,14 @@ CURRENT personality traits already known:
 CURRENT signature phrases already known:
 {json.dumps(current_phrases, ensure_ascii=False)}
 
+IMPORTANT: Do NOT extract any price information or product details (materials, colors, sizes, GSM, etc.) from these chats.
+The product catalog is the single source of truth for all prices and product info. Only extract conversational knowledge.
+
 Extract in JSON format:
 1. "style_patterns": How Ketu types — his phrases, greetings, tone, typical replies
-2. "price_updates": Any prices Ketu mentioned
-3. "new_faqs": Customer Q + Ketu's A pairs (use customer question for context)
-4. "business_updates": Any new policies, offers, shipping info
-5. "product_updates": Any new product info Ketu shared
-6. "prompt_evolution": {{
+2. "new_faqs": Customer Q + Ketu's A pairs (use customer question for context) — but NOT price/product FAQs, those come from catalog
+3. "business_updates": Any new policies, offers, shipping info
+4. "prompt_evolution": {{
      "new_traits": ["NEW personality traits NOT already known"],
      "new_phrases": ["NEW signature phrases/words NOT already known"],
      "new_rules": ["NEW reply patterns — how Ketu handles specific situations"],
@@ -456,6 +458,12 @@ Return ONLY valid JSON."""
 def apply_knowledge_updates(updates: dict) -> dict:
     """Apply extracted knowledge to the JSON files."""
     applied = []
+
+    # SKIP price_updates and product_updates from chat learning —
+    # the catalog is the single source of truth for prices and product info.
+    for skip_key in ("price_updates", "new_products", "product_updates"):
+        if updates.pop(skip_key, None):
+            logger.info(f"[apply] Skipped '{skip_key}' from chat — catalog is source of truth")
 
     # Update FAQ
     if updates.get("new_faqs"):

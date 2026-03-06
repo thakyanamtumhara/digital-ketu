@@ -893,10 +893,8 @@ def _flush_learning_buffer(owner_user_id: str) -> dict:
         extracted_summary.append(f"{len(knowledge['new_faqs'])} FAQs")
     if knowledge.get("style_patterns"):
         extracted_summary.append("style patterns")
-    if knowledge.get("price_updates"):
-        extracted_summary.append(f"{len(knowledge['price_updates'])} prices")
-    if knowledge.get("product_updates"):
-        extracted_summary.append("product info")
+    # price_updates and product_updates are no longer extracted from chat —
+    # the catalog is the single source of truth for prices and product info.
     if knowledge.get("business_updates"):
         extracted_summary.append("business updates")
     if knowledge.get("prompt_evolution"):
