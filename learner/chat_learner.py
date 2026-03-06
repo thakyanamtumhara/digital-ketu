@@ -79,7 +79,7 @@ _JUNK_COMPILED = [re.compile(p, re.IGNORECASE) for p in _JUNK_PATTERNS]
 
 # Minimum word count for a message to be "useful" (owner messages need substance)
 _MIN_WORDS_OWNER = 3  # Ketu's messages must have 3+ words to be worth learning
-_MIN_WORDS_CUSTOMER = 3  # Customer messages need 3+ words for context
+_MIN_WORDS_CUSTOMER = 2  # Customer messages need 2+ words (e.g. "180 gsm", "cod available")
 
 
 def is_junk_message(text: str) -> bool:

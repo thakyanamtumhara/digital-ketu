@@ -883,6 +883,12 @@
         <div id="wwbunRecentList" style="max-height:200px;overflow-y:auto;">
           <div class="empty-state" style="font-size:12px;">No WhatsApp syncs yet — will appear when wwbun sends chat data</div>
         </div>
+
+        <!-- Buffer Debug (temporary) -->
+        <div id="bufferDebugSection" style="margin-top:12px;padding:10px;background:rgba(255,0,0,0.05);border:1px solid rgba(255,0,0,0.15);border-radius:6px;display:none;">
+          <span style="font-size:11px;color:var(--orange);font-weight:600;">Buffer Debug (last 10 msgs):</span>
+          <div id="bufferDebugList" style="margin-top:6px;max-height:250px;overflow-y:auto;font-size:11px;font-family:monospace;"></div>
+        </div>
       </div>
     </div>
 
@@ -2329,6 +2335,31 @@ async function loadWwbunStats() {
     } else {
       statusText.textContent = 'Waiting for messages';
       statusText.style.color = 'var(--text-dim)';
+    }
+
+    // Buffer Debug: show raw message data
+    const debugSection = document.getElementById('bufferDebugSection');
+    const debugList = document.getElementById('bufferDebugList');
+    if (debugSection && debugList && bufferData) {
+      debugSection.style.display = 'block';
+      let debugHtml = '<div style="margin-bottom:8px;color:var(--text-dim);">' +
+        'owner_id=' + (bufferData.owner_user_id || '?') +
+        ' | owner_msgs=' + (bufferData.owner_messages || 0) +
+        ' | cust_msgs=' + (bufferData.customer_messages || 0) +
+        '</div>';
+      if (bufferData.sample_messages) {
+        for (const m of bufferData.sample_messages) {
+          const ownerBadge = m.is_owner_parsed ? '<span style="color:var(--green);font-weight:bold;">OWNER</span>' : '<span style="color:var(--orange);font-weight:bold;">CUST</span>';
+          const aiBadge = m.is_ai_parsed ? ' <span style="color:var(--accent);">[AI]</span>' : ' <span style="color:var(--green);">[Manual]</span>';
+          debugHtml += '<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05);">' +
+            ownerBadge + aiBadge +
+            ' <span style="color:var(--text-dim);">raw_owner=' + m.is_owner_raw + ' raw_ai=' + m.is_ai_raw + ' sid=...' + m.sender_id + '</span>' +
+            '<br><span style="color:var(--text);">' + (m.content || '').substring(0, 70) + '</span>' +
+            '<br><span style="color:var(--text-dim);font-size:10px;">keys: ' + (m.all_keys || []).join(', ') + '</span>' +
+          '</div>';
+        }
+      }
+      debugList.innerHTML = debugHtml;
     }
   }
 

@@ -546,8 +546,8 @@ def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
             if not content:
                 continue
 
-            is_owner = msg.get("sender_id") == owner_user_id
-            is_ai = msg.get("is_ai_generated", False)
+            is_owner = _is_owner_message(msg, owner_user_id)
+            is_ai = _safe_bool(msg.get("is_ai_generated"))
 
             if not is_owner:
                 # Customer message — remember it
@@ -572,6 +572,7 @@ def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
 # Free features (enders, bought detection, repeat buyer) still run immediately.
 
 _LEARNING_BUFFER_MIN_PAIRS = 10  # Need 10 quality Ketu manual messages before learning
+_last_owner_user_id = ""  # Remember last owner_user_id from sync calls
 
 
 def _get_learning_buffer() -> list[dict]:
@@ -597,6 +598,31 @@ def _save_learning_buffer(buffer: list[dict]):
         logger.warning(f"[Buffer] Save failed: {e}")
 
 
+def _safe_bool(val) -> bool:
+    """Safely parse boolean — wwbun may send string 'true'/'false' or None."""
+    if val is None:
+        return False
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.lower() in ("true", "1", "yes")
+    return bool(val)
+
+
+def _is_owner_message(m: dict, owner_user_id: str) -> bool:
+    """Check if a message is from the owner (Ketu). Handles multiple field formats."""
+    # Check explicit is_owner flag
+    if _safe_bool(m.get("is_owner")):
+        return True
+    # Check sender_id match
+    if owner_user_id and m.get("sender_id") == owner_user_id:
+        return True
+    # Check fromMe flag (some WhatsApp APIs use this)
+    if _safe_bool(m.get("fromMe")) or _safe_bool(m.get("from_me")):
+        return True
+    return False
+
+
 def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int:
     """Count quality PAIRS in the buffer (customer Q + Ketu manual reply = 1 pair).
 
@@ -609,14 +635,8 @@ def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int
     last_customer_msg = None
 
     for m in buffer:
-        raw_is_owner = m.get("is_owner", False)
-        if isinstance(raw_is_owner, str):
-            raw_is_owner = raw_is_owner.lower() in ("true", "1", "yes")
-        is_owner = bool(raw_is_owner) or m.get("sender_id") == owner_user_id
-        raw_ai = m.get("is_ai_generated", False)
-        if isinstance(raw_ai, str):
-            raw_ai = raw_ai.lower() in ("true", "1", "yes")
-        is_ai = bool(raw_ai)
+        is_owner = _is_owner_message(m, owner_user_id)
+        is_ai = _safe_bool(m.get("is_ai_generated"))
         text = m.get("content", "")
 
         if not is_owner:
@@ -649,10 +669,7 @@ def _extract_pairs_from_buffer(buffer: list[dict], owner_user_id: str) -> list[d
     pairs = []
     last_customer_msg = None
     for m in buffer:
-        raw_is_owner = m.get("is_owner", False)
-        if isinstance(raw_is_owner, str):
-            raw_is_owner = raw_is_owner.lower() in ("true", "1", "yes")
-        is_owner = bool(raw_is_owner) or m.get("sender_id") == owner_user_id
+        is_owner = _is_owner_message(m, owner_user_id)
         if not is_owner:
             text = m.get("content", "")
             if text and len(text.strip()) > 0:
@@ -661,10 +678,7 @@ def _extract_pairs_from_buffer(buffer: list[dict], owner_user_id: str) -> list[d
         text = m.get("content", "")
         if not text or len(text.split()) < 2:
             continue
-        raw_ai = m.get("is_ai_generated", False)
-        if isinstance(raw_ai, str):
-            raw_ai = raw_ai.lower() in ("true", "1", "yes")
-        is_ai = bool(raw_ai)
+        is_ai = _safe_bool(m.get("is_ai_generated"))
         if last_customer_msg:
             pairs.append({"customer": last_customer_msg, "ketu": text[:120], "ai": is_ai})
             last_customer_msg = None
@@ -762,6 +776,9 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     Free features (enders, bought detection, repeat buyer) run immediately
     on every call — they use keyword matching, zero AI cost.
     """
+    global _last_owner_user_id
+    _last_owner_user_id = req.owner_user_id
+
     # --- FREE features: run immediately on every call (zero AI cost) ---
 
     # Learn conversation-ending patterns
@@ -890,27 +907,18 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         _debug_owner_count = 0
         _debug_customer_count = 0
         for m in req.messages:
-            raw_is_owner = m.get("is_owner", False)
-            # Handle string "true"/"false" from wwbun (JS might send strings)
-            if isinstance(raw_is_owner, str):
-                raw_is_owner = raw_is_owner.lower() in ("true", "1", "yes")
-            is_owner = bool(raw_is_owner) or m.get("sender_id") == req.owner_user_id
+            is_owner = _is_owner_message(m, req.owner_user_id)
             if not is_owner:
                 _debug_customer_count += 1
-                # Customer message — remember for pairing
                 text = m.get("content", "")
                 if text and len(text.strip()) > 0:
                     last_customer_msg = text[:100]
                 continue
             _debug_owner_count += 1
-            # Ketu's message (manual or AI) — pair with customer
             text = m.get("content", "")
             if not text or len(text.split()) < 2:
                 continue
-            raw_ai = m.get("is_ai_generated", False)
-            if isinstance(raw_ai, str):
-                raw_ai = raw_ai.lower() in ("true", "1", "yes")
-            is_ai = bool(raw_ai)
+            is_ai = _safe_bool(m.get("is_ai_generated"))
             if last_customer_msg:
                 batch_quality_previews.append({
                     "customer": last_customer_msg,
@@ -998,25 +1006,37 @@ async def flush_learning_buffer(req: FlushBufferRequest):
 @app.get("/api/learn/buffer-status")
 async def learning_buffer_status(owner_user_id: str = ""):
     """Check current learning buffer status."""
+    if not owner_user_id:
+        owner_user_id = _last_owner_user_id
     buffer = _get_learning_buffer()
     quality = _count_quality_owner_messages(buffer, owner_user_id) if owner_user_id else 0
 
     # Show sample messages for debugging
     sample_msgs = []
     for m in buffer[-10:]:
-        raw_owner = m.get("is_owner", False)
-        raw_ai = m.get("is_ai_generated", False)
+        raw_owner = m.get("is_owner")
+        raw_ai = m.get("is_ai_generated")
+        parsed_owner = _is_owner_message(m, owner_user_id)
+        parsed_ai = _safe_bool(raw_ai)
         sample_msgs.append({
             "content": m.get("content", "")[:80],
-            "is_owner": raw_owner,
-            "is_owner_type": type(raw_owner).__name__,
-            "sender_id": m.get("sender_id", "")[-6:],  # Last 6 chars for privacy
-            "is_ai_generated": raw_ai,
-            "is_ai_type": type(raw_ai).__name__,
+            "is_owner_raw": repr(raw_owner),
+            "is_owner_parsed": parsed_owner,
+            "sender_id": str(m.get("sender_id", ""))[-6:],
+            "is_ai_raw": repr(raw_ai),
+            "is_ai_parsed": parsed_ai,
+            "all_keys": list(m.keys()),
         })
+
+    # Count owner vs customer in buffer
+    owner_count = sum(1 for m in buffer if _is_owner_message(m, owner_user_id))
+    customer_count = len(buffer) - owner_count
 
     return {
         "total_buffered": len(buffer),
+        "owner_user_id": owner_user_id[:10] + "..." if len(owner_user_id) > 10 else owner_user_id,
+        "owner_messages": owner_count,
+        "customer_messages": customer_count,
         "quality_pairs": quality,
         "threshold": _LEARNING_BUFFER_MIN_PAIRS,
         "remaining_needed": max(0, _LEARNING_BUFFER_MIN_PAIRS - quality),
