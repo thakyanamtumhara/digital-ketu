@@ -250,9 +250,14 @@ def format_smart_context(knowledge: dict, classification: dict) -> str:
                     price_str = f"₹{item['bulk_price']}bulk/₹{item['sample_price']}sample"
                 else:
                     price_str = item.get("price_range", "N/A")
-                colors_count = len(item.get("colors", []))
+                # Include color names (max 5 + count) — customers ask "kaun se color hai"
+                all_colors = item.get("colors", [])
+                if len(all_colors) > 5:
+                    colors_str = ", ".join(all_colors[:5]) + f" +{len(all_colors)-5}more"
+                else:
+                    colors_str = ", ".join(all_colors) if all_colors else "N/A"
                 product_lines.append(
-                    f"- {item['name']} | {item['gsm']}GSM | {price_str} | {item.get('fabric', '')} | {colors_count}colors"
+                    f"- {item['name']} | {item['gsm']}GSM | {price_str} | {item.get('fabric', '')} | Colors: {colors_str}"
                 )
             parts.append("PRODUCTS:\n" + "\n".join(product_lines))
 
@@ -319,9 +324,32 @@ def format_smart_context(knowledge: dict, classification: dict) -> str:
     if "gst" in sections_needed:
         parts.append("GST: 5% extra on all prices | GST invoice har order ke saath")
 
-    # --- NO FAQs, NO style rules, NO learned patterns in knowledge context ---
-    # These are already baked into the static system prompt (personality + rules).
-    # Sending them again wastes tokens. The AI already knows how to reply.
+    # --- PICK relevant FAQs (max 2, keyword-matched) ---
+    # Not ALL FAQs — only the ones matching this customer's question.
+    # As FAQs grow to 100+, we still only send 2 most relevant ones.
+    faqs = knowledge.get("faq", {}).get("faqs", [])
+    if faqs:
+        relevant_faqs = _pick_relevant_faqs(faqs, classification)
+        if relevant_faqs:
+            faq_lines = [f"Q: {f['question']} A: {f['answer']}" for f in relevant_faqs]
+            parts.append("FAQ:\n" + "\n".join(faq_lines))
+
+    # --- PICK relevant learned patterns (max 3, keyword-matched) ---
+    # As patterns grow to 200+, we still only send the 3 most relevant.
+    style = knowledge.get("style", {})
+    learned_patterns = style.get("learned_patterns", [])
+    if learned_patterns:
+        relevant_patterns = _pick_relevant_patterns(learned_patterns, classification)
+        if relevant_patterns:
+            parts.append("LEARNED: " + " | ".join(relevant_patterns))
+
+    # --- PICK relevant evolved rules (max 2) ---
+    prompt_data = knowledge.get("prompt", {})
+    evolved_rules = prompt_data.get("evolved_rules", [])
+    if evolved_rules:
+        relevant_rules = _pick_relevant_patterns(evolved_rules, classification)
+        if relevant_rules:
+            parts.append("EXTRA RULES: " + " | ".join(relevant_rules))
 
     context = "\n".join(parts)
 
@@ -366,6 +394,101 @@ def _format_minimal_context(knowledge: dict) -> str:
 
     logger.info(f"[ContextSelector] Minimal context: ~{estimated} tokens")
     return context
+
+
+def _pick_relevant_faqs(faqs: list, classification: dict) -> list:
+    """Pick only FAQs relevant to the customer's message. Max 2.
+
+    Uses keyword overlap between FAQ keywords and the detected intents/products.
+    As FAQs grow to 100+, this ensures we only send 2 most relevant.
+    """
+    # Build a keyword set from classification
+    intents = classification.get("intents", [])
+    product_ids = classification.get("product_ids", [])
+
+    # Map intents to FAQ-matching keywords
+    intent_keywords = {
+        "price_product": {"rate", "price", "kitna", "discount", "bulk"},
+        "product_inquiry": {"available", "sample", "stock"},
+        "gsm_fabric": {"gsm", "biowash", "fabric", "thickness"},
+        "printing": {"print", "dtg", "dtf", "screen", "sublimation", "embroidery"},
+        "shipping_delivery": {"delivery", "shipping", "dispatch"},
+        "payment": {"cod", "payment", "prepaid"},
+        "order_how": {"order", "sample", "website"},
+        "dropshipping": {"dropship", "blind", "resell"},
+        "location_visit": {"factory", "warehouse", "location", "address"},
+        "return_complaint": {"return", "refund", "defect"},
+        "gst_invoice": {"gst", "invoice", "tax"},
+        "moq": {"minimum", "moq"},
+    }
+
+    # Also add product names as matching keywords
+    product_keywords = set()
+    for pid in product_ids:
+        # "hoodie-320gsm" → {"hoodie", "320gsm"}
+        product_keywords.update(pid.replace("-", " ").split())
+
+    search_keywords = product_keywords.copy()
+    for intent in intents:
+        search_keywords.update(intent_keywords.get(intent, set()))
+
+    if not search_keywords:
+        return []
+
+    # Score FAQs by keyword overlap
+    scored = []
+    for faq in faqs:
+        if faq.get("status") == "inactive":
+            continue
+        faq_kw = set(kw.lower() for kw in faq.get("keywords", []))
+        # Also check FAQ question text for product keywords
+        q_lower = faq.get("question", "").lower()
+        overlap = len(faq_kw & search_keywords)
+        # Bonus if product name appears in FAQ question
+        for pk in product_keywords:
+            if pk in q_lower:
+                overlap += 2
+        if overlap > 0:
+            scored.append((overlap, faq))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [faq for _, faq in scored[:2]]  # Max 2 FAQs
+
+
+def _pick_relevant_patterns(patterns: list, classification: dict) -> list:
+    """Pick learned patterns relevant to the customer's message. Max 3.
+
+    Patterns are strings like "[Correction] Hoodie pricing should include..."
+    We keyword-match against the classification to find relevant ones.
+    """
+    if not patterns:
+        return []
+
+    intents = set(classification.get("intents", []))
+    product_ids = classification.get("product_ids", [])
+
+    # Build search terms
+    search_terms = set()
+    for pid in product_ids:
+        search_terms.update(pid.replace("-", " ").split())
+    for intent in intents:
+        search_terms.update(intent.replace("_", " ").split())
+
+    if not search_terms:
+        return []
+
+    # Score patterns by keyword presence
+    scored = []
+    for pattern in patterns:
+        text = pattern if isinstance(pattern, str) else str(pattern)
+        text_lower = text.lower()
+        score = sum(1 for term in search_terms if term in text_lower)
+        if score > 0:
+            # Compact: take first 80 chars
+            scored.append((score, text[:80]))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [text for _, text in scored[:3]]  # Max 3 patterns
 
 
 # Keep for backwards compatibility but should not be used in normal flow
