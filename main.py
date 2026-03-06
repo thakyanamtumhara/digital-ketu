@@ -1000,6 +1000,16 @@ class FlushBufferRequest(BaseModel):
     owner_user_id: str
 
 
+@app.post("/api/learn/clear-buffer")
+async def clear_learning_buffer():
+    """Clear the learning buffer without learning — use when buffer has bad data."""
+    buffer = _get_learning_buffer()
+    count = len(buffer)
+    _save_learning_buffer([])
+    logger.info(f"[Buffer] Cleared {count} messages from buffer")
+    return {"status": "cleared", "messages_cleared": count}
+
+
 @app.post("/api/learn/flush-buffer")
 async def flush_learning_buffer(req: FlushBufferRequest):
     """Manually flush the learning buffer — force Claude to learn from whatever is buffered.
