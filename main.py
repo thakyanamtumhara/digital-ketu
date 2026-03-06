@@ -1703,8 +1703,30 @@ async def api_ketu_replied(req: KetuRepliedRequest):
 
     If the customer asks a NEW question (contains ?, price, rate, etc.),
     the cooldown breaks automatically and AI resumes.
+
+    Also logs the customer's last question to the ketu-only queue so
+    the dashboard shows what Ketu had to handle manually.
     """
     ketu_manual_reply(req.customer_phone)
+
+    # Log the customer's last question to ketu-only queue
+    # so "Needs Ketu's Reply" section shows what Ketu handled
+    from core.engine import get_conversation_history
+    from core.ketu_only import log_manual_takeover
+    history = get_conversation_history(req.customer_phone)
+    customer_last_msg = ""
+    for msg in reversed(history):
+        if msg.get("role") == "user":
+            customer_last_msg = msg.get("content", "")
+            break
+    # Only log if we found a customer message and it's not trivial
+    if customer_last_msg and len(customer_last_msg.strip()) > 3:
+        log_manual_takeover(
+            customer_phone=req.customer_phone,
+            customer_message=customer_last_msg,
+            ketu_reply=req.ketu_message or "",
+        )
+
     log_activity(
         source="ketu-replied",
         action="shutup-activated",

@@ -186,6 +186,60 @@ def log_deferred_question(
     logger.info(f"[KetuOnly] Deferred to Ketu: {category_name} | {customer_phone[-4:]} | {message[:50]}")
 
 
+def log_manual_takeover(customer_phone: str, customer_message: str, ketu_reply: str = ""):
+    """Log when Ketu manually took over a conversation.
+
+    Called when /api/ketu-replied fires. Adds the customer's last question
+    to the ketu-only queue so the dashboard shows what Ketu handled.
+    Deduplicates: skips if same phone logged within last 2 minutes.
+    """
+    _load_queue_from_db()
+
+    phone_last4 = customer_phone[-4:] if len(customer_phone) >= 4 else customer_phone
+    now = datetime.now(IST)
+
+    # Dedup: skip if same phone was logged within last 2 minutes
+    for entry in reversed(_deferred_queue[-10:]):
+        if entry.get("phone_last4") == phone_last4 and entry.get("category_id") == "manual_takeover":
+            try:
+                entry_time = datetime.fromisoformat(entry["timestamp"])
+                if (now - entry_time).total_seconds() < 120:
+                    return  # Already logged recently
+            except (ValueError, KeyError):
+                pass
+            break
+
+    entry = {
+        "phone_last4": phone_last4,
+        "customer_name": "Unknown",
+        "message": customer_message[:300],
+        "category_id": "manual_takeover",
+        "category_name": "Ketu Took Over",
+        "reason": f"Ketu replied: '{ketu_reply[:50]}'",
+        "defer_reply": ketu_reply,
+        "timestamp": now.isoformat(),
+        "date": now.strftime("%d %b %Y"),
+        "time": now.strftime("%I:%M %p"),
+        "resolved": True,  # Already resolved — Ketu already replied
+    }
+    _deferred_queue.append(entry)
+    _save_queue_to_db()
+
+    from core.activity_log import log_activity
+    log_activity(
+        source="ketu-only",
+        action="manual-takeover",
+        details={
+            "customer_phone": phone_last4,
+            "category": "Ketu Took Over",
+            "message_preview": customer_message[:100],
+            "ketu_reply_preview": ketu_reply[:80],
+        },
+        items_count=1,
+    )
+    logger.info(f"[KetuOnly] Manual takeover logged: {phone_last4} | {customer_message[:50]}")
+
+
 def get_deferred_queue(limit: int = 50, pending_only: bool = False) -> list[dict]:
     """Get the deferred question queue for the dashboard."""
     _load_queue_from_db()

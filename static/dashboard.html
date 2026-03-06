@@ -1859,17 +1859,19 @@ async function loadKetuOnly() {
   html += '<div style="max-height:350px;overflow-y:auto;">';
   queue.forEach((q, i) => {
     const resolved = q.resolved;
-    const statusColor = resolved ? 'var(--green)' : 'var(--orange)';
-    const statusText = resolved ? 'Resolved' : 'Pending';
+    const isManual = q.category_id === 'manual_takeover';
+    const statusColor = isManual ? 'var(--accent2)' : (resolved ? 'var(--green)' : 'var(--orange)');
+    const statusText = isManual ? 'Ketu Replied' : (resolved ? 'Resolved' : 'Pending');
     html += `
-      <div style="padding:10px;border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:8px;background:rgba(255,255,255,0.02);${resolved ? 'opacity:0.6;' : ''}border-left:3px solid ${statusColor};">
+      <div style="padding:10px;border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:8px;background:rgba(255,255,255,0.02);border-left:3px solid ${statusColor};">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
           <span style="font-size:11px;color:var(--accent2);font-weight:600;">...${q.phone_last4} ${q.customer_name !== 'Unknown' ? '(' + q.customer_name + ')' : ''}</span>
           <span style="font-size:10px;color:var(--text-dim);">${q.time} | ${q.date}</span>
         </div>
         <div style="font-size:13px;color:var(--text-bright);margin-bottom:4px;">${q.message}</div>
+        ${isManual && q.defer_reply ? `<div style="font-size:11px;color:var(--accent2);margin-bottom:4px;padding-left:8px;border-left:2px solid var(--accent2);opacity:0.8;">Ketu: ${q.defer_reply.slice(0, 100)}</div>` : ''}
         <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(108,92,231,0.1);color:var(--accent);">${q.category_name}</span>
+          <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${isManual ? 'rgba(0,206,201,0.1)' : 'rgba(108,92,231,0.1)'};color:${isManual ? 'var(--accent2)' : 'var(--accent)'};">${q.category_name}</span>
           <span style="font-size:10px;color:${statusColor};font-weight:600;">${statusText}</span>
         </div>
       </div>`;
