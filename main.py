@@ -589,28 +589,42 @@ def _save_learning_buffer(buffer: list[dict]):
 
 
 def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int:
-    """Count how many quality manual Ketu messages are in the buffer.
+    """Count quality PAIRS in the buffer (customer Q + Ketu manual reply = 1 pair).
 
-    Identifies owner messages using either:
-    - is_owner flag (explicit, from wwbun extension)
-    - sender_id matching owner_user_id (fallback)
+    A pair is: a customer message followed by Ketu's manual (non-AI) reply.
+    Both must pass quality checks (not junk, 3+ words for Ketu's reply).
+    This ensures Claude gets meaningful context for learning.
     """
     from learner.chat_learner import is_junk_message
-    count = 0
+    pairs = 0
+    last_customer_msg = None
+
     for m in buffer:
-        # Check if this is an owner message: explicit flag OR sender_id match
         is_owner = m.get("is_owner", False) or m.get("sender_id") == owner_user_id
-        if not is_owner:
-            continue
-        if m.get("is_ai_generated"):
-            continue
+        is_ai = m.get("is_ai_generated", False)
         text = m.get("content", "")
+
+        if not is_owner:
+            # Customer message — remember it as potential pair start
+            if not is_junk_message(text):
+                last_customer_msg = text
+            continue
+
+        # This is a Ketu message
+        if is_ai:
+            continue  # Skip AI-generated replies
+
         if is_junk_message(text):
             continue
         if len(text.split()) < 3:
             continue
-        count += 1
-    return count
+
+        # Quality Ketu manual reply — check if we have a customer message before it
+        if last_customer_msg:
+            pairs += 1
+            last_customer_msg = None  # Consume the pair
+
+    return pairs
 
 
 def _flush_learning_buffer(owner_user_id: str) -> dict:
