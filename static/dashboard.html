@@ -1189,18 +1189,18 @@ async function loadDashboard() {
           title = `Buffering messages (${d.quality_in_buffer || 0}/${needed} pairs)`;
           detail = added ? `+${added} msgs added, ${remaining} more pairs needed to learn` : `Waiting for quality pairs`;
         } else {
-          title = `Learned from ${kept} quality pairs (${junk + short} filtered out)`;
-          const preview = (d.quality_messages_preview || []).slice(0, 2).map(m => `"${m.substring(0, 40)}"`).join(', ');
+          const pairs = d.quality_pairs_count || 0;
+          const total = d.total_buffered || 0;
+          title = `Learned from ${pairs} pairs (${kept} msgs, ${junk + short} trash)`;
           const applied = (d.updates_applied || []).slice(0, 2).join(', ');
           const extracted = (d.extracted_summary || []).join(', ');
+          const breakdown = `${total} total msgs → ${kept} quality, ${junk} junk, ${short} too short`;
           if (applied) {
             detail = '\u2705 ' + applied;
-          } else if (preview) {
-            detail = preview + (extracted ? ' \u2192 Already known: ' + extracted : '');
           } else if (extracted) {
-            detail = 'Analyzed: ' + extracted + ' (all already known \u2014 no duplicates added)';
+            detail = breakdown + ' | ' + extracted;
           } else {
-            detail = 'Messages analyzed but no extractable knowledge found';
+            detail = breakdown;
           }
         }
       } else if (e.source === 'whatsapp-export') {

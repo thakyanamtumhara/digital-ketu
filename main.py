@@ -919,6 +919,7 @@ def _flush_learning_buffer(owner_user_id: str) -> dict:
         action="batch-learned",
         details={
             "total_buffered": len(buffer),
+            "quality_pairs_count": len(quality_pairs),
             "quality_messages_count": filter_stats.get("kept", 0),
             "junk_skipped": filter_stats.get("junk", 0),
             "too_short_skipped": filter_stats.get("too_short", 0),
