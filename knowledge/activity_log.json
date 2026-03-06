@@ -264,5 +264,135 @@
       "new_text": "Corrected reply",
       "original_text": "Some reply"
     }
+  },
+  {
+    "timestamp": "2026-03-06T22:43:36.330809+05:30",
+    "date": "06 Mar 2026",
+    "time": "10:43 PM IST",
+    "source": "whatsapp",
+    "action": "correction-saved",
+    "items_count": 0,
+    "details": {
+      "customer_phone": "3210",
+      "ketu_correction": "Bhai rate ₹190/piece hai, MOQ 50 pieces.",
+      "original_ai_reply": "Ji bhai, round neck t-shirt ₹170/piece hai. MOQ 50 pieces.",
+      "sent_to_customer": false
+    }
+  },
+  {
+    "timestamp": "2026-03-06T22:43:36.332942+05:30",
+    "date": "06 Mar 2026",
+    "time": "10:43 PM IST",
+    "source": "correction-learner",
+    "action": "learned-from-edit",
+    "items_count": 1,
+    "details": {
+      "customer_message": "Bhai round neck t-shirt ka rate kya hai?",
+      "ai_reply": "Ji bhai, round neck t-shirt ₹170/piece hai. MOQ 50 pieces.",
+      "ketu_correction": "Bhai rate ₹190/piece hai, MOQ 50 pieces.",
+      "what_went_wrong": "AI quoted wrong price ₹170 instead of ₹190",
+      "updates_applied": [
+        "faq_updated"
+      ],
+      "via": "whatsapp-edit"
+    }
+  },
+  {
+    "timestamp": "2026-03-06T22:43:36.843988+05:30",
+    "date": "06 Mar 2026",
+    "time": "10:43 PM IST",
+    "source": "whatsapp",
+    "action": "correction-saved",
+    "items_count": 0,
+    "details": {
+      "customer_phone": "6655",
+      "ketu_correction": "Sir hoodie 380 GSM hai, premium fleece with brushed inside.",
+      "original_ai_reply": "Ji sir, hoodie 300 GSM hai, fleece material.",
+      "sent_to_customer": false
+    }
+  },
+  {
+    "timestamp": "2026-03-06T22:43:36.845691+05:30",
+    "date": "06 Mar 2026",
+    "time": "10:43 PM IST",
+    "source": "correction-learner",
+    "action": "learned-from-edit",
+    "items_count": 1,
+    "details": {
+      "customer_message": "Hoodie ka GSM kitna hai?",
+      "ai_reply": "Ji sir, hoodie 300 GSM hai, fleece material.",
+      "ketu_correction": "Sir hoodie 380 GSM hai, premium fleece with brushed inside.",
+      "what_went_wrong": "Wrong GSM (300 instead of 380)",
+      "updates_applied": [
+        "product_info_updated"
+      ],
+      "via": "whatsapp-edit"
+    }
+  },
+  {
+    "timestamp": "2026-03-06T22:43:37.353514+05:30",
+    "date": "06 Mar 2026",
+    "time": "10:43 PM IST",
+    "source": "whatsapp",
+    "action": "correction-saved",
+    "items_count": 0,
+    "details": {
+      "customer_phone": "3445",
+      "ketu_correction": "Bhai 3-4 din mein aa jayega, courier se bhejte hai.",
+      "original_ai_reply": "Dear customer, shipping will take approximately 3-5 business days.",
+      "sent_to_customer": false
+    }
+  },
+  {
+    "timestamp": "2026-03-06T22:43:37.355413+05:30",
+    "date": "06 Mar 2026",
+    "time": "10:43 PM IST",
+    "source": "correction-learner",
+    "action": "learned-from-edit",
+    "items_count": 2,
+    "details": {
+      "customer_message": "Shipping kitne din mein hoga?",
+      "ai_reply": "Dear customer, shipping will take approximately 3-5 business days.",
+      "ketu_correction": "Bhai 3-4 din mein aa jayega, courier se bhejte hai.",
+      "what_went_wrong": "Too formal English, should be casual Hinglish",
+      "updates_applied": [
+        "style_updated",
+        "rule_added"
+      ],
+      "via": "whatsapp-edit"
+    }
+  },
+  {
+    "timestamp": "2026-03-06T22:43:37.863824+05:30",
+    "date": "06 Mar 2026",
+    "time": "10:43 PM IST",
+    "source": "whatsapp",
+    "action": "correction-saved",
+    "items_count": 0,
+    "details": {
+      "customer_phone": "6777",
+      "ketu_correction": "Bhai polo ₹220/piece, MOQ 100. Colors: white, black, navy, grey, maroon. S to XXL.",
+      "original_ai_reply": "Ji bhai, polo t-shirt ₹220/piece hai.",
+      "sent_to_customer": false
+    }
+  },
+  {
+    "timestamp": "2026-03-06T22:43:37.865514+05:30",
+    "date": "06 Mar 2026",
+    "time": "10:43 PM IST",
+    "source": "correction-learner",
+    "action": "learned-from-edit",
+    "items_count": 2,
+    "details": {
+      "customer_message": "Polo t-shirt ke baare mein batao",
+      "ai_reply": "Ji bhai, polo t-shirt ₹220/piece hai.",
+      "ketu_correction": "Bhai polo ₹220/piece, MOQ 100. Colors: white, black, navy, grey, maroon. S to XX",
+      "what_went_wrong": "Missing MOQ, colors, sizes",
+      "updates_applied": [
+        "faq_added",
+        "product_info_updated"
+      ],
+      "via": "whatsapp-edit"
+    }
   }
 ]

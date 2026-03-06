@@ -40,6 +40,7 @@ _last_escalation: dict[str, dict] = {}  # phone -> escalation result
 # "Shut up" cooldown — when conversation ends (ender detected) or Ketu manually replies,
 # AI stays silent for this customer. Prevents unnecessary follow-up replies.
 _shutup_until: dict[str, float] = {}  # phone -> timestamp until which AI stays silent
+_shutup_reason: dict[str, str] = {}  # phone -> reason (ender, ketu_manual_reply, ketu_only_deferral)
 SHUTUP_COOLDOWN = 300  # 5 minutes — AI won't reply to this customer for 5 min after ender
 
 # Prompt cache — caches the knowledge portion of system prompt by intent combo
@@ -330,11 +331,13 @@ def activate_shutup(customer_phone: str, reason: str = "ender", minutes: float =
     Called when:
     - Conversation ender detected (buyer said "ok", "thanks", etc.)
     - Ketu manually replied to a customer (AI should back off)
+    - Ketu-only question deferred to real Ketu (AI should wait)
     """
     if not customer_phone:
         return
     duration = minutes * 60 if minutes > 0 else SHUTUP_COOLDOWN
     _shutup_until[customer_phone] = time.time() + duration
+    _shutup_reason[customer_phone] = reason
     logger.info(f"[ShutUp] Activated for {customer_phone[-4:]} — reason: {reason}, duration: {duration}s")
 
 
@@ -345,10 +348,12 @@ def is_shutup_active(customer_phone: str) -> bool:
     until = _shutup_until.get(customer_phone, 0)
     if time.time() < until:
         remaining = int(until - time.time())
-        logger.info(f"[ShutUp] Active for {customer_phone[-4:]} — {remaining}s remaining")
+        reason = _shutup_reason.get(customer_phone, "unknown")
+        logger.info(f"[ShutUp] Active for {customer_phone[-4:]} — {remaining}s remaining, reason: {reason}")
         return True
     # Expired — clean up
     _shutup_until.pop(customer_phone, None)
+    _shutup_reason.pop(customer_phone, None)
     return False
 
 
@@ -518,7 +523,23 @@ def generate_reply(
     # If AI is in cooldown for this customer (ender detected earlier or Ketu replied),
     # don't reply at all. This prevents the AI from jumping back into finished conversations.
     if customer_phone and is_shutup_active(customer_phone):
-        # But if customer asks a NEW question, break the cooldown
+        reason = _shutup_reason.get(customer_phone, "")
+
+        # If Ketu is handling this customer (manual reply or ketu-only deferral),
+        # AI must NEVER jump back in — regardless of what customer says.
+        # Ketu is the boss. Only Ketu can break this cooldown (by not replying,
+        # letting the timer expire).
+        if reason in ("ketu_manual_reply", "ketu_only_deferral"):
+            logger.info(
+                f"[ShutUp] Skipping reply to {customer_phone[-4:]} — "
+                f"Ketu is handling (reason: {reason}), msg: '{message[:50]}'"
+            )
+            if customer_phone:
+                _conversations[customer_phone] = messages + [{"role": "user", "content": message}]
+                _conversation_timestamps[customer_phone] = time.time()
+            return ""
+
+        # For ender-based cooldown: if customer asks a NEW question, break the cooldown
         msg_lower = message.strip().lower().rstrip("!.,")
         has_question = "?" in message or any(
             w in msg_lower.split() for w in
@@ -535,6 +556,7 @@ def generate_reply(
         else:
             logger.info(f"[ShutUp] Customer {customer_phone[-4:]} asked new question — breaking cooldown: '{message[:50]}'")
             _shutup_until.pop(customer_phone, None)
+            _shutup_reason.pop(customer_phone, None)
 
     # --- CONVERSATION ENDER CHECK ---
     # Check if customer is just acknowledging/ending the conversation
@@ -595,6 +617,9 @@ def generate_reply(
             ]
             _conversation_timestamps[customer_phone] = time.time()
             update_profile(customer_phone, customer_name, message)
+            # SHUT UP after deferring to Ketu — AI told customer "Ketu sir reply karenge",
+            # so AI must stay silent until Ketu actually replies. 10 min cooldown.
+            activate_shutup(customer_phone, reason="ketu_only_deferral", minutes=10)
         return defer_reply
 
     # Add current message
