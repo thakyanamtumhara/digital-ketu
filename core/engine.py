@@ -226,37 +226,12 @@ def _build_system_prompt(
         rule_lines = "\n".join(f"{i+1}. {r}" for i, r in enumerate(all_rules))
         sections.append(f"## REPLY RULES:\n{rule_lines}")
 
-    # Smart Suggestions rule — never push, only suggest when asked
+    # Compact rules — merged suggestion, objection handling, and chat patterns
     sections.append(
-        "## SUGGESTION RULE:\n"
-        "- KABHI unsolicited product push mat kar. Customer jo maang raha hai wohi de.\n"
-        "- Agar customer 180 GSM regular fit maang raha hai, toh oversize mat suggest kar.\n"
-        "- Sirf TABHI suggest kar jab customer KHUD puche: 'kya recommend karoge?', 'best kaun sa hai?', 'suggest karo'\n"
-        "- Customer ki choice respect kar — unko freedom de kuch bhi kharidne ki"
-    )
-
-    # Objection Handling rule
-    sections.append(
-        "## OBJECTION HANDLING (jab customer price ya quality challenge kare):\n"
-        "- 'Mehnga hai' → 'Bhai, factory direct rate hai, koi middleman nahi. Plus biowash + no shrinkage guarantee — ye quality iss price mein aur kahi nahi milegi.'\n"
-        "- 'Competitor sasta de raha' → 'Sir, quality compare karo — 100% cotton, biowash, ready stock, dispatch within minutes. Sasta mein ye service nahi milegi.'\n"
-        "- 'Discount do' → Bulk rate bata, website pe Rs 2/pc extra off mention kar. Fake discount mat de.\n"
-        "- 'Quality kaisi hai?' → Confident bol — 'No shrinkage, no color bleeding, guaranteed. Tiruppur factory se direct.'\n"
-        "- KABHI defensive mat ho. Confident aur genuine reh. Facts bata, argue mat kar."
-    )
-
-    # Chat pattern categorization
-    sections.append(
-        "## CHAT PATTERNS (situation ke hisaab se reply style):\n"
-        "- INQUIRY: Customer product/price puch raha hai → Direct info de, short, with rate\n"
-        "- COMPARISON: Customer compare kar raha hai → Fact-based difference bata, push mat kar\n"
-        "- OBJECTION: Customer price/quality challenge kar raha → USP bata, confident reh\n"
-        "- COMPLAINT: Customer naraz hai/issue hai → Empathetic ho, Ketu sir ko connect kar\n"
-        "- CLOSING: Customer ready hai order karne ko → Website link de, payment info de, smooth karo\n"
-        "- ACKNOWLEDGMENT: Customer ne 'ok', 'thanks' bola → Reply mat kar (conversation ender)\n"
-        "- GREETING: Customer ne 'hi' bola → Warm welcome + kaise help karu\n"
-        "- REPEAT BUYER: Purana customer phir aaya hai → Chhota, friendly reply. Ye process jaanta hai, haath mat pakad. 'Bhai, website se order kar lo. Koi issue ho toh batao.' bas itna.\n"
-        "- RETURNING BUYER (30+ din baad): Kaafi din baad aaya → Thoda warm welcome: 'Kaise ho bhai? Naya stock aa gaya hai. Batao kya chahiye.'"
+        "## KEY RULES:\n"
+        "- Unsolicited product push KABHI mat kar. Customer jo maange wohi de.\n"
+        "- Objection handling: 'Mehnga hai' → factory direct, no middleman, biowash+no shrinkage guarantee. 'Competitor sasta' → quality compare karo. 'Discount' → bulk rate bata. Confident reh, argue mat kar.\n"
+        "- INQUIRY → rate de. COMPLAINT → empathy + Ketu sir connect. CLOSING → website link. ACKNOWLEDGMENT (ok/thanks) → reply mat kar. REPEAT BUYER → short friendly reply."
     )
 
     # Repeat buyer learned style (if available)
@@ -622,6 +597,11 @@ def generate_reply(
             activate_shutup(customer_phone, reason="ketu_only_deferral", minutes=10)
         return defer_reply
 
+    # Trim conversation history to last 6 messages (3 exchanges) before adding new one
+    # This prevents sending 10-20 old messages to Claude (saves ~5,000 tokens per call)
+    if len(messages) > 5:
+        messages = messages[-5:]
+
     # Add current message
     messages = messages + [{"role": "user", "content": message}]
 
@@ -712,9 +692,9 @@ def generate_reply(
                 _conversations[customer_phone] = messages + [
                     {"role": "assistant", "content": reply}
                 ]
-                # Keep only last 20 messages
-                if len(_conversations[customer_phone]) > 20:
-                    _conversations[customer_phone] = _conversations[customer_phone][-20:]
+                # Keep only last 6 messages (3 exchanges) — saves ~5,000 tokens per call
+                if len(_conversations[customer_phone]) > 6:
+                    _conversations[customer_phone] = _conversations[customer_phone][-6:]
                 _conversation_timestamps[customer_phone] = time.time()
 
             return reply

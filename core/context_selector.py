@@ -239,11 +239,11 @@ def format_smart_context(knowledge: dict, classification: dict) -> str:
     """Build a trimmed knowledge context based on classification results.
 
     Only includes sections that are relevant to the customer's question.
-    Falls back to full context if classification failed (is_complex=True).
+    Falls back to MINIMAL context if classification failed (is_complex=True).
     """
     if classification["is_complex"]:
-        # Fallback — include everything (same as current behavior)
-        return _format_full_context(knowledge)
+        # Fallback — send minimal context instead of everything (saves ~10k tokens)
+        return _format_minimal_context(knowledge)
 
     sections_needed = classification["sections_needed"]
     product_ids = set(classification["product_ids"])
@@ -275,7 +275,12 @@ def format_smart_context(knowledge: dict, classification: dict) -> str:
         if matched:
             product_lines = []
             for item in matched:
-                colors = ", ".join(item.get("colors", []))
+                all_colors = item.get("colors", [])
+                # Show max 8 colors + count to save tokens (colors can have 15-25 items)
+                if len(all_colors) > 8:
+                    colors = ", ".join(all_colors[:8]) + f" +{len(all_colors)-8} more"
+                else:
+                    colors = ", ".join(all_colors)
                 sizes = ", ".join(item.get("sizes", []))
                 if "bulk_price" in item:
                     price_str = f"Rs {item['bulk_price']}/pc (bulk) | Rs {item['sample_price']}/pc (sample)"
@@ -286,7 +291,7 @@ def format_smart_context(knowledge: dict, classification: dict) -> str:
                     f"  Price: {price_str}\n"
                     f"  Fabric: {item.get('fabric', 'N/A')}\n"
                     f"  MOQ: {item.get('moq', 10)} pcs | Sizes: {sizes}\n"
-                    f"  Colors ({len(item.get('colors', []))}): {colors}"
+                    f"  Colors ({len(all_colors)}): {colors}"
                 )
             parts.append(f"## Products ({len(matched)} items)\n" + "\n\n".join(product_lines))
 
@@ -463,6 +468,58 @@ def _pick_relevant_faqs(faqs: list, intents: list, classification: dict) -> list
     # Sort by relevance, take top 5
     scored.sort(key=lambda x: x[0], reverse=True)
     return [faq for _, faq in scored[:5]]
+
+
+def _format_minimal_context(knowledge: dict) -> str:
+    """Minimal context fallback — used when we can't classify the message.
+
+    Instead of sending EVERYTHING (21 products, all FAQs, examples, YouTube knowledge),
+    send only essential business info. The AI already has personality/rules in the
+    system prompt — it just needs basic company + product overview to handle unknown intents.
+    This saves ~10,000-15,000 tokens per unclassified message.
+    """
+    parts = []
+
+    # Company basics
+    c = knowledge.get("company", {})
+    if c:
+        websites = c.get("websites", {})
+        parts.append(
+            f"## Company: {c.get('name', '')} (Brand: {c.get('brand', '')})\n"
+            f"- Website: {websites.get('primary', '')} | Catalog: {websites.get('catalog', '')}\n"
+            f"- B2B Wholesale Manufacturer — Factory direct, no middleman\n"
+            f"- Tiruppur factory, Delhi warehouse\n"
+            f"- Dispatch within minutes, MOQ 10 pcs"
+        )
+
+    # Product summary (just names + prices, NOT full details with all colors)
+    products = knowledge.get("products", {})
+    catalog = products.get("catalog", [])
+    if catalog:
+        product_lines = []
+        for item in catalog:
+            if "bulk_price" in item:
+                price_str = f"Rs {item['bulk_price']}/pc"
+            else:
+                price_str = item.get("price_range", "N/A")
+            product_lines.append(f"- {item['name']} ({item['gsm']} GSM) — {price_str}")
+        parts.append("## Products (quick reference)\n" + "\n".join(product_lines))
+
+    # Payment & shipping basics
+    pt = c.get("payment_terms", {})
+    if pt:
+        parts.append(f"## Payment: {pt.get('policy', '100% Prepaid')} | Modes: {', '.join(pt.get('modes', []))}")
+
+    s = c.get("shipping", {})
+    if s:
+        parts.append(f"## Shipping: {s.get('dispatch_speed', 'Dispatch within minutes')}")
+
+    # Style rules (small, important)
+    if "style" in knowledge:
+        style = knowledge["style"]
+        parts.append("## Reply Style\n" + "\n".join(f"- {r}" for r in style.get("rules", [])))
+
+    return "\n\n".join(parts)
 
 
 def _format_full_context(knowledge: dict) -> str:

@@ -192,7 +192,12 @@ def format_context() -> str:
 
         product_lines = []
         for item in p.get("catalog", []):
-            colors = ", ".join(item.get("colors", []))
+            all_colors = item.get("colors", [])
+            # Show max 8 colors + count to save tokens
+            if len(all_colors) > 8:
+                colors = ", ".join(all_colors[:8]) + f" +{len(all_colors)-8} more"
+            else:
+                colors = ", ".join(all_colors)
             sizes = ", ".join(item.get("sizes", []))
             if "bulk_price" in item:
                 price_str = f"Rs {item['bulk_price']}/pc (bulk) | Rs {item['sample_price']}/pc (sample)"
@@ -205,7 +210,7 @@ def format_context() -> str:
                 f"  Price: {price_str}\n"
                 f"  Fabric: {item.get('fabric', 'N/A')}\n"
                 f"  MOQ: {item.get('moq', 10)} pcs | Sizes: {sizes}\n"
-                f"  Colors ({len(item.get('colors', []))}): {colors}"
+                f"  Colors ({len(all_colors)}): {colors}"
             )
         sections.append("## Products (21 items)\n" + "\n\n".join(product_lines))
 
@@ -272,15 +277,9 @@ def format_context() -> str:
         sections.append("## Reply Style Rules\n" + "\n".join(f"- {r}" for r in s.get("rules", [])))
         sections.append("## Avoid\n" + "\n".join(f"- {a}" for a in s.get("avoid", [])))
 
-        # ALL example conversations
-        examples = s.get("example_conversations", [])
-        if examples:
-            ex_lines = []
-            for ex in examples:
-                ex_lines.append(f"Customer: {ex['customer']}\nKetu: {ex['reply']}")
-            sections.append("## Example Conversations\n" + "\n\n".join(ex_lines))
+        # Skip example conversations (saves ~2,000 tokens — personality traits are enough)
 
-        # Include learned patterns if any
+        # Include learned patterns if any (these are small and important)
         learned_patterns = s.get("learned_patterns", [])
         if learned_patterns:
             sections.append("## Learned Style Patterns\n" + "\n".join(
@@ -288,28 +287,6 @@ def format_context() -> str:
                 for p in learned_patterns
             ))
 
-    # Learned knowledge from YouTube videos
-    learned = knowledge.get("learned", [])
-    if learned:
-        learned_lines = []
-        for item in learned:
-            title = item.get("title", "Unknown video")
-            k = item.get("knowledge", {})
-
-            key_points = k.get("key_points", [])
-            pricing = k.get("pricing", [])
-
-            parts = [f"**{title}**:"]
-            if key_points:
-                for point in key_points[:3]:
-                    parts.append(f"  - {point}" if isinstance(point, str) else f"  - {json.dumps(point, ensure_ascii=False)}")
-            if pricing:
-                for price in (pricing if isinstance(pricing, list) else [pricing]):
-                    parts.append(f"  - Pricing: {price}" if isinstance(price, str) else f"  - Pricing: {json.dumps(price, ensure_ascii=False)}")
-
-            learned_lines.append("\n".join(parts))
-
-        if learned_lines:
-            sections.append("## Knowledge from YouTube Videos\n" + "\n\n".join(learned_lines))
+    # Skip YouTube learned knowledge (saves ~1,000-3,000 tokens — rarely needed for WhatsApp replies)
 
     return "\n\n".join(sections)
