@@ -467,12 +467,20 @@ def _track_wwbun_sync(
     _wwbun_stats["last_sync_time"] = now.strftime("%I:%M %p, %d %b")
     _wwbun_stats["last_sync_details"] = details
 
-    # Recent quality messages (for live preview)
+    # Recent quality pairs (for live preview — customer Q + Ketu reply)
     for msg in quality_previews[:5]:
-        _wwbun_stats["recent_quality_messages"].append({
-            "text": msg[:120] if isinstance(msg, str) else str(msg)[:120],
-            "time": now.strftime("%I:%M %p"),
-        })
+        if isinstance(msg, dict) and msg.get("customer") and msg.get("ketu"):
+            _wwbun_stats["recent_quality_messages"].append({
+                "customer": msg["customer"][:100],
+                "ketu": msg["ketu"][:120],
+                "time": now.strftime("%I:%M %p"),
+            })
+        elif isinstance(msg, str):
+            # Backward compatible: old-style single message
+            _wwbun_stats["recent_quality_messages"].append({
+                "ketu": msg[:120],
+                "time": now.strftime("%I:%M %p"),
+            })
     _wwbun_stats["recent_quality_messages"] = _wwbun_stats["recent_quality_messages"][-20:]
 
     _save_wwbun_stats()
@@ -627,11 +635,36 @@ def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int
     return pairs
 
 
+def _extract_pairs_from_buffer(buffer: list[dict], owner_user_id: str) -> list[dict]:
+    """Extract customer→Ketu pairs from buffer for dashboard preview."""
+    from learner.chat_learner import is_junk_message
+    pairs = []
+    last_customer_msg = None
+    for m in buffer:
+        is_owner = m.get("is_owner", False) or m.get("sender_id") == owner_user_id
+        if not is_owner:
+            if not is_junk_message(m.get("content", "")):
+                last_customer_msg = m.get("content", "")[:100]
+            continue
+        if m.get("is_ai_generated"):
+            continue
+        text = m.get("content", "")
+        if is_junk_message(text) or len(text.split()) < 3:
+            continue
+        if last_customer_msg:
+            pairs.append({"customer": last_customer_msg, "ketu": text[:120]})
+            last_customer_msg = None
+    return pairs
+
+
 def _flush_learning_buffer(owner_user_id: str) -> dict:
     """Flush the buffer: send all accumulated messages to Claude for learning."""
     buffer = _get_learning_buffer()
     if not buffer:
         return {"status": "empty_buffer", "count": 0}
+
+    # Extract pairs for preview BEFORE flushing
+    quality_pairs = _extract_pairs_from_buffer(buffer, owner_user_id)
 
     knowledge = extract_knowledge_from_wwbun_messages(
         messages=buffer,
@@ -699,6 +732,7 @@ def _flush_learning_buffer(owner_user_id: str) -> dict:
         "buffer_flushed": len(buffer),
         "filter_stats": filter_stats,
         "quality_messages": quality_messages,
+        "quality_pairs": quality_pairs,
         "updates_applied": result,
     }
 
@@ -785,6 +819,7 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         )
         filter_stats = learn_result.get("filter_stats", filter_stats)
         quality_messages = learn_result.get("quality_messages", [])
+        quality_pairs_preview = learn_result.get("quality_pairs", [])
         invalidate_cache()
 
         # Track wwbun sync stats for dashboard
@@ -795,7 +830,7 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
             short_count=filter_stats.get("too_short", 0),
             knowledge_count=learn_result.get("updates_applied", {}).get("count", 0),
             enders_learned=ender_result.get("new_enders", 0),
-            quality_previews=quality_messages,
+            quality_previews=quality_pairs_preview or quality_messages,
             details={
                 "filter_stats": filter_stats,
                 "updates_applied": learn_result.get("updates_applied", {}).get("applied", [])[:5],
@@ -823,12 +858,29 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         _, batch_stats = _filter_msgs(req.messages, owner_key="sender_id", owner_value=req.owner_user_id)
         batch_quality = batch_stats.get("kept", 0)
 
-        # Collect quality message previews from this batch
+        # Collect quality PAIRS from this batch (customer Q → Ketu reply)
         batch_quality_previews = []
+        last_customer_msg = None
         for m in req.messages:
             is_owner = m.get("is_owner", False) or m.get("sender_id") == req.owner_user_id
-            if is_owner and not m.get("is_ai_generated") and len(m.get("content", "").split()) >= 3:
-                batch_quality_previews.append(m.get("content", "")[:120])
+            if not is_owner:
+                # Customer message — remember for pairing
+                from learner.chat_learner import is_junk_message
+                if not is_junk_message(m.get("content", "")):
+                    last_customer_msg = m.get("content", "")[:100]
+                continue
+            # Ketu's message — check quality and pair
+            if m.get("is_ai_generated"):
+                continue
+            text = m.get("content", "")
+            if len(text.split()) < 3:
+                continue
+            if last_customer_msg:
+                batch_quality_previews.append({
+                    "customer": last_customer_msg,
+                    "ketu": text[:120],
+                })
+                last_customer_msg = None
 
         # Still track sync stats even when buffering
         _track_wwbun_sync(
