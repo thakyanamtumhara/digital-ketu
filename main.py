@@ -482,14 +482,25 @@ def _track_wwbun_sync(
     _wwbun_stats["last_sync_details"] = details
 
     # Recent quality pairs (for live preview — customer Q + Ketu reply)
-    for msg in quality_previews[:5]:
+    # Take the LAST 5 (newest) pairs, not the first 5 (oldest)
+    # Deduplicate against existing pairs to avoid re-adding same pairs from full buffer
+    existing_keys = set()
+    for existing in _wwbun_stats["recent_quality_messages"]:
+        key = (existing.get("customer", ""), existing.get("ketu", ""))
+        existing_keys.add(key)
+
+    for msg in quality_previews[-5:]:
         if isinstance(msg, dict) and msg.get("customer") and msg.get("ketu"):
+            key = (msg["customer"][:100], msg["ketu"][:120])
+            if key in existing_keys:
+                continue  # Skip duplicate pair
             _wwbun_stats["recent_quality_messages"].append({
                 "customer": msg["customer"][:100],
                 "ketu": msg["ketu"][:120],
                 "ai": msg.get("ai", False),
                 "time": now.strftime("%I:%M %p"),
             })
+            existing_keys.add(key)
         elif isinstance(msg, str):
             # Backward compatible: old-style single message
             _wwbun_stats["recent_quality_messages"].append({
@@ -1128,9 +1139,10 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
             f"total={batch_stats.get('total', 0)}"
         )
 
-        # Collect quality PAIRS from this batch for dashboard preview
-        # Uses _extract_pairs_from_buffer which handles broken sender_id data
-        batch_quality_previews = _extract_pairs_from_buffer(req.messages, req.owner_user_id)
+        # Collect quality PAIRS from FULL buffer for dashboard preview
+        # Using full buffer (not just current batch) gives much better pair detection
+        # since small batches often contain only one side of the conversation
+        batch_quality_previews = _extract_pairs_from_buffer(buffer, req.owner_user_id)
         logger.info(
             f"[wwbun-sync PAIRS] batch={len(req.messages)} msgs, "
             f"broken_sids={_all_sender_ids_same(req.messages)}, "
