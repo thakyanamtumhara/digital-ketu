@@ -1,20 +1,18 @@
-"""5 End-to-End Test Scenarios: Edit → Learn Flow
+"""5 End-to-End Test Scenarios: Edit → Save → Learn (NO send to buyer)
 
 Tests the complete flow:
 1. Customer sends message
 2. AI replies (possibly wrong)
 3. Ketu edits the AI reply
-4. Digital Ketu receives the edited reply
+4. Correction is SAVED locally — NOT sent/edited to buyer on WhatsApp
 5. Digital Ketu learns from the correction
 
-These tests mock the WhatsApp API and Anthropic API to run locally
-without external dependencies.
+KEY BEHAVIOR: The buyer never receives a second message or edit.
+Digital Ketu learns silently and gives better replies next time.
 """
 
-import asyncio
 import json
 import time
-import threading
 from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
@@ -29,37 +27,6 @@ os.environ.setdefault("WHATSAPP_VERIFY_TOKEN", "test-verify")
 os.environ.setdefault("AUTO_REPLY_ENABLED", "true")
 
 from httpx import AsyncClient, ASGITransport
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_mock_anthropic_response(text: str):
-    """Create a mock Anthropic API response."""
-    mock_resp = MagicMock()
-    mock_resp.content = [MagicMock(text=text)]
-    mock_resp.model = "claude-haiku-4-5-20251001"
-    mock_resp.usage = MagicMock(input_tokens=100, output_tokens=50)
-    return mock_resp
-
-
-def _correction_analysis_response(
-    what_went_wrong: str,
-    new_faq_q: str = "",
-    new_faq_a: str = "",
-    new_rule: str = "",
-    style_lesson: str = "",
-):
-    """Build a mock correction analysis JSON response."""
-    faq = {"question": new_faq_q, "answer": new_faq_a} if new_faq_q else None
-    return json.dumps({
-        "new_faq": faq,
-        "style_lesson": style_lesson or None,
-        "new_rule": new_rule or None,
-        "example_conversation": {"customer": new_faq_q or "test", "reply": new_faq_a or "test"},
-        "what_went_wrong": what_went_wrong,
-    })
 
 
 # ---------------------------------------------------------------------------
@@ -78,14 +45,12 @@ def _reset_state():
 
 @pytest.fixture
 def app():
-    """Import the FastAPI app."""
     from main import app as fastapi_app
     return fastapi_app
 
 
 @pytest_asyncio.fixture
 async def client(app):
-    """Create an async test client."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -113,27 +78,26 @@ def _simulate_conversation_log(phone: str, name: str, customer_msg: str, ai_repl
 
 
 # ===========================================================================
-# TEST 1: Wrong Price — AI says ₹170, Ketu corrects to ₹190
+# TEST 1: Wrong Price — Ketu corrects, buyer gets NOTHING, DK learns
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_1_wrong_price_correction(client):
-    """Scenario: Customer asks t-shirt rate, AI gives wrong price.
-    Ketu edits with correct price. Digital Ketu should learn.
+async def test_1_wrong_price_no_send_to_buyer(client):
+    """Customer asks rate, AI gives wrong price ₹170.
+    Ketu edits to ₹190. Buyer should NOT receive any message.
+    Digital Ketu should learn the correct price.
     """
     phone = "919876543210"
     customer_msg = "Bhai round neck t-shirt ka rate kya hai?"
     ai_reply = "Ji bhai, round neck t-shirt ₹170/piece hai. MOQ 50 pieces."
     ketu_correction = "Bhai rate ₹190/piece hai, MOQ 50 pieces."
 
-    # Step 1: Simulate AI replied
     _simulate_ai_sent_message(phone, ai_reply)
     _simulate_conversation_log(phone, "Ravi", customer_msg, ai_reply)
 
-    # Step 2: Ketu edits the message
     learned_data = {}
 
-    def mock_learn_from_correction(**kwargs):
+    def mock_learn(**kwargs):
         learned_data.update(kwargs)
         return {
             "status": "learned",
@@ -142,44 +106,45 @@ async def test_1_wrong_price_correction(client):
             "count": 1,
         }
 
-    with patch("integrations.whatsapp.sender.edit_message", new_callable=AsyncMock) as mock_edit, \
-         patch("learner.realtime_learner.learn_from_correction", side_effect=mock_learn_from_correction):
-
-        mock_edit.return_value = {"messages": [{"id": "wamid_edited_1"}]}
+    with patch("integrations.whatsapp.sender.edit_message", new_callable=AsyncMock) as mock_wa_edit, \
+         patch("integrations.whatsapp.sender.edit_last_message", new_callable=AsyncMock) as mock_wa_edit_last, \
+         patch("integrations.whatsapp.sender.send_text_message", new_callable=AsyncMock) as mock_wa_send, \
+         patch("learner.realtime_learner.learn_from_correction", side_effect=mock_learn):
 
         resp = await client.post("/api/whatsapp/edit", json={
             "phone": phone,
             "new_text": ketu_correction,
-            "message_id": "wamid_test_123",
         })
+
+        # CRITICAL: No WhatsApp API calls should be made (no send, no edit)
+        mock_wa_edit.assert_not_called()
+        mock_wa_edit_last.assert_not_called()
+        mock_wa_send.assert_not_called()
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "edited"
+    assert data["status"] == "saved"
+    assert data["sent_to_customer"] is False
     assert data["learning"] == "correction sent to learner"
-    assert "₹170" in data["original_ai_reply"]
-    assert "round neck" in data["customer_question"].lower() or "rate" in data["customer_question"].lower()
 
-    # Wait for background thread
     time.sleep(0.5)
 
-    # Verify learn_from_correction was called with correct data
+    # Digital Ketu learned the correction
     assert learned_data.get("customer_message") == customer_msg
-    assert learned_data.get("ai_reply") == ai_reply
     assert learned_data.get("ketu_correction") == ketu_correction
     assert learned_data.get("customer_phone") == phone
 
-    print("TEST 1 PASSED: Wrong price → Ketu edited → Digital Ketu learned correct price")
+    print("TEST 1 PASSED: Wrong price → saved + learned → buyer got NOTHING")
 
 
 # ===========================================================================
-# TEST 2: Wrong Product Info — AI gives wrong GSM
+# TEST 2: Wrong GSM — Save only, no WhatsApp edit, DK learns
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_2_wrong_product_info_correction(client):
-    """Scenario: Customer asks about hoodie GSM, AI says 300 GSM.
-    Ketu corrects to 380 GSM. Digital Ketu should learn.
+async def test_2_wrong_gsm_no_send_to_buyer(client):
+    """Customer asks hoodie GSM, AI says 300. Ketu corrects to 380.
+    NO message/edit to buyer. Digital Ketu learns correct GSM.
     """
     phone = "919988776655"
     customer_msg = "Hoodie ka GSM kitna hai?"
@@ -195,48 +160,50 @@ async def test_2_wrong_product_info_correction(client):
         learned_data.update(kwargs)
         return {
             "status": "learned",
-            "what_went_wrong": "AI quoted wrong GSM (300 instead of 380)",
+            "what_went_wrong": "Wrong GSM (300 instead of 380)",
             "updates_applied": ["product_info_updated"],
             "count": 1,
         }
 
-    with patch("integrations.whatsapp.sender.edit_last_message", new_callable=AsyncMock) as mock_edit, \
+    with patch("integrations.whatsapp.sender.edit_message", new_callable=AsyncMock) as mock_wa_edit, \
+         patch("integrations.whatsapp.sender.edit_last_message", new_callable=AsyncMock) as mock_wa_edit_last, \
+         patch("integrations.whatsapp.sender.send_text_message", new_callable=AsyncMock) as mock_wa_send, \
          patch("learner.realtime_learner.learn_from_correction", side_effect=mock_learn):
 
-        mock_edit.return_value = {"messages": [{"id": "wamid_edited_2"}]}
-
-        # Edit without message_id → uses edit_last_message
         resp = await client.post("/api/whatsapp/edit", json={
             "phone": phone,
             "new_text": ketu_correction,
         })
 
-    assert resp.status_code == 200
+        # NO WhatsApp calls
+        mock_wa_edit.assert_not_called()
+        mock_wa_edit_last.assert_not_called()
+        mock_wa_send.assert_not_called()
+
     data = resp.json()
-    assert data["status"] == "edited"
+    assert data["status"] == "saved"
+    assert data["sent_to_customer"] is False
     assert data["learning"] == "correction sent to learner"
 
     time.sleep(0.5)
-
     assert learned_data.get("ai_reply") == ai_reply
     assert learned_data.get("ketu_correction") == ketu_correction
-    assert "Hoodie" in learned_data.get("customer_message", "")
 
-    print("TEST 2 PASSED: Wrong GSM → Ketu edited → Digital Ketu learned correct GSM")
+    print("TEST 2 PASSED: Wrong GSM → saved + learned → buyer got NOTHING")
 
 
 # ===========================================================================
-# TEST 3: Wrong Tone — AI too formal, Ketu wants casual Hinglish
+# TEST 3: Wrong Tone — Save correction, no send, DK learns style
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_3_wrong_tone_correction(client):
-    """Scenario: AI replies too formally. Ketu edits with casual Hinglish tone.
-    Digital Ketu should learn the style correction.
+async def test_3_wrong_tone_no_send_to_buyer(client):
+    """AI replies too formal English. Ketu corrects to casual Hinglish.
+    Buyer should NOT get a second message. DK learns the style.
     """
     phone = "919112233445"
     customer_msg = "Shipping kitne din mein hoga?"
-    ai_reply = "Dear customer, shipping will take approximately 3-5 business days to your location."
+    ai_reply = "Dear customer, shipping will take approximately 3-5 business days."
     ketu_correction = "Bhai 3-4 din mein aa jayega, courier se bhejte hai."
 
     _simulate_ai_sent_message(phone, ai_reply)
@@ -248,48 +215,49 @@ async def test_3_wrong_tone_correction(client):
         learned_data.update(kwargs)
         return {
             "status": "learned",
-            "what_went_wrong": "AI replied too formally in English instead of casual Hinglish",
+            "what_went_wrong": "Too formal English, should be casual Hinglish",
             "updates_applied": ["style_updated", "rule_added"],
             "count": 2,
         }
 
-    with patch("integrations.whatsapp.sender.edit_message", new_callable=AsyncMock) as mock_edit, \
+    with patch("integrations.whatsapp.sender.edit_message", new_callable=AsyncMock) as mock_wa_edit, \
+         patch("integrations.whatsapp.sender.edit_last_message", new_callable=AsyncMock) as mock_wa_edit_last, \
+         patch("integrations.whatsapp.sender.send_text_message", new_callable=AsyncMock) as mock_wa_send, \
          patch("learner.realtime_learner.learn_from_correction", side_effect=mock_learn):
-
-        mock_edit.return_value = {"messages": [{"id": "wamid_edited_3"}]}
 
         resp = await client.post("/api/whatsapp/edit", json={
             "phone": phone,
             "new_text": ketu_correction,
-            "message_id": "wamid_test_123",
         })
 
-    assert resp.status_code == 200
+        # NO WhatsApp calls — buyer not bothered
+        mock_wa_edit.assert_not_called()
+        mock_wa_edit_last.assert_not_called()
+        mock_wa_send.assert_not_called()
+
     data = resp.json()
-    assert data["status"] == "edited"
-    assert data["learning"] == "correction sent to learner"
+    assert data["status"] == "saved"
+    assert data["sent_to_customer"] is False
 
     time.sleep(0.5)
-
-    assert learned_data.get("ai_reply") == ai_reply
     assert learned_data.get("ketu_correction") == ketu_correction
 
-    print("TEST 3 PASSED: Wrong tone → Ketu edited casual → Digital Ketu learned style")
+    print("TEST 3 PASSED: Wrong tone → saved + learned → buyer got NOTHING")
 
 
 # ===========================================================================
-# TEST 4: Missing Info — AI didn't mention MOQ/colors
+# TEST 4: Missing Info — DK learns, buyer gets nothing
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_4_missing_info_correction(client):
-    """Scenario: Customer asks about polo t-shirts. AI gives price but
-    forgets MOQ and available colors. Ketu edits with complete info.
+async def test_4_missing_info_no_send_to_buyer(client):
+    """AI gives only price, forgets MOQ/colors/sizes.
+    Ketu corrects with full info. Buyer NOT messaged again.
     """
     phone = "919555666777"
     customer_msg = "Polo t-shirt ke baare mein batao"
     ai_reply = "Ji bhai, polo t-shirt ₹220/piece hai."
-    ketu_correction = "Bhai polo t-shirt ₹220/piece, MOQ 100 pieces. Colors: white, black, navy, grey, maroon. Sizes S to XXL available hai."
+    ketu_correction = "Bhai polo ₹220/piece, MOQ 100. Colors: white, black, navy, grey, maroon. S to XXL."
 
     _simulate_ai_sent_message(phone, ai_reply)
     _simulate_conversation_log(phone, "Manoj", customer_msg, ai_reply)
@@ -300,94 +268,100 @@ async def test_4_missing_info_correction(client):
         learned_data.update(kwargs)
         return {
             "status": "learned",
-            "what_went_wrong": "AI gave incomplete info — missing MOQ, colors, and sizes",
+            "what_went_wrong": "Missing MOQ, colors, sizes",
             "updates_applied": ["faq_added", "product_info_updated"],
             "count": 2,
         }
 
-    with patch("integrations.whatsapp.sender.edit_message", new_callable=AsyncMock) as mock_edit, \
+    with patch("integrations.whatsapp.sender.edit_message", new_callable=AsyncMock) as mock_wa_edit, \
+         patch("integrations.whatsapp.sender.edit_last_message", new_callable=AsyncMock) as mock_wa_edit_last, \
+         patch("integrations.whatsapp.sender.send_text_message", new_callable=AsyncMock) as mock_wa_send, \
          patch("learner.realtime_learner.learn_from_correction", side_effect=mock_learn):
-
-        mock_edit.return_value = {"messages": [{"id": "wamid_edited_4"}]}
 
         resp = await client.post("/api/whatsapp/edit", json={
             "phone": phone,
             "new_text": ketu_correction,
-            "message_id": "wamid_test_123",
         })
 
-    assert resp.status_code == 200
+        # NO WhatsApp calls
+        mock_wa_edit.assert_not_called()
+        mock_wa_edit_last.assert_not_called()
+        mock_wa_send.assert_not_called()
+
     data = resp.json()
-    assert data["status"] == "edited"
+    assert data["status"] == "saved"
+    assert data["sent_to_customer"] is False
     assert data["learning"] == "correction sent to learner"
 
     time.sleep(0.5)
-
-    assert learned_data.get("ketu_correction") == ketu_correction
     assert "polo" in learned_data.get("customer_message", "").lower()
 
-    print("TEST 4 PASSED: Missing info → Ketu added MOQ/colors → Digital Ketu learned complete answer")
+    print("TEST 4 PASSED: Missing info → saved + learned → buyer got NOTHING")
 
 
 # ===========================================================================
-# TEST 5: No Learning Needed — Edit same text or no conversation found
+# TEST 5: Same text / no conversation — no learning, no send
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_5_no_learning_when_same_text(client):
-    """Scenario: Ketu edits the message but the new text is the same as AI reply.
-    OR no conversation log found. Digital Ketu should NOT trigger learning.
+async def test_5_no_learning_no_send_when_same_text(client):
+    """Part A: Ketu submits same text as AI reply — no learning, no send.
+    Part B: No conversation log found — no learning, no send.
+    Both cases: buyer gets NOTHING.
     """
+    # --- Part A: Same text ---
     phone = "919444333222"
     ai_reply = "Ji bhai, available hai."
 
     _simulate_ai_sent_message(phone, ai_reply)
-    # Simulate a conversation log
     _simulate_conversation_log(phone, "Test", "Available hai kya?", ai_reply)
 
-    with patch("integrations.whatsapp.sender.edit_message", new_callable=AsyncMock) as mock_edit, \
+    with patch("integrations.whatsapp.sender.edit_message", new_callable=AsyncMock) as mock_wa_edit, \
+         patch("integrations.whatsapp.sender.edit_last_message", new_callable=AsyncMock) as mock_wa_edit_last, \
+         patch("integrations.whatsapp.sender.send_text_message", new_callable=AsyncMock) as mock_wa_send, \
          patch("learner.realtime_learner.learn_from_correction") as mock_learn:
 
-        mock_edit.return_value = {"messages": [{"id": "wamid_edited_5"}]}
-
-        # Edit with SAME text as AI reply — no learning should happen
         resp = await client.post("/api/whatsapp/edit", json={
             "phone": phone,
-            "new_text": ai_reply,  # Same text!
-            "message_id": "wamid_test_123",
+            "new_text": ai_reply,  # SAME text
         })
 
-    assert resp.status_code == 200
+        mock_wa_edit.assert_not_called()
+        mock_wa_edit_last.assert_not_called()
+        mock_wa_send.assert_not_called()
+
     data = resp.json()
-    assert data["status"] == "edited"
-    # Should NOT trigger learning since text is the same
-    assert data.get("learning") != "correction sent to learner"
+    assert data["status"] == "saved"
+    assert data["sent_to_customer"] is False
+    assert "same text" in data["learning"].lower() or "no change" in data["learning"].lower()
 
     time.sleep(0.3)
     mock_learn.assert_not_called()
 
-    # --- Part B: No conversation log for this phone ---
+    # --- Part B: No conversation log ---
     phone2 = "919111000999"
     _simulate_ai_sent_message(phone2, "Some reply")
-    # NO conversation log for phone2
 
-    with patch("integrations.whatsapp.sender.edit_message", new_callable=AsyncMock) as mock_edit2, \
+    with patch("integrations.whatsapp.sender.edit_message", new_callable=AsyncMock) as mock_wa_edit2, \
+         patch("integrations.whatsapp.sender.edit_last_message", new_callable=AsyncMock) as mock_wa_edit_last2, \
+         patch("integrations.whatsapp.sender.send_text_message", new_callable=AsyncMock) as mock_wa_send2, \
          patch("learner.realtime_learner.learn_from_correction") as mock_learn2:
-
-        mock_edit2.return_value = {"messages": [{"id": "wamid_edited_5b"}]}
 
         resp2 = await client.post("/api/whatsapp/edit", json={
             "phone": phone2,
             "new_text": "Corrected reply",
-            "message_id": "wamid_test_123",
         })
 
-    assert resp2.status_code == 200
+        mock_wa_edit2.assert_not_called()
+        mock_wa_edit_last2.assert_not_called()
+        mock_wa_send2.assert_not_called()
+
     data2 = resp2.json()
-    assert data2["status"] == "edited"
-    assert data2.get("learning") == "no matching conversation found"
+    assert data2["status"] == "saved"
+    assert data2["sent_to_customer"] is False
+    assert "no matching conversation" in data2["learning"].lower()
 
     time.sleep(0.3)
     mock_learn2.assert_not_called()
 
-    print("TEST 5 PASSED: Same text / no conversation → Digital Ketu skipped learning (correct)")
+    print("TEST 5 PASSED: Same text / no convo → no learning, no send → buyer got NOTHING")

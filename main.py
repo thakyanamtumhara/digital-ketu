@@ -2022,111 +2022,121 @@ async def send_all_followups():
 class EditMessageRequest(BaseModel):
     phone: str
     new_text: str
-    message_id: str = ""  # Optional — if empty, edits the last sent message
+    message_id: str = ""
+    send_to_customer: bool = False  # Default: DO NOT send/edit to buyer
 
 
 @app.post("/api/whatsapp/edit")
 async def edit_whatsapp_message(req: EditMessageRequest):
-    """Edit a previously sent WhatsApp message AND learn from the correction.
+    """Save Ketu's correction and learn from it — WITHOUT resending to buyer.
 
-    Works within 15 minutes of sending (WhatsApp API limit).
-    Customer sees the updated message with "(edited)" label.
+    When AI replies wrong and Ketu edits:
+    1. Save the correction locally
+    2. Digital Ketu learns from it (new FAQ, style, rules)
+    3. Mark conversation as corrected
+    4. DO NOT send/edit anything to the buyer (no message flooding)
 
-    If message_id is empty, edits the LAST message sent to that phone.
+    The buyer already got the AI reply. Sending again = unnecessary messages.
+    Digital Ketu silently learns and gives better replies next time.
 
-    LEARNING: When an AI reply is edited, Digital Ketu treats this as a
-    correction — looks up the original AI reply and the customer's question,
-    then learns from what went wrong. This is the strongest learning signal.
+    Set send_to_customer=True ONLY if you explicitly want to edit on WhatsApp.
     """
     from integrations.whatsapp.sender import edit_message, edit_last_message, get_last_sent_message
     from core.conversation_log import get_last_ai_reply, mark_corrected
     from learner.realtime_learner import learn_from_correction
 
-    # Get the original AI reply BEFORE editing (needed for learning)
-    original_ai_reply = get_last_sent_message(req.phone)
-    original_text = original_ai_reply["text"] if original_ai_reply else ""
+    # Get the original AI reply (needed for learning)
+    original_ai_data = get_last_sent_message(req.phone)
+    original_text = original_ai_data["text"] if original_ai_data else ""
 
-    if req.message_id:
-        result = await edit_message(to=req.phone, message_id=req.message_id, new_text=req.new_text)
-    else:
-        result = await edit_last_message(to=req.phone, new_text=req.new_text)
+    # Look up what the customer asked and what AI replied
+    last_convo = get_last_ai_reply(req.phone)
 
-    if result:
-        log_activity(
-            source="whatsapp",
-            action="message-edited",
-            details={
-                "customer_phone": req.phone[-4:] if req.phone else "unknown",
-                "new_text": req.new_text[:100],
-                "original_text": original_text[:100],
-            },
-        )
+    # --- OPTIONAL: Edit on WhatsApp (only if Ketu explicitly wants) ---
+    whatsapp_edited = False
+    if req.send_to_customer:
+        if req.message_id:
+            result = await edit_message(to=req.phone, message_id=req.message_id, new_text=req.new_text)
+        else:
+            result = await edit_last_message(to=req.phone, new_text=req.new_text)
+        whatsapp_edited = result is not None
 
-        # --- CORRECTION LEARNING ---
-        # Look up what the customer asked and what AI replied
-        last_convo = get_last_ai_reply(req.phone)
-        if last_convo and original_text:
-            customer_message = last_convo.get("customer_message", "")
-            ai_reply = last_convo.get("ai_reply", original_text)
-            customer_name = last_convo.get("customer_name", "")
+    # --- CORRECTION LEARNING (always happens, no message sent to buyer) ---
+    if last_convo and (original_text or last_convo.get("ai_reply")):
+        customer_message = last_convo.get("customer_message", "")
+        ai_reply = last_convo.get("ai_reply", original_text)
+        customer_name = last_convo.get("customer_name", "")
 
-            # Only learn if the edit is actually different from the AI reply
-            if req.new_text.strip() != ai_reply.strip() and customer_message:
-                # Mark conversation as corrected
-                mark_corrected(req.phone)
+        # Only learn if the edit is actually different from the AI reply
+        if req.new_text.strip() != ai_reply.strip() and customer_message:
+            # Mark conversation as corrected
+            mark_corrected(req.phone)
 
-                # Learn from the correction in background thread
-                import threading
-                def _learn_from_edit():
-                    try:
-                        learn_result = learn_from_correction(
-                            customer_message=customer_message,
-                            ai_reply=ai_reply,
-                            ketu_correction=req.new_text,
-                            customer_phone=req.phone,
-                            customer_name=customer_name,
-                        )
-                        if learn_result.get("status") == "learned":
-                            log_activity(
-                                source="correction-learner",
-                                action="learned-from-edit",
-                                details={
-                                    "customer_message": customer_message[:80],
-                                    "ai_reply": ai_reply[:80],
-                                    "ketu_correction": req.new_text[:80],
-                                    "what_went_wrong": learn_result.get("what_went_wrong", ""),
-                                    "updates_applied": learn_result.get("updates_applied", []),
-                                    "via": "whatsapp-edit",
-                                },
-                                items_count=learn_result.get("count", 0),
-                            )
-                            logger.info(
-                                f"[Edit→Learn] Learned from edit for ...{req.phone[-4:]}: "
-                                f"{learn_result.get('what_went_wrong', 'unknown')}"
-                            )
-                    except Exception as e:
-                        logger.error(f"[Edit→Learn] Learning failed (non-fatal): {e}")
-
-                thread = threading.Thread(target=_learn_from_edit, daemon=True)
-                thread.start()
-
-                return {
-                    "status": "edited",
-                    "learning": "correction sent to learner",
+            log_activity(
+                source="whatsapp",
+                action="correction-saved",
+                details={
+                    "customer_phone": req.phone[-4:] if req.phone else "unknown",
+                    "ketu_correction": req.new_text[:100],
                     "original_ai_reply": ai_reply[:100],
-                    "customer_question": customer_message[:100],
-                    "result": result,
-                }
+                    "sent_to_customer": whatsapp_edited,
+                },
+            )
 
-        return {"status": "edited", "learning": "no matching conversation found", "result": result}
+            # Learn from the correction in background thread
+            import threading
+            def _learn_from_edit():
+                try:
+                    learn_result = learn_from_correction(
+                        customer_message=customer_message,
+                        ai_reply=ai_reply,
+                        ketu_correction=req.new_text,
+                        customer_phone=req.phone,
+                        customer_name=customer_name,
+                    )
+                    if learn_result.get("status") == "learned":
+                        log_activity(
+                            source="correction-learner",
+                            action="learned-from-edit",
+                            details={
+                                "customer_message": customer_message[:80],
+                                "ai_reply": ai_reply[:80],
+                                "ketu_correction": req.new_text[:80],
+                                "what_went_wrong": learn_result.get("what_went_wrong", ""),
+                                "updates_applied": learn_result.get("updates_applied", []),
+                                "via": "whatsapp-edit",
+                            },
+                            items_count=learn_result.get("count", 0),
+                        )
+                        logger.info(
+                            f"[Edit→Learn] Learned from edit for ...{req.phone[-4:]}: "
+                            f"{learn_result.get('what_went_wrong', 'unknown')}"
+                        )
+                except Exception as e:
+                    logger.error(f"[Edit→Learn] Learning failed (non-fatal): {e}")
 
-    # Check why it failed
-    last = get_last_sent_message(req.phone)
-    if not last:
-        return {"status": "error", "detail": "No sent message found for this phone number"}
-    if not last["editable"]:
-        return {"status": "error", "detail": f"Edit window expired ({last['seconds_ago']}s ago, limit is 15 min)"}
-    return {"status": "error", "detail": "Edit failed — check error logs"}
+            thread = threading.Thread(target=_learn_from_edit, daemon=True)
+            thread.start()
+
+            return {
+                "status": "saved",
+                "learning": "correction sent to learner",
+                "sent_to_customer": whatsapp_edited,
+                "original_ai_reply": ai_reply[:100],
+                "customer_question": customer_message[:100],
+            }
+
+        return {
+            "status": "saved",
+            "learning": "no change detected (same text)",
+            "sent_to_customer": whatsapp_edited,
+        }
+
+    return {
+        "status": "saved",
+        "learning": "no matching conversation found — correction noted",
+        "sent_to_customer": whatsapp_edited,
+    }
 
 
 @app.get("/api/whatsapp/last-sent/{phone}")
