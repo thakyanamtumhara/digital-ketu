@@ -571,15 +571,29 @@ async def wwbun_debug():
             "fields": list(m.keys()),
         })
 
-    quality_count = _count_quality_owner_messages(buffer, owner_user_id) if owner_user_id else -1
+    # Use the shared pair extraction
+    pairs = _extract_conversation_pairs(buffer, owner_user_id) if owner_user_id else []
+    quality_count = len(pairs)
 
     broken_sids = _all_sender_ids_same(buffer) if buffer else False
+    is_owner_reliable = _is_owner_field_reliable(buffer) if buffer else False
+
+    # Unique sender_ids for diagnosis
+    unique_sids = list(set(str(m.get("sender_id", "")) for m in buffer)) if buffer else []
 
     return {
         "owner_user_id": owner_user_id,
         "buffer_size": len(buffer),
         "broken_sender_ids": broken_sids,
+        "is_owner_field_reliable": is_owner_reliable,
+        "detection_mode": (
+            "word_count_heuristic" if broken_sids and not is_owner_reliable
+            else "is_owner_flag" if broken_sids and is_owner_reliable
+            else "sender_id_match"
+        ),
+        "unique_sender_ids": unique_sids,
         "quality_pairs_in_buffer": quality_count,
+        "pairs_preview": [{"c": p["customer"][:50], "k": p["ketu"][:50]} for p in pairs[:5]],
         "threshold": _LEARNING_BUFFER_MIN_PAIRS,
         "stats_from_db": {
             "total_quality": _wwbun_stats["total_quality_messages"],
@@ -593,30 +607,39 @@ async def wwbun_debug():
     }
 
 
-def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
-    """Extract customer→Ketu pairs from wwbun messages and learn ketu-only patterns.
+def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> list[dict]:
+    """Single source of truth for extracting customer→Ketu pairs.
 
-    Groups messages by conversation (same chat). For each Ketu manual reply,
-    finds the preceding customer message to form a Q→A pair. Feeds these pairs
-    to the ketu-only learner which detects if Ketu gave info only he could know.
+    Used by BOTH dashboard display AND ketu-only learning. ONE function, no duplication.
+
+    Detection priority:
+    1. sender_id match → most reliable
+    2. is_owner flag → if sender_ids are broken but flag is mixed (reliable)
+    3. Word-count heuristic → last resort when everything is broken
+
+    CRITICAL: broken_sids and is_owner reliability are checked BUFFER-WIDE,
+    not per-chat. Per-chat groups (2-3 msgs) are too small for reliable detection.
     """
+    # Detect broken data BUFFER-WIDE (more statistically robust than per-chat)
+    broken_sids = _all_sender_ids_same(messages)
+    use_flag = broken_sids and _is_owner_field_reliable(messages)
+
+    if broken_sids:
+        if use_flag:
+            logger.info("[extract-pairs] sender_ids broken but is_owner field reliable → using is_owner flag")
+        else:
+            logger.warning("[extract-pairs] sender_ids AND is_owner BOTH unreliable → word-count heuristic")
+
     # Group by chat_id (same conversation)
     by_chat: dict[str, list] = {}
     for m in messages:
         chat_id = m.get("chat_id", m.get("remote_jid", "unknown"))
         by_chat.setdefault(chat_id, []).append(m)
 
-    pairs_checked = 0
+    all_pairs = []
     for chat_id, chat_msgs in by_chat.items():
-        # Sort by timestamp if available
         chat_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
-
         last_customer_msg = ""
-        customer_phone = chat_id.split("@")[0] if "@" in chat_id else chat_id
-
-        # Detect if sender_ids are broken (all same) for this chat
-        broken_sids = _all_sender_ids_same(chat_msgs)
-        use_flag = broken_sids and _is_owner_field_reliable(chat_msgs)
 
         for msg in chat_msgs:
             content = (msg.get("content", "") or msg.get("text", "") or msg.get("body", "")).strip()
@@ -626,33 +649,51 @@ def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
             is_ai = _safe_bool(msg.get("is_ai_generated"))
 
             if broken_sids and not use_flag:
-                # Last resort heuristic: short messages (≤4 words) = customer, longer = Ketu
+                # Last resort heuristic: short (≤4 words) = customer, long (5+ words) = Ketu
                 words = len(content.split())
                 if words <= 4:
                     last_customer_msg = content
-                elif words >= 3 and not is_ai and last_customer_msg:
-                    learn_fn(
-                        customer_message=last_customer_msg,
-                        ketu_reply=content,
-                        customer_phone=customer_phone,
-                    )
-                    pairs_checked += 1
+                elif words >= 5 and not is_ai and last_customer_msg:
+                    all_pairs.append({
+                        "customer": last_customer_msg[:100],
+                        "ketu": content[:120],
+                        "ai": is_ai,
+                        "chat_id": chat_id,
+                    })
                     last_customer_msg = ""
             else:
                 is_owner = _is_owner_by_flag(msg) if use_flag else _is_owner_message(msg, owner_user_id)
                 if not is_owner:
                     last_customer_msg = content
                 elif is_owner and not is_ai and last_customer_msg:
-                    learn_fn(
-                        customer_message=last_customer_msg,
-                        ketu_reply=content,
-                        customer_phone=customer_phone,
-                    )
-                    pairs_checked += 1
+                    all_pairs.append({
+                        "customer": last_customer_msg[:100],
+                        "ketu": content[:120],
+                        "ai": is_ai,
+                        "chat_id": chat_id,
+                    })
                     last_customer_msg = ""
 
-    if pairs_checked > 0:
-        logger.info(f"[KetuOnly] Checked {pairs_checked} customer→Ketu pairs from wwbun sync")
+    logger.info(
+        f"[extract-pairs] msgs={len(messages)}, chats={len(by_chat)}, "
+        f"pairs={len(all_pairs)}, broken_sids={broken_sids}, use_flag={use_flag}"
+    )
+    return all_pairs
+
+
+def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
+    """Learn ketu-only patterns from extracted pairs. Uses _extract_conversation_pairs."""
+    pairs = _extract_conversation_pairs(messages, owner_user_id)
+    for p in pairs:
+        if not p.get("ai"):  # Only learn from manual (non-AI) replies
+            customer_phone = p.get("chat_id", "unknown").split("@")[0]
+            learn_fn(
+                customer_message=p["customer"],
+                ketu_reply=p["ketu"],
+                customer_phone=customer_phone,
+            )
+    if pairs:
+        logger.info(f"[KetuOnly] Checked {len(pairs)} customer→Ketu pairs from wwbun sync")
 
 
 # --- Message Accumulator for Batch Learning ---
@@ -795,61 +836,8 @@ def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int
 
 
 def _extract_pairs_from_buffer(buffer: list[dict], owner_user_id: str) -> list[dict]:
-    """Extract customer→Ketu pairs from buffer for dashboard preview.
-
-    Uses EXACT same logic as _learn_ketu_only_pairs — group by chat,
-    detect owner (sender_id → is_owner flag → word-count heuristic),
-    pair customer question → Ketu reply.
-    """
-    # Group by chat_id (same as _learn_ketu_only_pairs)
-    by_chat: dict[str, list] = {}
-    for m in buffer:
-        chat_id = m.get("chat_id", m.get("remote_jid", "unknown"))
-        by_chat.setdefault(chat_id, []).append(m)
-
-    all_pairs = []
-    for chat_id, chat_msgs in by_chat.items():
-        chat_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
-
-        last_customer_msg = ""
-        broken_sids = _all_sender_ids_same(chat_msgs)
-        use_flag = broken_sids and _is_owner_field_reliable(chat_msgs)
-
-        for msg in chat_msgs:
-            content = (msg.get("content", "") or msg.get("text", "") or msg.get("body", "")).strip()
-            if not content:
-                continue
-            is_ai = _safe_bool(msg.get("is_ai_generated"))
-
-            if broken_sids and not use_flag:
-                # Same heuristic as _learn_ketu_only_pairs: short=customer, long=Ketu
-                words = len(content.split())
-                if words <= 4:
-                    last_customer_msg = content
-                elif words >= 3 and last_customer_msg:
-                    all_pairs.append({
-                        "customer": last_customer_msg[:100],
-                        "ketu": content[:120],
-                        "ai": is_ai,
-                    })
-                    last_customer_msg = ""
-            else:
-                is_owner = _is_owner_by_flag(msg) if use_flag else _is_owner_message(msg, owner_user_id)
-                if not is_owner:
-                    last_customer_msg = content
-                elif is_owner and last_customer_msg:
-                    all_pairs.append({
-                        "customer": last_customer_msg[:100],
-                        "ketu": content[:120],
-                        "ai": is_ai,
-                    })
-                    last_customer_msg = ""
-
-    logger.info(
-        f"[extract-pairs] buffer={len(buffer)} msgs, chats={len(by_chat)}, "
-        f"pairs={len(all_pairs)}"
-    )
-    return all_pairs
+    """Extract pairs from buffer — thin wrapper around _extract_conversation_pairs."""
+    return _extract_conversation_pairs(buffer, owner_user_id)
 
 
 def _flush_learning_buffer(owner_user_id: str) -> dict:
