@@ -473,6 +473,7 @@ def _track_wwbun_sync(
             _wwbun_stats["recent_quality_messages"].append({
                 "customer": msg["customer"][:100],
                 "ketu": msg["ketu"][:120],
+                "ai": msg.get("ai", False),
                 "time": now.strftime("%I:%M %p"),
             })
         elif isinstance(msg, str):
@@ -636,23 +637,24 @@ def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int
 
 
 def _extract_pairs_from_buffer(buffer: list[dict], owner_user_id: str) -> list[dict]:
-    """Extract customer→Ketu pairs from buffer for dashboard preview."""
-    from learner.chat_learner import is_junk_message
+    """Extract customer→Ketu pairs from buffer for dashboard preview.
+    Includes AI-generated replies so user can see all conversations.
+    """
     pairs = []
     last_customer_msg = None
     for m in buffer:
         is_owner = m.get("is_owner", False) or m.get("sender_id") == owner_user_id
         if not is_owner:
-            if not is_junk_message(m.get("content", "")):
-                last_customer_msg = m.get("content", "")[:100]
-            continue
-        if m.get("is_ai_generated"):
+            text = m.get("content", "")
+            if text and len(text.strip()) > 0:
+                last_customer_msg = text[:100]
             continue
         text = m.get("content", "")
-        if is_junk_message(text) or len(text.split()) < 3:
+        if not text or len(text.split()) < 2:
             continue
+        is_ai = m.get("is_ai_generated", False)
         if last_customer_msg:
-            pairs.append({"customer": last_customer_msg, "ketu": text[:120]})
+            pairs.append({"customer": last_customer_msg, "ketu": text[:120], "ai": is_ai})
             last_customer_msg = None
     return pairs
 
@@ -858,29 +860,32 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         _, batch_stats = _filter_msgs(req.messages, owner_key="sender_id", owner_value=req.owner_user_id)
         batch_quality = batch_stats.get("kept", 0)
 
-        # Collect quality PAIRS from this batch (customer Q → Ketu reply)
+        # Collect quality PAIRS from this batch for dashboard preview
+        # Include AI-generated replies too (user wants to see all conversations flowing)
         batch_quality_previews = []
         last_customer_msg = None
         for m in req.messages:
             is_owner = m.get("is_owner", False) or m.get("sender_id") == req.owner_user_id
             if not is_owner:
                 # Customer message — remember for pairing
-                from learner.chat_learner import is_junk_message
-                if not is_junk_message(m.get("content", "")):
-                    last_customer_msg = m.get("content", "")[:100]
+                text = m.get("content", "")
+                if text and len(text.strip()) > 0:
+                    last_customer_msg = text[:100]
                 continue
-            # Ketu's message — check quality and pair
-            if m.get("is_ai_generated"):
-                continue
+            # Ketu's message (manual or AI) — pair with customer
             text = m.get("content", "")
-            if len(text.split()) < 3:
+            if not text or len(text.split()) < 2:
                 continue
+            is_ai = m.get("is_ai_generated", False)
             if last_customer_msg:
                 batch_quality_previews.append({
                     "customer": last_customer_msg,
                     "ketu": text[:120],
+                    "ai": is_ai,
                 })
                 last_customer_msg = None
+
+        logger.info(f"[wwbun-sync] Found {len(batch_quality_previews)} preview pairs in batch of {len(req.messages)} msgs")
 
         # Still track sync stats even when buffering
         _track_wwbun_sync(

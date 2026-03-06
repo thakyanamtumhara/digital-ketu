@@ -2343,16 +2343,18 @@ async function loadWwbunStats() {
   let html = '';
   for (const m of [...recent].reverse()) {
     if (m.customer && m.ketu) {
-      // New pair format: Customer Q → Ketu Reply
+      // Pair format: Customer Q → Ketu Reply
+      const replyLabel = m.ai ? 'AI ↩' : 'KETU ↩';
+      const replyColor = m.ai ? 'var(--accent)' : 'var(--green)';
       html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px 12px;margin-bottom:6px;font-size:12px;">' +
         '<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;">' +
           '<span style="color:var(--text-dim);font-size:11px;min-width:52px;">' + (m.time || '') + '</span>' +
-          '<span style="color:var(--orange);font-size:10px;font-weight:600;min-width:65px;">CUSTOMER</span>' +
+          '<span style="color:var(--orange);font-size:10px;font-weight:600;min-width:50px;">BUYER</span>' +
           '<span style="color:var(--text-dim);">' + m.customer.substring(0, 90) + '</span>' +
         '</div>' +
         '<div style="display:flex;align-items:flex-start;gap:6px;">' +
           '<span style="min-width:52px;"></span>' +
-          '<span style="color:var(--green);font-size:10px;font-weight:600;min-width:65px;">KETU ↩</span>' +
+          '<span style="color:' + replyColor + ';font-size:10px;font-weight:600;min-width:50px;">' + replyLabel + '</span>' +
           '<span style="color:var(--text-bright);">' + m.ketu.substring(0, 100) + '</span>' +
         '</div>' +
       '</div>';
