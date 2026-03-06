@@ -575,6 +575,35 @@ _LEARNING_BUFFER_MIN_PAIRS = 10  # Need 10 quality Ketu manual messages before l
 _last_owner_user_id = ""  # Remember last owner_user_id from sync calls
 
 
+def _save_owner_user_id(uid: str):
+    """Persist owner_user_id so buffer-status works after redeploys."""
+    global _last_owner_user_id
+    _last_owner_user_id = uid
+    try:
+        from core.database import is_db_available, kv_set
+        if is_db_available():
+            kv_set("last_owner_user_id", uid)
+    except Exception:
+        pass
+
+
+def _get_owner_user_id() -> str:
+    """Get owner_user_id from memory or DB."""
+    global _last_owner_user_id
+    if _last_owner_user_id:
+        return _last_owner_user_id
+    try:
+        from core.database import is_db_available, kv_get
+        if is_db_available():
+            val = kv_get("last_owner_user_id")
+            if val:
+                _last_owner_user_id = val
+                return val
+    except Exception:
+        pass
+    return ""
+
+
 def _get_learning_buffer() -> list[dict]:
     """Load accumulated messages from DB."""
     try:
@@ -776,8 +805,7 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     Free features (enders, bought detection, repeat buyer) run immediately
     on every call — they use keyword matching, zero AI cost.
     """
-    global _last_owner_user_id
-    _last_owner_user_id = req.owner_user_id
+    _save_owner_user_id(req.owner_user_id)
 
     # --- FREE features: run immediately on every call (zero AI cost) ---
 
@@ -816,25 +844,16 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
 
     # Debug: log what wwbun is sending so we can trace pairing issues
     if req.messages:
-        sample = req.messages[:5]
-        owner_flags = []
-        for m in sample:
-            is_own = m.get("is_owner", False)
-            is_own_type = type(is_own).__name__
-            sid_match = m.get("sender_id") == req.owner_user_id
-            owner_flags.append(f"is_owner={is_own!r}({is_own_type}),sid_match={sid_match}")
+        unique_sids = set(str(m.get("sender_id", "")) for m in req.messages)
+        owner_count = sum(1 for m in req.messages if _is_owner_message(m, req.owner_user_id))
+        has_is_owner = any(m.get("is_owner") is not None for m in req.messages)
         logger.info(
             f"[wwbun-sync DEBUG] owner_user_id={req.owner_user_id!r}, "
-            f"total_msgs={len(req.messages)}, "
-            f"sample_flags=[{', '.join(owner_flags)}]"
+            f"total={len(req.messages)}, owner={owner_count}, cust={len(req.messages)-owner_count}, "
+            f"has_is_owner_field={has_is_owner}, "
+            f"unique_sender_ids={unique_sids}, "
+            f"keys={list(req.messages[0].keys()) if req.messages else []}"
         )
-        for i, m in enumerate(sample):
-            logger.info(
-                f"[wwbun-sync DEBUG] msg[{i}]: is_owner={m.get('is_owner')!r} "
-                f"sender_id={m.get('sender_id', '')!r} "
-                f"is_ai={m.get('is_ai_generated')!r} "
-                f"content={m.get('content', '')[:50]!r}"
-            )
 
     # Add new messages to buffer
     buffer = _get_learning_buffer()
@@ -1007,7 +1026,7 @@ async def flush_learning_buffer(req: FlushBufferRequest):
 async def learning_buffer_status(owner_user_id: str = ""):
     """Check current learning buffer status."""
     if not owner_user_id:
-        owner_user_id = _last_owner_user_id
+        owner_user_id = _get_owner_user_id()
     buffer = _get_learning_buffer()
     quality = _count_quality_owner_messages(buffer, owner_user_id) if owner_user_id else 0
 
@@ -1031,12 +1050,14 @@ async def learning_buffer_status(owner_user_id: str = ""):
     # Count owner vs customer in buffer
     owner_count = sum(1 for m in buffer if _is_owner_message(m, owner_user_id))
     customer_count = len(buffer) - owner_count
+    unique_sids = list(set(str(m.get("sender_id", ""))[-8:] for m in buffer))
 
     return {
         "total_buffered": len(buffer),
         "owner_user_id": owner_user_id[:10] + "..." if len(owner_user_id) > 10 else owner_user_id,
         "owner_messages": owner_count,
         "customer_messages": customer_count,
+        "unique_sender_ids": unique_sids,
         "quality_pairs": quality,
         "threshold": _LEARNING_BUFFER_MIN_PAIRS,
         "remaining_needed": max(0, _LEARNING_BUFFER_MIN_PAIRS - quality),
