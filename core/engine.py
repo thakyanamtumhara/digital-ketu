@@ -14,6 +14,10 @@ from core.customer_memory import (
 )
 from core.escalation import detect_escalation, format_escalation_notice, LEVEL_ESCALATE
 from core.ketu_only import detect_ketu_only, log_deferred_question
+from core.token_budget import (
+    estimate_tokens, truncate_to_budget, truncate_history, log_budget_usage,
+    BUDGET_KNOWLEDGE_TOKENS, BUDGET_HISTORY_TOKENS, BUDGET_TOTAL_INPUT_TOKENS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +52,15 @@ SHUTUP_COOLDOWN = 300  # 5 minutes — AI won't reply to this customer for 5 min
 _prompt_cache: dict[str, tuple[str, float]] = {}
 PROMPT_CACHE_TTL = 60  # seconds — same as knowledge cache TTL
 
-# Simple intents that can use Haiku (10x cheaper) instead of Sonnet
-HAIKU_INTENTS = {"greeting", "shipping_delivery", "payment", "location_visit",
-                 "gst_invoice", "moq", "return_complaint", "dropshipping", "order_how"}
+# Haiku is the DEFAULT model for ALL replies (₹0.15-0.25/reply)
+# Sonnet is ONLY used for escalation (angry customer, complaint)
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 SONNET_MODEL = "claude-sonnet-4-20250514"
 
+# Only these situations use Sonnet (everything else = Haiku)
+SONNET_ONLY_REASONS = {"escalation"}
+
 # Estimated full context token count (for savings tracking)
-# Updated periodically from actual API responses using full context
 _estimated_full_tokens: int = 5500  # conservative default
 
 
@@ -154,129 +159,115 @@ def _build_system_prompt(
     customer_phone: str = "",
     escalation_modifier: str = "",
     customer_message: str = "",
-) -> tuple[str, dict | None]:
-    """Build system prompt dynamically from prompt.json + knowledge context.
+) -> tuple[list, dict | None, bool]:
+    """Build system prompt in two parts: STATIC (cacheable) + DYNAMIC (per-message).
 
-    This prompt evolves over time as Digital Ketu learns from Ketu's real messages.
-    Includes customer memory context and escalation handling when applicable.
+    STATIC part (~600 tokens): Identity, personality, rules — same for every customer.
+    → Cached by Anthropic prompt caching = 90% cheaper after first call.
 
-    Smart context: When customer_message is provided, classifies the question and
-    includes only relevant knowledge sections (60-70% token savings).
-    Falls back to full context if classification fails.
+    DYNAMIC part (~200-600 tokens): Knowledge context, customer memory, escalation.
+    → Changes per message, NOT cached.
 
-    Returns (system_prompt, classification_dict_or_None).
+    Returns (system_blocks, classification, use_sonnet).
+    system_blocks is a list for Anthropic's cache_control format.
     """
-    config = _load_prompt_config()
+    # --- STATIC PART (cached — 90% cheaper) ---
+    # This is the SAME for every reply. Anthropic caches it automatically.
+    # Compressed to absolute minimum while keeping Ketu's personality.
+    static_prompt = (
+        "You are Digital Ketu — AI twin of Ketu, owner of Sale91.com (B2B blank wears, Tiruppur).\n"
+        "You ARE Ketu. Not a chatbot.\n\n"
+        "STYLE: Hinglish (Hindi+English mix). 1-2 lines MAX. Respectful (Ji/Sir/Bhai). Direct pricing. Confident. Factory owner feel.\n"
+        "PHRASES: \"Ji sir\", \"Bilkul ji\", \"Tiruppur se direct\", \"Dispatch within minutes\", \"Factory direct rate\", \"No middleman\"\n\n"
+        "RULES:\n"
+        "- Seedha rate bata, 'DM for price' KABHI mat bol\n"
+        "- Product pucha → rate+GSM+quality. Bulk → excited, discount offer. Confused → simple comparison\n"
+        "- Nahi pata → 'Ye Ketu sir batayenge, thodi der mein reply aayega.' KABHI fake promise mat kar\n"
+        "- STOCK TIMELINE KABHI mat bol — sirf Ketu jaanta hai. '7-10 days' jaise KABHI fabricate mat kar\n"
+        "- 'WhatsApp karo'/number KABHI mat de — customer ALREADY WhatsApp pe hai\n"
+        "- Website link ek conversation mein ek baar. Har reply mein mat daal\n"
+        "- Repeat mat kar, natural baat kar. Emoji max 1-2\n"
+        "- Unsolicited product push KABHI nahi. Customer jo maange wohi de\n"
+        "- Mehnga hai → factory direct, no middleman, quality guarantee. Competitor sasta → quality compare. Discount → bulk rate bata\n"
+        "- INQUIRY→rate. COMPLAINT→empathy+Ketu sir. CLOSING→website. OK/THANKS→reply mat kar\n"
+        "- FIRST MSG: catalogue link add kar end mein: sale91.com/catalog. Baad mein DUBARA mat de\n"
+        "- Customer ki language match karo — English mein bole toh English, default Hinglish\n"
+        "- Plain/blank only — printing businesses ke liye. 100% prepaid, COD nahi. Website pe ₹2/pc discount"
+    )
 
-    # Smart context selection — classify message and pick relevant sections only
+    # --- DYNAMIC PART (per-message, not cached) ---
+    dynamic_parts = []
+
+    # Smart context selection
+    classification = None
+    use_sonnet = False
+
     if customer_message:
         classification = classify_message(customer_message)
 
-        # Check prompt cache — same intent combo = same knowledge context
+        # Check prompt cache
         cache_key = _make_prompt_cache_key(classification)
         cached = _prompt_cache.get(cache_key)
         if cached and (time.time() - cached[1]) < PROMPT_CACHE_TTL:
             knowledge_context = cached[0]
-            logger.info(f"[SmartContext] Cache HIT for {cache_key[:40]}")
         else:
             knowledge = load_knowledge()
             knowledge_context = format_smart_context(knowledge, classification)
             _prompt_cache[cache_key] = (knowledge_context, time.time())
-            logger.info(
-                f"[SmartContext] intents={classification['intents']}, "
-                f"products={len(classification['product_ids'])}, "
-                f"complex={classification['is_complex']}"
-            )
+
+        dynamic_parts.append(knowledge_context)
     else:
-        classification = None
         knowledge_context = format_context()
+        # Truncate full context to budget
+        knowledge_context = truncate_to_budget(knowledge_context, BUDGET_KNOWLEDGE_TOKENS)
+        dynamic_parts.append(knowledge_context)
 
-    identity = config.get("identity", {})
-    name = identity.get("name", "Digital Ketu")
-    role = identity.get("role", "AI twin of Ketu")
-    core = identity.get("core_instruction", "You ARE Ketu.")
-
-    # Base personality traits (original + evolved)
-    base_traits = config.get("personality_traits", [])
-    evolved_traits = config.get("evolved_traits", [])
-    all_traits = base_traits + evolved_traits
-
-    # Reply rules (original + evolved)
-    base_rules = config.get("reply_rules", [])
-    evolved_rules = config.get("evolved_rules", [])
-    all_rules = base_rules + evolved_rules
-
-    # Signature phrases (original + evolved)
-    base_phrases = config.get("signature_phrases", [])
-    evolved_phrases = config.get("evolved_phrases", [])
-    all_phrases = base_phrases + evolved_phrases
-
-    # Build prompt
-    sections = []
-
-    sections.append(f"You are {name} — {role}.\n\n{core}")
-
-    # Personality
-    if all_traits:
-        trait_lines = "\n".join(f"- {t}" for t in all_traits)
-        sections.append(f"## HOW KETU TALKS:\n{trait_lines}")
-
-    # Rules
-    if all_rules:
-        rule_lines = "\n".join(f"{i+1}. {r}" for i, r in enumerate(all_rules))
-        sections.append(f"## REPLY RULES:\n{rule_lines}")
-
-    # Compact rules — merged suggestion, objection handling, and chat patterns
-    sections.append(
-        "## KEY RULES:\n"
-        "- Unsolicited product push KABHI mat kar. Customer jo maange wohi de.\n"
-        "- Objection handling: 'Mehnga hai' → factory direct, no middleman, biowash+no shrinkage guarantee. 'Competitor sasta' → quality compare karo. 'Discount' → bulk rate bata. Confident reh, argue mat kar.\n"
-        "- INQUIRY → rate de. COMPLAINT → empathy + Ketu sir connect. CLOSING → website link. ACKNOWLEDGMENT (ok/thanks) → reply mat kar. REPEAT BUYER → short friendly reply."
-    )
-
-    # Repeat buyer learned style (if available)
+    # Repeat buyer context (compact)
     if customer_phone:
         profile = get_profile(customer_phone)
         if profile.get("stage") in ("repeat", "bought") and profile.get("purchase_count", 0) >= 1:
-            repeat_style = _load_repeat_buyer_style()
-            if repeat_style:
-                examples = repeat_style[:5]
-                example_lines = "\n".join(f'- "{e}"' for e in examples)
-                sections.append(
-                    f"## REPEAT BUYER KO KAISE BAAT KARO (Ketu ke real replies se seekha):\n"
-                    f"{example_lines}\n"
-                    f"Ye customer {profile.get('purchase_count', 1)} baar order kar chuka hai. "
-                    f"Process jaanta hai. Short, friendly reply de — jaise purane customer ko dete hain."
-                )
+            dynamic_parts.append(
+                f"REPEAT BUYER: {profile.get('purchase_count', 1)}x ordered. Short friendly reply de."
+            )
 
-    # Signature phrases — these are Ketu's real words, use them naturally
-    if all_phrases:
-        phrase_str = ", ".join(f'"{p}"' for p in all_phrases)
-        sections.append(f"## KETU'S SIGNATURE PHRASES (use naturally):\n{phrase_str}")
-
-    # Dynamic knowledge context (products, FAQs, style, etc.)
-    sections.append(knowledge_context)
-
-    # Customer memory context (if returning customer)
-    if customer_phone:
+        # Customer memory (compact)
         customer_context = format_customer_context(customer_phone)
         if customer_context:
-            sections.append(customer_context)
+            # Truncate customer context if too long
+            if estimate_tokens(customer_context) > 150:
+                customer_context = truncate_to_budget(customer_context, 150)
+            dynamic_parts.append(customer_context)
 
-    # Escalation modifier (if complaint/anger detected)
+    # Escalation modifier
     if escalation_modifier:
-        sections.append(escalation_modifier)
+        dynamic_parts.append(escalation_modifier)
+        use_sonnet = True  # Only escalation uses Sonnet
 
-    sections.append("## SABSE ZAROORI RULES:\n"
-        "1. Reply MAXIMUM 1-2 lines. Bas. 3 line se zyada KABHI nahi. Ketu WhatsApp pe chhota likhta hai — ek do line mein baat khatam. Jitna kam utna better. Cost bhi bachta hai.\n"
-        "2. KABHI fake promise mat karo. Nahi pata toh bol: 'Ye Ketu sir batayenge, thodi der mein reply aayega.'\n"
-        "3. STOCK/RESTOCK TIMELINE: Tu KABHI mat bol 'X din mein aa jayega', '7-10 days', '15-20 days', 'next week' etc. Tujhe NAHI pata stock kab aayega — sirf Ketu jaanta hai. Agar koi puche kab aayega, toh bol: 'Bhai ye Ketu sir khud batayenge, thodi der mein reply aayega.' KABHI timeline fabricate mat kar.\n"
-        "4. 'WhatsApp karo' ya WhatsApp number KABHI mat de — customer ALREADY isi WhatsApp pe baat kar raha hai.\n"
-        "5. Website link har reply mein mat daal — ek conversation mein ek baar kaafi hai.\n"
-        "6. Same line baar baar repeat mat kar — robot lagta hai, natural baat kar.\n"
-        "7. FIRST MESSAGE RULE: Agar customer PEHLI BAAR message kar raha hai (conversation mein sirf 1 user message hai), toh reply ke end mein catalogue link naturally add kar: 'Poora catalogue yahan dekho: sale91.com/catalog' — push mat kar, bas casually share kar taaki customer website pe browse kare. Baad ke messages mein link DUBARA mat de.")
+    dynamic_prompt = "\n".join(dynamic_parts)
 
-    return "\n\n".join(sections), classification
+    # --- Build system blocks with cache_control ---
+    # Static part gets cached (cache_control: ephemeral), dynamic part doesn't
+    system_blocks = [
+        {
+            "type": "text",
+            "text": static_prompt,
+            "cache_control": {"type": "ephemeral"},
+        },
+        {
+            "type": "text",
+            "text": dynamic_prompt,
+        },
+    ]
+
+    # Log token estimates
+    static_tokens = estimate_tokens(static_prompt)
+    dynamic_tokens = estimate_tokens(dynamic_prompt)
+    logger.info(
+        f"[Prompt] static={static_tokens}tok(cached), dynamic={dynamic_tokens}tok, "
+        f"total={static_tokens + dynamic_tokens}tok"
+    )
+
+    return system_blocks, classification, use_sonnet
 
 
 def _cleanup_old_conversations():
@@ -597,10 +588,13 @@ def generate_reply(
             activate_shutup(customer_phone, reason="ketu_only_deferral", minutes=10)
         return defer_reply
 
-    # Trim conversation history to last 6 messages (3 exchanges) before adding new one
-    # This prevents sending 10-20 old messages to Claude (saves ~5,000 tokens per call)
-    if len(messages) > 5:
-        messages = messages[-5:]
+    # Trim conversation history to last 4 messages (2 exchanges) before adding new one
+    # Budget: max ~400 tokens for history. Saves thousands of tokens per call.
+    if len(messages) > 3:
+        messages = messages[-3:]
+
+    # Enforce token budget on history
+    messages = truncate_history(messages, BUDGET_HISTORY_TOKENS)
 
     # Add current message
     messages = messages + [{"role": "user", "content": message}]
@@ -639,28 +633,41 @@ def generate_reply(
         )
 
     # Build system prompt with customer context, escalation modifier, and smart context
-    system, classification = _build_system_prompt(
+    # Returns system_blocks (for prompt caching), classification, and whether to use Sonnet
+    system_blocks, classification, use_sonnet = _build_system_prompt(
         customer_phone=customer_phone,
         escalation_modifier=escalation_modifier,
         customer_message=message,
     )
-    if customer_name:
-        system += f"\n\nCustomer name: {customer_name}"
 
-    # Tell AI if this is the first message (for catalogue link rule)
+    # Add customer name to dynamic block if available
+    if customer_name:
+        system_blocks[-1]["text"] += f"\nCustomer: {customer_name}"
+
+    # Tell AI if this is the first message
     user_msg_count = sum(1 for m in messages if m.get("role") == "user")
     if user_msg_count == 1:
-        system += "\n\n>> YE CUSTOMER KA PEHLA MESSAGE HAI. Catalogue link share kar end mein: sale91.com/catalog"
+        system_blocks[-1]["text"] += "\n>> PEHLA MESSAGE. Catalogue link: sale91.com/catalog"
 
-    # Model selection — use Haiku for simple questions (10x cheaper)
-    use_smart = classification is not None and not classification.get("is_complex", True)
-    intents = set(classification.get("intents", [])) if classification else set()
-
-    if use_smart and intents and intents.issubset(HAIKU_INTENTS):
-        model = HAIKU_MODEL
-        logger.info(f"[ModelSelect] Using Haiku for simple intents: {intents}")
-    else:
+    # Model selection — Haiku for ALL replies EXCEPT escalation
+    # Haiku 4.5 is excellent for 1-2 line Hinglish replies and costs 10x less
+    if use_sonnet:
         model = SONNET_MODEL
+        logger.info(f"[ModelSelect] Sonnet — escalation detected")
+    else:
+        model = HAIKU_MODEL
+        intents = classification.get("intents", []) if classification else []
+        logger.info(f"[ModelSelect] Haiku (default) — intents: {intents}")
+
+    # Log total estimated input tokens
+    system_text_total = sum(estimate_tokens(b["text"]) for b in system_blocks)
+    history_tokens = sum(estimate_tokens(m.get("content", "")) for m in messages)
+    log_budget_usage(
+        system_tokens=system_text_total,
+        knowledge_tokens=estimate_tokens(system_blocks[-1]["text"]),
+        history_tokens=history_tokens,
+        total_tokens=system_text_total + history_tokens,
+    )
 
     # Retry with exponential backoff (max 3 attempts)
     last_error = None
@@ -668,15 +675,28 @@ def generate_reply(
         try:
             response = client.messages.create(
                 model=model,
-                max_tokens=200,
-                system=system,
+                max_tokens=150,  # Reduced from 200 — replies are 1-2 lines
+                system=system_blocks,  # List format enables prompt caching
                 messages=messages,
                 timeout=httpx.Timeout(30.0, connect=10.0),
             )
 
             reply = response.content[0].text
 
+            # Log actual token usage vs budget
+            actual_input = response.usage.input_tokens
+            cache_creation = getattr(response.usage, 'cache_creation_input_tokens', 0)
+            cache_read = getattr(response.usage, 'cache_read_input_tokens', 0)
+            if cache_read > 0:
+                logger.info(
+                    f"[PromptCache] HIT! {cache_read} cached tokens (90% cheaper). "
+                    f"Fresh: {actual_input - cache_read} tokens"
+                )
+            elif cache_creation > 0:
+                logger.info(f"[PromptCache] MISS — cached {cache_creation} tokens for next call")
+
             # Track API cost with smart context savings
+            use_smart = classification is not None and not classification.get("is_complex", True)
             track_api_cost(
                 model=response.model,
                 input_tokens=response.usage.input_tokens,
@@ -687,14 +707,13 @@ def generate_reply(
                 estimated_full_tokens=_estimated_full_tokens,
             )
 
-            # Store conversation history
+            # Store conversation history (keep only last 4 messages = 2 exchanges)
             if customer_phone:
                 _conversations[customer_phone] = messages + [
                     {"role": "assistant", "content": reply}
                 ]
-                # Keep only last 6 messages (3 exchanges) — saves ~5,000 tokens per call
-                if len(_conversations[customer_phone]) > 6:
-                    _conversations[customer_phone] = _conversations[customer_phone][-6:]
+                if len(_conversations[customer_phone]) > 4:
+                    _conversations[customer_phone] = _conversations[customer_phone][-4:]
                 _conversation_timestamps[customer_phone] = time.time()
 
             return reply
@@ -702,15 +721,12 @@ def generate_reply(
         except Exception as e:
             last_error = e
             logger.warning(f"Claude API error (attempt {attempt + 1}/3): {e}")
-            # Log to error tracker
             from core.error_tracker import track_error
             track_error("claude-api", str(e), {"attempt": attempt + 1})
             if attempt < 2:
                 time.sleep(2 ** attempt)  # 1s, 2s backoff
 
     logger.error(f"Claude API failed after 3 attempts: {last_error}")
-    # Stay silent — don't send confusing "technical issue" message to customer.
-    # Silence is better than a nonsensical reply. Ketu can reply manually if needed.
     return ""
 
 
