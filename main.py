@@ -409,8 +409,16 @@ def _load_wwbun_stats():
             saved = kv_get("wwbun_sync_stats")
             if saved and isinstance(saved, dict):
                 _wwbun_stats.update(saved)
-    except Exception:
-        pass
+                logger.info(
+                    f"[wwbun-stats LOAD] Loaded from DB: total_quality={saved.get('total_quality_messages', 0)}, "
+                    f"today_quality={saved.get('today_quality', 0)}, total_syncs={saved.get('total_syncs', 0)}"
+                )
+            else:
+                logger.warning(f"[wwbun-stats LOAD] No saved stats in DB (saved={type(saved).__name__})")
+        else:
+            logger.warning("[wwbun-stats LOAD] DB not available — stats will reset on deploy!")
+    except Exception as e:
+        logger.error(f"[wwbun-stats LOAD] Failed to load: {e}")
 
 
 def _save_wwbun_stats():
@@ -418,8 +426,14 @@ def _save_wwbun_stats():
         from core.database import is_db_available, kv_set
         if is_db_available():
             kv_set("wwbun_sync_stats", _wwbun_stats)
-    except Exception:
-        pass
+            logger.debug(
+                f"[wwbun-stats SAVE] Saved: total_quality={_wwbun_stats['total_quality_messages']}, "
+                f"today_quality={_wwbun_stats['today_quality']}"
+            )
+        else:
+            logger.error("[wwbun-stats SAVE] DB not available — stats NOT persisted!")
+    except Exception as e:
+        logger.error(f"[wwbun-stats SAVE] Failed to save: {e}")
 
 
 def _track_wwbun_sync(
@@ -520,6 +534,51 @@ async def wwbun_sync_stats():
     }
 
 
+@app.get("/api/wwbun/debug")
+async def wwbun_debug():
+    """Diagnostic endpoint — shows raw buffer state, message classification, and stats.
+    Use this to debug why quality messages might show as 0.
+    """
+    _load_wwbun_stats()
+    buffer = _get_learning_buffer()
+    owner_user_id = _get_owner_user_id()
+
+    # Classify each message in buffer
+    classifications = []
+    for i, m in enumerate(buffer[-20:]):  # Last 20 messages
+        is_owner = _is_owner_message(m, owner_user_id) if owner_user_id else None
+        is_ai = _safe_bool(m.get("is_ai_generated"))
+        text = m.get("content", "") or m.get("text", "") or m.get("body", "")
+        classifications.append({
+            "index": i,
+            "sender_id": m.get("sender_id"),
+            "is_owner_flag": m.get("is_owner"),
+            "is_owner_computed": is_owner,
+            "is_ai": is_ai,
+            "content_preview": text[:80] if text else "<EMPTY>",
+            "word_count": len(text.split()) if text else 0,
+            "fields": list(m.keys()),
+        })
+
+    quality_count = _count_quality_owner_messages(buffer, owner_user_id) if owner_user_id else -1
+
+    return {
+        "owner_user_id": owner_user_id,
+        "buffer_size": len(buffer),
+        "quality_pairs_in_buffer": quality_count,
+        "threshold": _LEARNING_BUFFER_MIN_PAIRS,
+        "stats_from_db": {
+            "total_quality": _wwbun_stats["total_quality_messages"],
+            "today_quality": _wwbun_stats["today_quality"],
+            "total_syncs": _wwbun_stats["total_syncs"],
+            "today_syncs": _wwbun_stats["today_syncs"],
+            "total_messages": _wwbun_stats["total_messages_received"],
+            "last_sync": _wwbun_stats["last_sync_time"],
+        },
+        "last_20_messages": classifications,
+    }
+
+
 def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
     """Extract customer→Ketu pairs from wwbun messages and learn ketu-only patterns.
 
@@ -542,7 +601,7 @@ def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
         customer_phone = chat_id.split("@")[0] if "@" in chat_id else chat_id
 
         for msg in chat_msgs:
-            content = msg.get("content", "").strip()
+            content = (msg.get("content", "") or msg.get("text", "") or msg.get("body", "")).strip()
             if not content:
                 continue
 
@@ -677,7 +736,7 @@ def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int
     for m in buffer:
         is_owner = _is_owner_message(m, owner_user_id)
         is_ai = _safe_bool(m.get("is_ai_generated"))
-        text = m.get("content", "")
+        text = m.get("content", "") or m.get("text", "") or m.get("body", "")
 
         if not is_owner:
             # Customer message — remember it as potential pair start
@@ -711,11 +770,11 @@ def _extract_pairs_from_buffer(buffer: list[dict], owner_user_id: str) -> list[d
     for m in buffer:
         is_owner = _is_owner_message(m, owner_user_id)
         if not is_owner:
-            text = m.get("content", "")
+            text = m.get("content", "") or m.get("text", "") or m.get("body", "")
             if text and len(text.strip()) > 0:
                 last_customer_msg = text[:100]
             continue
-        text = m.get("content", "")
+        text = m.get("content", "") or m.get("text", "") or m.get("body", "")
         if not text or len(text.split()) < 2:
             continue
         is_ai = _safe_bool(m.get("is_ai_generated"))
@@ -858,13 +917,29 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         unique_sids = set(str(m.get("sender_id", "")) for m in req.messages)
         owner_count = sum(1 for m in req.messages if _is_owner_message(m, req.owner_user_id))
         has_is_owner = any(m.get("is_owner") is not None for m in req.messages)
+        has_content = sum(1 for m in req.messages if m.get("content"))
+        has_text = sum(1 for m in req.messages if m.get("text"))
+        has_ai_flag = sum(1 for m in req.messages if m.get("is_ai_generated") is not None)
+        ai_true_count = sum(1 for m in req.messages if _safe_bool(m.get("is_ai_generated")))
         logger.info(
             f"[wwbun-sync DEBUG] owner_user_id={req.owner_user_id!r}, "
             f"total={len(req.messages)}, owner={owner_count}, cust={len(req.messages)-owner_count}, "
             f"has_is_owner_field={has_is_owner}, "
             f"unique_sender_ids={unique_sids}, "
+            f"has_content={has_content}, has_text={has_text}, "
+            f"has_ai_flag={has_ai_flag}, ai_true={ai_true_count}, "
             f"keys={list(req.messages[0].keys()) if req.messages else []}"
         )
+        # Log first 3 messages in full for debugging
+        for i, m in enumerate(req.messages[:3]):
+            logger.info(
+                f"[wwbun-sync MSG {i}] sender_id={m.get('sender_id')!r}, "
+                f"is_owner={m.get('is_owner')!r}, is_ai={m.get('is_ai_generated')!r}, "
+                f"content={str(m.get('content', '') or m.get('text', '') or m.get('body', ''))[:80]!r}, "
+                f"_is_owner_result={_is_owner_message(m, req.owner_user_id)}"
+            )
+    else:
+        logger.warning("[wwbun-sync DEBUG] Received EMPTY messages list!")
 
     # Add new messages to buffer
     buffer = _get_learning_buffer()
@@ -878,6 +953,10 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
 
     # Count quality manual messages in buffer
     quality_count = _count_quality_owner_messages(buffer, req.owner_user_id)
+    logger.info(
+        f"[wwbun-sync QUALITY] buffer_size={len(buffer)}, quality_pairs={quality_count}, "
+        f"threshold={_LEARNING_BUFFER_MIN_PAIRS}, will_flush={quality_count >= _LEARNING_BUFFER_MIN_PAIRS}"
+    )
 
     # Decide: learn now or wait for more messages
     learn_result = {"status": "buffered", "count": 0}
@@ -929,6 +1008,11 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         from learner.chat_learner import filter_messages as _filter_msgs
         _, batch_stats = _filter_msgs(req.messages, owner_key="sender_id", owner_value=req.owner_user_id)
         batch_quality = batch_stats.get("kept", 0)
+        logger.info(
+            f"[wwbun-sync BATCH-FILTER] batch_quality={batch_quality}, "
+            f"junk={batch_stats.get('junk', 0)}, too_short={batch_stats.get('too_short', 0)}, "
+            f"total={batch_stats.get('total', 0)}"
+        )
 
         # Collect quality PAIRS from this batch for dashboard preview
         # Include AI-generated replies too (user wants to see all conversations flowing)
@@ -940,12 +1024,12 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
             is_owner = _is_owner_message(m, req.owner_user_id)
             if not is_owner:
                 _debug_customer_count += 1
-                text = m.get("content", "")
+                text = m.get("content", "") or m.get("text", "") or m.get("body", "")
                 if text and len(text.strip()) > 0:
                     last_customer_msg = text[:100]
                 continue
             _debug_owner_count += 1
-            text = m.get("content", "")
+            text = m.get("content", "") or m.get("text", "") or m.get("body", "")
             if not text or len(text.split()) < 2:
                 continue
             is_ai = _safe_bool(m.get("is_ai_generated"))
@@ -1059,7 +1143,7 @@ async def learning_buffer_status(owner_user_id: str = ""):
         parsed_owner = _is_owner_message(m, owner_user_id)
         parsed_ai = _safe_bool(raw_ai)
         sample_msgs.append({
-            "content": m.get("content", "")[:80],
+            "content": (m.get("content", "") or m.get("text", "") or m.get("body", ""))[:80],
             "is_owner_raw": repr(raw_owner),
             "is_owner_parsed": parsed_owner,
             "sender_id": str(m.get("sender_id", ""))[-6:],

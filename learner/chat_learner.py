@@ -107,6 +107,33 @@ def is_junk_message(text: str) -> bool:
     return False
 
 
+def _is_owner_in_filter(m: dict, owner_key: str, owner_value: str) -> bool:
+    """Determine if message is from owner — uses sender_id as authority (like main._is_owner_message).
+
+    IMPORTANT: Do NOT trust is_owner flag alone — wwbun may send is_owner=True for ALL messages.
+    Use sender_id match as the authoritative source when available.
+    """
+    sid = m.get("sender_id") or m.get(owner_key, "")
+    sid = str(sid).strip()
+
+    # If sender_id present and owner_value given, use sender_id as authority
+    if sid and owner_value:
+        ov = owner_value.strip()
+        if sid == ov or ov.endswith(sid) or sid.endswith(ov):
+            return True
+        return False  # sender_id doesn't match → customer
+
+    # Fallback to flags only if no sender_id
+    raw_owner = m.get("is_owner", False)
+    if isinstance(raw_owner, str):
+        raw_owner = raw_owner.lower() in ("true", "1", "yes")
+    if bool(raw_owner):
+        return True
+    if m.get("fromMe") or m.get("from_me"):
+        return True
+    return False
+
+
 def filter_messages(messages: list[dict], owner_key: str = "sender", owner_value: str = "") -> tuple[list[dict], dict]:
     """Filter out junk messages, keep only knowledge-worthy ones.
 
@@ -122,12 +149,9 @@ def filter_messages(messages: list[dict], owner_key: str = "sender", owner_value
             stats["junk"] += 1
             continue
 
-        # Word count check
+        # Word count check — use sender_id-based owner detection (not just is_owner flag)
         word_count = len(text.split())
-        raw_owner = m.get("is_owner", False)
-        if isinstance(raw_owner, str):
-            raw_owner = raw_owner.lower() in ("true", "1", "yes")
-        is_owner = bool(raw_owner) or (owner_value and owner_value.lower() in str(m.get(owner_key, "")).lower())
+        is_owner = _is_owner_in_filter(m, owner_key, owner_value)
 
         min_words = _MIN_WORDS_OWNER if is_owner else _MIN_WORDS_CUSTOMER
         if word_count < min_words:
@@ -317,7 +341,7 @@ def extract_knowledge_from_wwbun_messages(
     for m in filtered[:200]:
         role = "KETU" if _is_owner_msg(m) else "CUSTOMER"
         is_ai = " [AI]" if m.get("is_ai_generated") else ""
-        chat_context.append(f"{role}{is_ai}: {m.get('content', '')}")
+        chat_context.append(f"{role}{is_ai}: {m.get('content', '') or m.get('text', '') or m.get('body', '')}")
 
     chat_text = "\n".join(chat_context)
 
@@ -379,7 +403,7 @@ Return ONLY valid JSON."""
         if json_match:
             result = json.loads(json_match.group())
             result["filter_stats"] = filter_stats
-            result["quality_messages"] = [m.get("content", "") for m in filtered if _is_owner_msg(m) and not m.get("is_ai_generated")]
+            result["quality_messages"] = [(m.get("content", "") or m.get("text", "") or m.get("body", "")) for m in filtered if _is_owner_msg(m) and not m.get("is_ai_generated")]
             return result
         return {"status": "parse_error", "raw": result_text, "filter_stats": filter_stats}
 
