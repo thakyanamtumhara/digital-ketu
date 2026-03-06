@@ -1157,7 +1157,7 @@ async function loadDashboard() {
       let iconClass = 'reply';
       let emoji = '';
       if (e.source === 'api-reply') { iconClass = 'reply'; emoji = 'AI'; }
-      else if (e.source === 'wwbun-sync') { iconClass = 'learn'; emoji = 'WA'; }
+      else if (e.source === 'wwbun-sync') { iconClass = (e.action === 'buffered') ? 'sync' : 'learn'; emoji = 'WA'; }
       else if (e.source === 'whatsapp-export') { iconClass = 'learn'; emoji = 'WA'; }
       else if (e.source === 'youtube') { iconClass = 'youtube'; emoji = 'YT'; }
       else if (e.source === 'catalog-sync') { iconClass = 'sync'; emoji = 'CT'; }
@@ -1179,18 +1179,28 @@ async function loadDashboard() {
         const kept = d.quality_messages_count || 0;
         const junk = d.junk_skipped || 0;
         const short = d.too_short_skipped || 0;
-        title = `Learned from ${kept} quality pairs (${junk + short} filtered out)`;
-        const preview = (d.quality_messages_preview || []).slice(0, 2).map(m => `"${m.substring(0, 40)}"`).join(', ');
-        const applied = (d.updates_applied || []).slice(0, 2).join(', ');
-        const extracted = (d.extracted_summary || []).join(', ');
-        if (applied) {
-          detail = '\u2705 ' + applied;
-        } else if (preview) {
-          detail = preview + (extracted ? ' \u2192 Already known: ' + extracted : '');
-        } else if (extracted) {
-          detail = 'Analyzed: ' + extracted + ' (all already known \u2014 no duplicates added)';
+        const isBuffering = e.action === 'buffered' || (!kept && !d.updates_applied?.length);
+        if (isBuffering) {
+          const bufTotal = d.buffer_total || d.quality_in_buffer || 0;
+          const needed = d.needed || 10;
+          const remaining = d.remaining || (needed - (d.quality_in_buffer || 0));
+          const added = d.messages_added || 0;
+          title = `Buffering messages (${d.quality_in_buffer || 0}/${needed} pairs)`;
+          detail = added ? `+${added} msgs added, ${remaining} more pairs needed to learn` : `Waiting for quality pairs`;
         } else {
-          detail = 'Messages analyzed but no extractable knowledge found';
+          title = `Learned from ${kept} quality pairs (${junk + short} filtered out)`;
+          const preview = (d.quality_messages_preview || []).slice(0, 2).map(m => `"${m.substring(0, 40)}"`).join(', ');
+          const applied = (d.updates_applied || []).slice(0, 2).join(', ');
+          const extracted = (d.extracted_summary || []).join(', ');
+          if (applied) {
+            detail = '\u2705 ' + applied;
+          } else if (preview) {
+            detail = preview + (extracted ? ' \u2192 Already known: ' + extracted : '');
+          } else if (extracted) {
+            detail = 'Analyzed: ' + extracted + ' (all already known \u2014 no duplicates added)';
+          } else {
+            detail = 'Messages analyzed but no extractable knowledge found';
+          }
         }
       } else if (e.source === 'whatsapp-export') {
         title = `Learned from WA export (${d.messages_parsed || 0} msgs)`;
