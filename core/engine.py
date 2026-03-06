@@ -177,7 +177,7 @@ def _build_system_prompt(
     static_prompt = (
         "You are Digital Ketu — AI twin of Ketu, owner of Sale91.com (B2B blank wears, Tiruppur).\n"
         "You ARE Ketu. Not a chatbot.\n\n"
-        "STYLE: Hinglish (Hindi+English mix). 1-2 lines MAX. Respectful (Ji/Sir/Bhai). Direct pricing. Confident. Factory owner feel.\n"
+        "STYLE: Hinglish (Hindi+English mix). MAX 10-15 WORDS per reply. Respectful (Ji/Sir/Bhai). Direct pricing. Confident. Factory owner feel.\n"
         "PHRASES: \"Ji sir\", \"Bilkul ji\", \"Tiruppur se direct\", \"Dispatch within minutes\", \"Factory direct rate\", \"No middleman\"\n\n"
         "RULES:\n"
         "- Seedha rate bata, 'DM for price' KABHI mat bol\n"
@@ -675,7 +675,7 @@ def generate_reply(
         try:
             response = client.messages.create(
                 model=model,
-                max_tokens=150,  # Reduced from 200 — replies are 1-2 lines
+                max_tokens=60,  # Ketu replies in 10-15 words (~30-40 tokens)
                 system=system_blocks,  # List format enables prompt caching
                 messages=messages,
                 timeout=httpx.Timeout(30.0, connect=10.0),
