@@ -695,7 +695,7 @@ def generate_reply(
             elif cache_creation > 0:
                 logger.info(f"[PromptCache] MISS — cached {cache_creation} tokens for next call")
 
-            # Track API cost with smart context savings
+            # Track API cost with smart context savings + cache-aware pricing
             use_smart = classification is not None and not classification.get("is_complex", True)
             track_api_cost(
                 model=response.model,
@@ -705,7 +705,53 @@ def generate_reply(
                 customer_phone=customer_phone[-4:] if customer_phone else "",
                 smart_context_used=use_smart,
                 estimated_full_tokens=_estimated_full_tokens,
+                cache_creation_tokens=cache_creation,
+                cache_read_tokens=cache_read,
             )
+
+            # COST ALERT — warn if this single reply cost more than ₹1
+            cost_inr = (
+                (response.usage.input_tokens / 1_000_000) * 0.80
+                + (response.usage.output_tokens / 1_000_000) * 4.00
+            ) * 83.5
+            if cost_inr > 1.0:
+                logger.warning(
+                    f"[CostAlert] Reply cost ₹{cost_inr:.2f} (>{chr(0x20B9)}1 limit)! "
+                    f"input={response.usage.input_tokens}, output={response.usage.output_tokens}, "
+                    f"model={response.model}, customer={customer_phone[-4:] if customer_phone else '?'}"
+                )
+
+            # HAIKU FALLBACK — if Haiku gave empty/garbage reply, retry once with Sonnet
+            if model == HAIKU_MODEL and (not reply or len(reply.strip()) < 5):
+                logger.warning(
+                    f"[HaikuFallback] Haiku returned poor reply ('{reply[:20]}'), retrying with Sonnet"
+                )
+                try:
+                    fallback_response = client.messages.create(
+                        model=SONNET_MODEL,
+                        max_tokens=60,
+                        system=system_blocks,
+                        messages=messages,
+                        timeout=httpx.Timeout(30.0, connect=10.0),
+                    )
+                    fallback_reply = fallback_response.content[0].text
+                    if fallback_reply and len(fallback_reply.strip()) >= 5:
+                        reply = fallback_reply
+                        # Track fallback cost too
+                        fb_cache_creation = getattr(fallback_response.usage, 'cache_creation_input_tokens', 0)
+                        fb_cache_read = getattr(fallback_response.usage, 'cache_read_input_tokens', 0)
+                        track_api_cost(
+                            model=fallback_response.model,
+                            input_tokens=fallback_response.usage.input_tokens,
+                            output_tokens=fallback_response.usage.output_tokens,
+                            source="whatsapp-reply-fallback",
+                            customer_phone=customer_phone[-4:] if customer_phone else "",
+                            cache_creation_tokens=fb_cache_creation,
+                            cache_read_tokens=fb_cache_read,
+                        )
+                        logger.info(f"[HaikuFallback] Sonnet saved the reply: '{reply[:40]}'")
+                except Exception as fb_err:
+                    logger.warning(f"[HaikuFallback] Sonnet retry also failed: {fb_err}")
 
             # Store conversation history (keep only last 4 messages = 2 exchanges)
             if customer_phone:

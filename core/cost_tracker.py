@@ -65,10 +65,33 @@ def _get_model_pricing(model: str) -> dict:
     return MODEL_PRICING.get(model, MODEL_PRICING["default"])
 
 
-def _calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Calculate cost in USD for a single API call."""
+def _calculate_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
+) -> float:
+    """Calculate cost in USD for a single API call.
+
+    Accounts for Anthropic prompt caching pricing:
+    - cache_creation: 1.25x normal input price (writing to cache)
+    - cache_read: 0.1x normal input price (90% cheaper!)
+    - remaining: normal input price
+    """
     pricing = _get_model_pricing(model)
-    input_cost = (input_tokens / 1_000_000) * pricing["input"]
+
+    if cache_creation_tokens > 0 or cache_read_tokens > 0:
+        # Cache-aware pricing
+        normal_input = max(0, input_tokens - cache_creation_tokens - cache_read_tokens)
+        input_cost = (
+            (normal_input / 1_000_000) * pricing["input"]
+            + (cache_creation_tokens / 1_000_000) * pricing["input"] * 1.25
+            + (cache_read_tokens / 1_000_000) * pricing["input"] * 0.10
+        )
+    else:
+        input_cost = (input_tokens / 1_000_000) * pricing["input"]
+
     output_cost = (output_tokens / 1_000_000) * pricing["output"]
     return round(input_cost + output_cost, 6)
 
@@ -81,15 +104,18 @@ def track_api_cost(
     customer_phone: str = "",
     smart_context_used: bool = False,
     estimated_full_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
 ):
     """Track cost of a single Claude API call.
 
     Called after every API call to accumulate daily costs.
     When smart_context_used=True, also tracks estimated token savings.
+    Accounts for prompt caching pricing when cache tokens are provided.
     """
     _load_cost_state()
 
-    cost_usd = _calculate_cost(model, input_tokens, output_tokens)
+    cost_usd = _calculate_cost(model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)
     today = datetime.now(IST).strftime("%Y-%m-%d")
 
     # Initialize daily structure
