@@ -159,10 +159,12 @@ async function syncManualMessageToDigitalKetu(conversationId, ownerUserId) {
     if (!recentMessages.length) return
 
     // Format messages for Digital Ketu learning
+    // is_owner: true when Ketu sent the message (no contactId = owner message)
     const formattedMessages = recentMessages.reverse().map(m => ({
       sender_id: m.contactId ? m.contact?.whatsappNumber : ownerUserId,
       content: m.content || '',
-      is_ai_generated: m.metadata?.ai_generated === true || m.metadata?.source === 'digital-ketu'
+      is_ai_generated: m.metadata?.ai_generated === true || m.metadata?.source === 'digital-ketu',
+      is_owner: !m.contactId,  // Owner messages have no contactId
     }))
 
     await axios.post(`${DIGITAL_KETU_URL}/api/learn/wwbun-sync`, {

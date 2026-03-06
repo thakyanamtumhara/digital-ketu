@@ -589,11 +589,18 @@ def _save_learning_buffer(buffer: list[dict]):
 
 
 def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int:
-    """Count how many quality manual Ketu messages are in the buffer."""
+    """Count how many quality manual Ketu messages are in the buffer.
+
+    Identifies owner messages using either:
+    - is_owner flag (explicit, from wwbun extension)
+    - sender_id matching owner_user_id (fallback)
+    """
     from learner.chat_learner import is_junk_message
     count = 0
     for m in buffer:
-        if m.get("sender_id") != owner_user_id:
+        # Check if this is an owner message: explicit flag OR sender_id match
+        is_owner = m.get("is_owner", False) or m.get("sender_id") == owner_user_id
+        if not is_owner:
             continue
         if m.get("is_ai_generated"):
             continue
@@ -700,6 +707,17 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
 
     # --- PAID feature: accumulate messages for batch Claude learning ---
 
+    # Debug: log what wwbun is sending so we can trace sender_id mismatch
+    if req.messages:
+        sample = req.messages[:3]
+        logger.info(
+            f"[wwbun-sync DEBUG] owner_user_id={req.owner_user_id!r}, "
+            f"sample sender_ids={[m.get('sender_id') for m in sample]}, "
+            f"sample is_owner={[m.get('is_owner') for m in sample]}, "
+            f"sample is_ai={[m.get('is_ai_generated') for m in sample]}, "
+            f"sample content={[m.get('content', '')[:40] for m in sample]}"
+        )
+
     # Add new messages to buffer
     buffer = _get_learning_buffer()
     buffer.extend(req.messages)
@@ -757,15 +775,28 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
             items_count=0,
         )
 
+        # Count quality in THIS batch for accurate stats tracking
+        # (even though we're not learning yet, dashboard should show quality messages arriving)
+        from learner.chat_learner import filter_messages as _filter_msgs
+        _, batch_stats = _filter_msgs(req.messages, owner_key="sender_id", owner_value=req.owner_user_id)
+        batch_quality = batch_stats.get("kept", 0)
+
+        # Collect quality message previews from this batch
+        batch_quality_previews = []
+        for m in req.messages:
+            is_owner = m.get("is_owner", False) or m.get("sender_id") == req.owner_user_id
+            if is_owner and not m.get("is_ai_generated") and len(m.get("content", "").split()) >= 3:
+                batch_quality_previews.append(m.get("content", "")[:120])
+
         # Still track sync stats even when buffering
         _track_wwbun_sync(
             total_messages=len(req.messages),
-            quality_count=0,
-            junk_count=0,
-            short_count=0,
+            quality_count=batch_quality,
+            junk_count=batch_stats.get("junk", 0),
+            short_count=batch_stats.get("too_short", 0),
             knowledge_count=0,
             enders_learned=ender_result.get("new_enders", 0),
-            quality_previews=[],
+            quality_previews=batch_quality_previews,
             details={
                 "buffered": True,
                 "quality_in_buffer": quality_count,

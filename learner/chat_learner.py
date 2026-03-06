@@ -124,7 +124,7 @@ def filter_messages(messages: list[dict], owner_key: str = "sender", owner_value
 
         # Word count check
         word_count = len(text.split())
-        is_owner = owner_value and owner_value.lower() in str(m.get(owner_key, "")).lower()
+        is_owner = m.get("is_owner", False) or (owner_value and owner_value.lower() in str(m.get(owner_key, "")).lower())
 
         min_words = _MIN_WORDS_OWNER if is_owner else _MIN_WORDS_CUSTOMER
         if word_count < min_words:
@@ -267,10 +267,14 @@ def extract_knowledge_from_wwbun_messages(
     """
     client = Anthropic(api_key=settings.anthropic_api_key)
 
+    # Helper: check if a message is from the owner (Ketu)
+    def _is_owner_msg(m: dict) -> bool:
+        return m.get("is_owner", False) or m.get("sender_id") == owner_user_id
+
     # Filter: only messages sent by owner, exclude AI-generated ones
     manual_messages = [
         m for m in messages
-        if m.get("sender_id") == owner_user_id
+        if _is_owner_msg(m)
         and not m.get("is_ai_generated", False)
     ]
 
@@ -283,7 +287,7 @@ def extract_knowledge_from_wwbun_messages(
     # Check if we have any quality Ketu messages BEFORE calling Claude API
     quality_ketu_msgs = [
         m for m in filtered
-        if m.get("sender_id") == owner_user_id and not m.get("is_ai_generated", False)
+        if _is_owner_msg(m) and not m.get("is_ai_generated", False)
     ]
     if not quality_ketu_msgs:
         logger.info(f"[wwbun-learn] 0 quality Ketu messages after filtering — skipping API call (saved money)")
@@ -298,7 +302,7 @@ def extract_knowledge_from_wwbun_messages(
     # but only learn FROM Ketu's messages
     chat_context = []
     for m in filtered[:200]:
-        role = "KETU" if m.get("sender_id") == owner_user_id else "CUSTOMER"
+        role = "KETU" if _is_owner_msg(m) else "CUSTOMER"
         is_ai = " [AI]" if m.get("is_ai_generated") else ""
         chat_context.append(f"{role}{is_ai}: {m.get('content', '')}")
 
