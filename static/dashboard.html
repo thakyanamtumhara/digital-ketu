@@ -1166,6 +1166,7 @@ async function loadDashboard() {
       else if (e.source === 'correction-learner') { iconClass = 'learn'; emoji = 'CX'; }
       else if (e.source === 'voice-learner') { iconClass = 'learn'; emoji = 'VC'; }
       else if (e.source === 'realtime-learner') { iconClass = 'learn'; emoji = 'RT'; }
+      else if (e.source === 'ketu-replied') { iconClass = 'reply'; emoji = 'KT'; }
       else { iconClass = 'reply'; emoji = '??'; }
 
       let title = '';
@@ -1241,6 +1242,14 @@ async function loadDashboard() {
         detail = e.action === 'auto-faq'
           ? (d.faqs_added || []).join(', ')
           : `${issues} issues found` + (topics ? ` | Hot: ${topics}` : '');
+      } else if (e.source === 'ketu-replied') {
+        if (e.action === 'shutup-activated') {
+          title = `Ketu took over — AI paused ${d.cooldown_minutes ? d.cooldown_minutes + 'min' : ''}`;
+          detail = d.ketu_message ? `"${d.ketu_message.substring(0, 60)}"` : `Customer ...${d.customer_phone || ''}`;
+        } else {
+          title = `Ketu replied manually`;
+          detail = d.ketu_message ? `"${d.ketu_message.substring(0, 60)}"` : '';
+        }
       } else {
         title = e.action || e.source;
         detail = JSON.stringify(d).substring(0, 80);
