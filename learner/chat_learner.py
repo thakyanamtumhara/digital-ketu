@@ -312,16 +312,34 @@ def extract_knowledge_from_wwbun_messages(
     unique_sids = set(str(m.get("sender_id", "")).strip() for m in messages if m.get("sender_id"))
     broken_sids = len(unique_sids) <= 1
 
-    if broken_sids:
+    # Check if is_owner field has mixed values (both True and False) — means it's reliable
+    _owner_true = any(_safe_bool(m.get("is_owner")) for m in messages if m.get("is_owner") is not None)
+    _owner_false = any(not _safe_bool(m.get("is_owner")) for m in messages if m.get("is_owner") is not None)
+    is_owner_reliable = _owner_true and _owner_false
+
+    def _is_owner_by_flag(m: dict) -> bool:
+        """Use is_owner/fromMe flags only, ignoring sender_id."""
+        return _safe_bool(m.get("is_owner", False)) or _safe_bool(m.get("fromMe", False)) or _safe_bool(m.get("from_me", False))
+
+    if broken_sids and not is_owner_reliable:
         logger.warning(
-            f"[wwbun-learn] ALL sender_ids identical ({unique_sids}) — "
-            f"can't distinguish customer/owner. Using heuristic: 5+ word non-AI = manual Ketu msg."
+            f"[wwbun-learn] ALL sender_ids identical ({unique_sids}) AND is_owner unreliable — "
+            f"using heuristic: 5+ word non-AI = manual Ketu msg."
         )
-        # When sender_ids are broken, treat longer non-AI messages as Ketu's manual replies
+        # Last resort: treat longer non-AI messages as Ketu's manual replies
         manual_messages = [
             m for m in messages
             if not _safe_bool(m.get("is_ai_generated", False))
             and len((m.get("content", "") or m.get("text", "") or m.get("body", "")).split()) >= 5
+        ]
+    elif broken_sids and is_owner_reliable:
+        logger.info(
+            f"[wwbun-learn] sender_ids broken but is_owner field reliable — using is_owner for filtering"
+        )
+        manual_messages = [
+            m for m in messages
+            if _is_owner_by_flag(m)
+            and not _safe_bool(m.get("is_ai_generated", False))
         ]
     else:
         # Normal mode: filter by owner
@@ -356,9 +374,11 @@ def extract_knowledge_from_wwbun_messages(
     chat_context = []
     for m in filtered[:200]:
         text = m.get("content", "") or m.get("text", "") or m.get("body", "")
-        if broken_sids:
-            # Heuristic: short messages = customer, longer = Ketu
+        if broken_sids and not is_owner_reliable:
+            # Last resort heuristic: short messages = customer, longer = Ketu
             role = "KETU" if len(text.split()) >= 5 else "CUSTOMER"
+        elif broken_sids and is_owner_reliable:
+            role = "KETU" if _is_owner_by_flag(m) else "CUSTOMER"
         else:
             role = "KETU" if _is_owner_msg(m) else "CUSTOMER"
         is_ai = " [AI]" if m.get("is_ai_generated") else ""

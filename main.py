@@ -605,6 +605,7 @@ def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
 
         # Detect if sender_ids are broken (all same) for this chat
         broken_sids = _all_sender_ids_same(chat_msgs)
+        use_flag = broken_sids and _is_owner_field_reliable(chat_msgs)
 
         for msg in chat_msgs:
             content = (msg.get("content", "") or msg.get("text", "") or msg.get("body", "")).strip()
@@ -613,8 +614,8 @@ def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
 
             is_ai = _safe_bool(msg.get("is_ai_generated"))
 
-            if broken_sids:
-                # Heuristic: short messages (≤4 words) = customer, longer = Ketu
+            if broken_sids and not use_flag:
+                # Last resort heuristic: short messages (≤4 words) = customer, longer = Ketu
                 words = len(content.split())
                 if words <= 4:
                     last_customer_msg = content
@@ -627,7 +628,7 @@ def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
                     pairs_checked += 1
                     last_customer_msg = ""
             else:
-                is_owner = _is_owner_message(msg, owner_user_id)
+                is_owner = _is_owner_by_flag(msg) if use_flag else _is_owner_message(msg, owner_user_id)
                 if not is_owner:
                     last_customer_msg = content
                 elif is_owner and not is_ai and last_customer_msg:
@@ -748,6 +749,35 @@ def _all_sender_ids_same(buffer: list[dict]) -> bool:
     return len(sids) <= 1
 
 
+def _is_owner_field_reliable(buffer: list[dict]) -> bool:
+    """Check if the is_owner field has MIXED values (both True and False).
+    When wwbun sends is_owner based on !contactId, it should have both values.
+    If all are True or all are False/missing, it's unreliable.
+    """
+    has_true = False
+    has_false = False
+    for m in buffer:
+        raw = m.get("is_owner")
+        if raw is None:
+            continue
+        if _safe_bool(raw):
+            has_true = True
+        else:
+            has_false = True
+        if has_true and has_false:
+            return True
+    return False
+
+
+def _is_owner_by_flag(m: dict) -> bool:
+    """Check is_owner using only the is_owner/fromMe flags, ignoring sender_id."""
+    if _safe_bool(m.get("is_owner")):
+        return True
+    if _safe_bool(m.get("fromMe")) or _safe_bool(m.get("from_me")):
+        return True
+    return False
+
+
 def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int:
     """Count quality messages in the buffer for learning readiness.
 
@@ -759,10 +789,14 @@ def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int
     from learner.chat_learner import is_junk_message
 
     # Detect broken sender_id data from wwbun
-    if _all_sender_ids_same(buffer):
+    broken_sids = _all_sender_ids_same(buffer)
+    use_is_owner_flag = broken_sids and _is_owner_field_reliable(buffer)
+
+    if broken_sids and not use_is_owner_flag:
+        # is_owner field also unreliable — fall back to counting substantive messages
         logger.warning(
-            f"[quality-count] ALL sender_ids identical — wwbun not sending real sender. "
-            f"Falling back to counting all substantive messages as quality."
+            f"[quality-count] ALL sender_ids identical AND is_owner unreliable — "
+            f"falling back to counting all substantive messages as quality."
         )
         count = 0
         for m in buffer:
@@ -777,12 +811,17 @@ def _count_quality_owner_messages(buffer: list[dict], owner_user_id: str) -> int
             count += 1
         return count
 
-    # Normal mode: count customer→owner pairs
+    if use_is_owner_flag:
+        logger.info(
+            "[quality-count] sender_ids broken but is_owner field is reliable — using is_owner for pairing"
+        )
+
+    # Normal mode (or broken sender_id with reliable is_owner): count customer→owner pairs
     pairs = 0
     last_customer_msg = None
 
     for m in buffer:
-        is_owner = _is_owner_message(m, owner_user_id)
+        is_owner = _is_owner_by_flag(m) if use_is_owner_flag else _is_owner_message(m, owner_user_id)
         is_ai = _safe_bool(m.get("is_ai_generated"))
         text = m.get("content", "") or m.get("text", "") or m.get("body", "")
 
@@ -813,14 +852,16 @@ def _extract_pairs_from_buffer(buffer: list[dict], owner_user_id: str) -> list[d
     """Extract customer→Ketu pairs from buffer for dashboard preview.
     Includes AI-generated replies so user can see all conversations.
 
-    When sender_ids are all the same (wwbun bug), uses heuristic:
-    short messages (≤4 words) = likely customer, longer = likely Ketu.
+    Priority: use is_owner flag when sender_ids are broken but is_owner is reliable.
+    Last resort: word-count heuristic (short=customer, long=Ketu).
     """
     pairs = []
     broken_sids = _all_sender_ids_same(buffer)
+    use_is_owner_flag = broken_sids and _is_owner_field_reliable(buffer)
 
-    if broken_sids:
-        # Heuristic pairing: short msg → customer question, long msg → Ketu reply
+    if broken_sids and not use_is_owner_flag:
+        # Last resort: is_owner also unreliable, use word-count heuristic
+        logger.warning("[extract-pairs] sender_ids AND is_owner both unreliable — using word-count heuristic")
         last_short_msg = None
         for m in buffer:
             is_ai = _safe_bool(m.get("is_ai_generated"))
@@ -829,18 +870,19 @@ def _extract_pairs_from_buffer(buffer: list[dict], owner_user_id: str) -> list[d
                 continue
             words = len(text.split())
             if words <= 4:
-                # Short message — likely customer
                 last_short_msg = text[:100]
             elif words >= 3 and last_short_msg:
-                # Longer message after a short one — likely Ketu reply
                 pairs.append({"customer": last_short_msg, "ketu": text[:120], "ai": is_ai})
                 last_short_msg = None
         return pairs
 
-    # Normal mode
+    if use_is_owner_flag:
+        logger.info("[extract-pairs] sender_ids broken but is_owner reliable — using is_owner for pairing")
+
+    # Normal mode (or broken sender_id with reliable is_owner flag)
     last_customer_msg = None
     for m in buffer:
-        is_owner = _is_owner_message(m, owner_user_id)
+        is_owner = _is_owner_by_flag(m) if use_is_owner_flag else _is_owner_message(m, owner_user_id)
         if not is_owner:
             text = m.get("content", "") or m.get("text", "") or m.get("body", "")
             if text and len(text.strip()) > 0:
