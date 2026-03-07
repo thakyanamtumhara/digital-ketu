@@ -322,6 +322,74 @@ async def reload_knowledge():
     }
 
 
+@app.get("/api/knowledge/cleanup-enders")
+async def cleanup_bad_enders():
+    """Remove greetings and junk from learned enders list.
+
+    Fixes the bug where greetings like 'hi', 'hello' were incorrectly
+    learned as conversation enders because Ketu was busy and didn't reply.
+    """
+    from core.database import is_db_available, load_knowledge_from_db, save_knowledge
+
+    # Greetings that should NEVER be enders
+    never_enders = {
+        "hi", "hii", "hiii", "hiiii", "hello", "hey", "heyy", "heyyy",
+        "hlo", "helo", "hllo", "helloo", "hellooo",
+        "namaste", "namaskar", "namaskaar",
+        "good morning", "good afternoon", "good evening", "good night",
+        "gm", "gn", "sir", "bhai", "bhaiya", "bro", "boss",
+        "hello sir", "hi sir", "hey sir", "hello bhai", "hi bhai",
+    }
+
+    # Also remove obvious junk (gibberish, system messages, etc.)
+    junk_prefixes = ["[image", "[audio", "[video", "[sticker", "[system", "[order", "[reacted"]
+
+    enders_data = None
+    if is_db_available():
+        enders_data = load_knowledge_from_db("conversation_enders")
+
+    if not enders_data:
+        return {"status": "no_data", "removed": 0}
+
+    learned = enders_data.get("learned_enders", [])
+    original_count = len(learned)
+
+    # Filter out greetings and junk
+    cleaned = []
+    removed = []
+    for e in learned:
+        pattern = e.get("pattern", e) if isinstance(e, dict) else e
+        pattern_lower = pattern.lower().strip()
+
+        # Remove greetings
+        if pattern_lower in never_enders:
+            removed.append(pattern_lower)
+            continue
+
+        # Remove junk prefixes
+        if any(pattern_lower.startswith(p) for p in junk_prefixes):
+            removed.append(pattern_lower)
+            continue
+
+        cleaned.append(e)
+
+    enders_data["learned_enders"] = cleaned
+
+    # Save back
+    save_knowledge("conversation_enders", enders_data)
+
+    # Also invalidate the engine's cached ender patterns
+    invalidate_cache()
+
+    return {
+        "status": "cleaned",
+        "removed_count": len(removed),
+        "removed_patterns": removed,
+        "remaining_count": len(cleaned),
+        "original_count": original_count,
+    }
+
+
 @app.get("/api/knowledge")
 async def get_knowledge():
     """View current knowledge base."""

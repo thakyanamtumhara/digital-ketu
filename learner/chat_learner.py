@@ -717,6 +717,16 @@ def learn_conversation_enders(messages: list[dict], owner_user_id: str) -> dict:
     new_enders = []
     new_non_enders = []
 
+    # NEVER learn greetings as enders — these are conversation starters, not enders.
+    # Ketu may not reply to "hi" because he's busy, but AI must always reply.
+    _never_learn_as_ender = {
+        "hi", "hii", "hiii", "hiiii", "hello", "hey", "heyy", "heyyy",
+        "hlo", "helo", "hllo", "helloo", "hellooo",
+        "namaste", "namaskar", "namaskaar",
+        "good morning", "good afternoon", "good evening", "good night",
+        "gm", "gn", "sir", "bhai", "bhaiya", "bro", "boss",
+    }
+
     # Walk through messages looking for conversation gaps
     for i in range(len(messages) - 1):
         msg = messages[i]
@@ -736,6 +746,10 @@ def learn_conversation_enders(messages: list[dict], owner_user_id: str) -> dict:
             continue
 
         content_lower = content.lower().rstrip("!.,?").strip()
+
+        # Never learn greetings as enders
+        if content_lower in _never_learn_as_ender:
+            continue
 
         # Pattern 1: Customer said something, then ANOTHER customer msg came (Ketu stayed silent)
         # This means Ketu chose not to reply — it's a conversation ender
@@ -766,7 +780,9 @@ def learn_conversation_enders(messages: list[dict], owner_user_id: str) -> dict:
     if last_msg.get("sender_id") != owner_user_id:
         content = last_msg.get("content", "").strip()
         content_lower = content.lower().rstrip("!.,?").strip()
-        if content and len(content) <= 50 and content_lower not in existing_learned:
+        if (content and len(content) <= 50
+                and content_lower not in existing_learned
+                and content_lower not in _never_learn_as_ender):
             if "?" not in content:
                 new_enders.append({
                     "pattern": content_lower,

@@ -190,7 +190,7 @@ def _build_system_prompt(
     static_prompt = (
         "You are Digital Ketu — AI twin of Ketu, owner of Sale91.com (B2B blank wears, Tiruppur).\n"
         "You ARE Ketu. Not a chatbot.\n\n"
-        "STYLE: Hinglish (Hindi+English mix). MAX 10-15 WORDS per reply. Respectful (Ji/Sir/Bhai). Direct pricing. Confident. Factory owner feel.\n"
+        "STYLE: Hinglish (Hindi+English mix). STRICT LIMIT: Reply in 10-15 words ONLY. Count your words BEFORE replying — if over 15 words, rewrite shorter. Respectful (Ji/Sir/Bhai). Direct pricing. Confident. Factory owner feel.\n"
         "PHRASES: \"Ji sir\", \"Bilkul ji\", \"Tiruppur se direct\", \"Dispatch within minutes\", \"Factory direct rate\", \"No middleman\"\n\n"
         "RULES:\n"
         "- Seedha rate bata, 'DM for price' KABHI mat bol\n"
@@ -370,6 +370,17 @@ def _load_ender_patterns() -> tuple[set, set]:
         "badhiya", "bohot accha", "bahut accha",
     }
 
+    # NEVER treat greetings as enders — these are conversation STARTERS
+    # This protects against bad learning (wwbun sync incorrectly marking greetings as enders)
+    never_enders = {
+        "hi", "hii", "hiii", "hiiii", "hello", "hey", "heyy", "heyyy",
+        "hlo", "helo", "hllo", "helloo", "hellooo",
+        "namaste", "namaskar", "namaskaar",
+        "good morning", "good afternoon", "good evening", "good night",
+        "gm", "gn",
+        "sir", "bhai", "bhaiya", "bro", "boss",
+    }
+
     learned = set()
     non_enders = set()
 
@@ -405,9 +416,9 @@ def _load_ender_patterns() -> tuple[set, set]:
             pattern = e.get("pattern", e) if isinstance(e, dict) else e
             non_enders.add(pattern.lower())
 
-    # Final set: hardcoded + learned - non_enders
-    _ender_patterns = (hardcoded | learned) - non_enders
-    _non_ender_patterns = non_enders
+    # Final set: hardcoded + learned - non_enders - never_enders
+    _ender_patterns = (hardcoded | learned) - non_enders - never_enders
+    _non_ender_patterns = non_enders | never_enders
 
     logger.info(f"[Enders] Loaded {len(_ender_patterns)} patterns ({len(learned)} learned, {len(non_enders)} non-enders)")
     return _ender_patterns, _non_ender_patterns
@@ -730,13 +741,27 @@ def generate_reply(
         try:
             response = client.messages.create(
                 model=model,
-                max_tokens=60,  # Ketu replies in 10-15 words (~30-40 tokens)
+                max_tokens=45,  # Hard cap: 15 words ≈ 35-40 tokens. Prevents cut-off replies.
                 system=system_blocks,  # List format enables prompt caching
                 messages=messages,
                 timeout=httpx.Timeout(30.0, connect=10.0),
             )
 
             reply = response.content[0].text
+
+            # Fix cut-off replies: if reply was truncated mid-sentence by max_tokens,
+            # trim to the last complete sentence/phrase. "Kaunsa pas" → removed.
+            if reply and response.stop_reason == "max_tokens":
+                logger.warning(f"[CutOff] Reply truncated by max_tokens: '{reply[-30:]}'")
+                # Find last sentence boundary (. ! ? or newline)
+                last_boundary = max(
+                    reply.rfind(". "), reply.rfind(".\n"), reply.rfind("!"),
+                    reply.rfind("?"), reply.rfind("\n\n"),
+                )
+                if last_boundary > len(reply) // 3:
+                    # Trim to last complete sentence
+                    reply = reply[:last_boundary + 1].strip()
+                    logger.info(f"[CutOff] Trimmed to: '{reply[-30:]}'")
 
             # Log actual token usage vs budget
             actual_input = response.usage.input_tokens
@@ -785,7 +810,7 @@ def generate_reply(
                 try:
                     fallback_response = client.messages.create(
                         model=SONNET_MODEL,
-                        max_tokens=60,
+                        max_tokens=45,
                         system=system_blocks,
                         messages=messages,
                         timeout=httpx.Timeout(30.0, connect=10.0),
