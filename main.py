@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from pathlib import Path
@@ -702,6 +703,8 @@ def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
 # Free features (enders, bought detection, repeat buyer) still run immediately.
 
 _LEARNING_BUFFER_MIN_PAIRS = 10  # Need 10 quality Ketu manual messages before learning
+_LEARNING_FLUSH_COOLDOWN = 1800  # 30 minutes minimum between Claude learning calls
+_last_flush_time: float = 0  # Timestamp of last Claude learning flush
 _last_owner_user_id = ""  # Remember last owner_user_id from sync calls
 
 
@@ -1050,8 +1053,13 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     filter_stats = {"total": len(req.messages), "kept": 0, "junk": 0, "too_short": 0}
     quality_messages = []
 
-    if quality_count >= _LEARNING_BUFFER_MIN_PAIRS:
-        # Enough data! Flush buffer and learn
+    global _last_flush_time
+    time_since_flush = time.time() - _last_flush_time
+    cooldown_active = time_since_flush < _LEARNING_FLUSH_COOLDOWN
+
+    if quality_count >= _LEARNING_BUFFER_MIN_PAIRS and not cooldown_active:
+        # Enough data AND cooldown expired — flush and learn
+        _last_flush_time = time.time()
         learn_result = await asyncio.to_thread(
             _flush_learning_buffer, req.owner_user_id
         )
@@ -1076,7 +1084,14 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
             },
         )
     else:
-        # Not enough yet — just log the buffering
+        # Not enough data or cooldown active — buffer the messages
+        reason = "cooldown_active" if cooldown_active and quality_count >= _LEARNING_BUFFER_MIN_PAIRS else "insufficient_data"
+        cooldown_remaining = max(0, int(_LEARNING_FLUSH_COOLDOWN - time_since_flush)) if cooldown_active else 0
+        if cooldown_active and quality_count >= _LEARNING_BUFFER_MIN_PAIRS:
+            logger.info(
+                f"[wwbun-sync] Enough data ({quality_count} pairs) but cooldown active "
+                f"({cooldown_remaining}s remaining). Buffering for next flush."
+            )
         log_activity(
             source="wwbun-sync",
             action="buffered",
@@ -1085,7 +1100,9 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
                 "buffer_total": len(buffer),
                 "quality_in_buffer": quality_count,
                 "needed": _LEARNING_BUFFER_MIN_PAIRS,
-                "remaining": _LEARNING_BUFFER_MIN_PAIRS - quality_count,
+                "remaining": max(0, _LEARNING_BUFFER_MIN_PAIRS - quality_count),
+                "reason": reason,
+                "cooldown_remaining_sec": cooldown_remaining,
             },
             items_count=0,
         )
@@ -1113,6 +1130,7 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
             "quality_pairs": quality_count,
             "threshold": _LEARNING_BUFFER_MIN_PAIRS,
             "total_buffered": len(buffer) if learn_result.get("status") == "buffered" else 0,
+            "flush_cooldown_sec": max(0, int(_LEARNING_FLUSH_COOLDOWN - (time.time() - _last_flush_time))),
         },
         "learning": {
             "filter_stats": filter_stats,
