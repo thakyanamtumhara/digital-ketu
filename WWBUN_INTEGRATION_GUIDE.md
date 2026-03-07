@@ -23,17 +23,25 @@ let digitalKetuEnabled = process.env.DIGITAL_KETU_ENABLED === 'true'
 
 ```javascript
 // ============ DIGITAL KETU AI REPLY ============
-async function getDigitalKetuReply(message, customerPhone, customerName, conversationHistory = []) {
+async function getDigitalKetuReply(message, customerPhone, customerName, conversationHistory = [], audioUrl = '') {
   if (!DIGITAL_KETU_URL || !digitalKetuEnabled) return null
 
   try {
-    const response = await axios.post(`${DIGITAL_KETU_URL}/api/reply`, {
+    const payload = {
       message,
       customer_phone: customerPhone,
       customer_name: customerName,
       conversation_history: conversationHistory
-    }, { timeout: 30000 })
+    }
+    // If audio URL is provided, include it so Digital Ketu can transcribe the voice note
+    if (audioUrl) {
+      payload.audio_url = audioUrl
+    }
 
+    const response = await axios.post(`${DIGITAL_KETU_URL}/api/reply`, payload, { timeout: 45000 })
+
+    // Check should_reply flag — false means skip (conversation ender)
+    if (response.data?.should_reply === false) return null
     return response.data?.reply || null
   } catch (error) {
     console.error('[Digital Ketu] Error:', error.message)
@@ -48,7 +56,8 @@ Add this Digital Ketu AI reply block:
 
 ```javascript
   // ========== DIGITAL KETU AI AUTO-REPLY ==========
-  if (digitalKetuEnabled && DIGITAL_KETU_URL && content && messageType === 'TEXT') {
+  // Handle both TEXT and AUDIO messages
+  if (digitalKetuEnabled && DIGITAL_KETU_URL && (messageType === 'TEXT' || messageType === 'AUDIO')) {
     try {
       // Get recent conversation history for context
       const recentMessages = await db.message.findMany({
@@ -64,10 +73,24 @@ Add this Digital Ketu AI reply block:
         content: m.content
       }))
 
-      console.log(`[Digital Ketu] Getting AI reply for ${contact.whatsappNumber}...`)
-      const aiReply = await getDigitalKetuReply(content, contact.whatsappNumber, contact.name || '', history)
+      // Build request payload
+      const payload = {
+        message: messageType === 'AUDIO' ? '[audio]' : content,
+        customer_phone: contact.whatsappNumber,
+        customer_name: contact.name || '',
+        conversation_history: history
+      }
 
-      if (aiReply) {
+      // For AUDIO messages: include the audio file URL so Digital Ketu can transcribe
+      if (messageType === 'AUDIO' && message.mediaUrl) {
+        payload.audio_url = message.mediaUrl  // Direct URL to the audio file
+      }
+
+      console.log(`[Digital Ketu] Getting AI reply for ${contact.whatsappNumber}... (type: ${messageType})`)
+      const response = await axios.post(`${DIGITAL_KETU_URL}/api/reply`, payload, { timeout: 45000 })
+      const aiReply = response.data?.reply
+
+      if (aiReply && response.data?.should_reply !== false) {
         await sendOutboundMessage({
           contactId: contact.id,
           content: aiReply,

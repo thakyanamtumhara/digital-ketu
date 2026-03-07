@@ -160,6 +160,22 @@ def get_audio_stats() -> dict:
     }
 
 
+async def download_audio_from_url(audio_url: str) -> bytes | None:
+    """Download audio from a direct URL (e.g., from wwbun's hosted file)."""
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(audio_url)
+            resp.raise_for_status()
+            if len(resp.content) < 100:
+                logger.error(f"Audio file too small ({len(resp.content)} bytes) from URL")
+                return None
+            logger.info(f"Downloaded audio from URL: {len(resp.content)} bytes")
+            return resp.content
+    except Exception as e:
+        logger.error(f"Audio download from URL failed: {e}")
+        return None
+
+
 async def download_whatsapp_media(media_id: str) -> bytes | None:
     """Download media from WhatsApp Business API using media ID.
 
@@ -236,29 +252,58 @@ async def transcribe_audio(audio_bytes: bytes, language: str = "hi") -> str | No
         return None
 
 
-async def process_whatsapp_audio(
-    media_id: str,
+async def process_audio_from_any_source(
+    media_id: str = "",
+    audio_url: str = "",
+    audio_base64: str = "",
     language: str = "hi",
     customer_phone: str = "",
+    source: str = "whatsapp",
 ) -> str | None:
-    """Full pipeline: download WhatsApp audio → transcribe → return text.
+    """Download audio from any source (URL, base64, or WhatsApp media_id) → transcribe.
 
-    Audio bytes are NOT stored — only returned as text.
-    Tracks transcription stats for dashboard visibility.
+    Priority: audio_base64 > audio_url > media_id
     """
-    audio_bytes = await download_whatsapp_media(media_id)
+    import base64
+
+    audio_bytes: bytes | None = None
+
+    if audio_base64:
+        try:
+            audio_bytes = base64.b64decode(audio_base64)
+            logger.info(f"Got audio from base64: {len(audio_bytes)} bytes")
+        except Exception as e:
+            logger.error(f"Invalid base64 audio: {e}")
+    elif audio_url:
+        audio_bytes = await download_audio_from_url(audio_url)
+    elif media_id:
+        audio_bytes = await download_whatsapp_media(media_id)
+
     if not audio_bytes:
         _track_transcription_failure()
         return None
 
     text = await transcribe_audio(audio_bytes, language=language)
     if text:
-        _track_transcription(text, customer_phone=customer_phone, source="whatsapp")
-
-        # Track Whisper cost
+        _track_transcription(text, customer_phone=customer_phone, source=source)
         from core.cost_tracker import track_whisper_cost
-        # Estimate audio duration from file size (OGG ~16kbps for voice)
-        estimated_seconds = len(audio_bytes) / 2000  # rough estimate
-        track_whisper_cost(duration_seconds=estimated_seconds, source="whatsapp-audio")
+        estimated_seconds = len(audio_bytes) / 2000
+        track_whisper_cost(duration_seconds=estimated_seconds, source=f"{source}-audio")
+
+    return text
+
+
+async def process_whatsapp_audio(
+    media_id: str,
+    language: str = "hi",
+    customer_phone: str = "",
+) -> str | None:
+    """Full pipeline: download WhatsApp audio → transcribe → return text."""
+    return await process_audio_from_any_source(
+        media_id=media_id,
+        language=language,
+        customer_phone=customer_phone,
+        source="whatsapp",
+    )
 
     return text

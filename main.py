@@ -194,6 +194,10 @@ class ReplyRequest(BaseModel):
     customer_phone: str = ""
     customer_name: str = ""
     conversation_history: list[dict] | None = None
+    # Audio fields — wwbun sends these when customer sends voice note
+    audio_url: str = ""       # Direct URL to audio file (from wwbun's storage)
+    audio_base64: str = ""    # Base64-encoded audio bytes
+    media_id: str = ""        # WhatsApp Business API media ID
 
 
 class ReplyResponse(BaseModel):
@@ -216,19 +220,69 @@ async def api_reply(req: ReplyRequest):
     msg_lower = req.message.strip().lower()
     if msg_lower in ("[audio]", "[image]", "[video]", "[sticker]", "[document]",
                       "[location]", "[contacts]", "[system message]"):
-        # Voice notes: politely ask for text (can't transcribe without audio data)
+        # Voice notes: transcribe if audio data provided, otherwise ask for text
         if msg_lower == "[audio]":
-            reply = "Ji sir, voice message text mein bhej dijiye please — jaldi reply karunga!"
-            log_activity(
-                source="api-reply",
-                action="voice-text-request",
-                details={
-                    "customer_phone": req.customer_phone[-4:] if req.customer_phone else "unknown",
-                    "customer_name": req.customer_name or "unknown",
-                },
-                items_count=0,
-            )
-            return ReplyResponse(reply=reply, status="ok", should_reply=True)
+            has_audio = req.audio_url or req.audio_base64 or req.media_id
+            if has_audio and settings.openai_api_key:
+                # Transcribe the voice note
+                from learner.audio_transcriber import process_audio_from_any_source
+                try:
+                    transcribed = await process_audio_from_any_source(
+                        media_id=req.media_id,
+                        audio_url=req.audio_url,
+                        audio_base64=req.audio_base64,
+                        customer_phone=req.customer_phone,
+                        source="wwbun",
+                    )
+                except Exception as e:
+                    logger.error(f"[VoiceNote] wwbun transcription failed: {e}")
+                    transcribed = None
+
+                if transcribed:
+                    # Got text from voice — now generate reply as normal
+                    logger.info(f"[VoiceNote] wwbun transcribed: '{transcribed[:60]}' from {req.customer_phone[-4:] if req.customer_phone else '?'}")
+                    log_activity(
+                        source="api-reply",
+                        action="voice-transcribed",
+                        details={
+                            "customer_phone": req.customer_phone[-4:] if req.customer_phone else "unknown",
+                            "text_preview": transcribed[:80],
+                        },
+                        items_count=1,
+                    )
+                    # Use transcribed text as the message for reply generation
+                    reply = await asyncio.to_thread(
+                        generate_reply,
+                        message=transcribed,
+                        customer_phone=req.customer_phone,
+                        customer_name=req.customer_name,
+                        conversation_history=req.conversation_history,
+                    )
+                    if not reply:
+                        return ReplyResponse(reply="", status="skipped", should_reply=False)
+                    escalation = get_last_escalation(req.customer_phone) if req.customer_phone else {}
+                    return ReplyResponse(
+                        reply=reply,
+                        escalation_level=escalation.get("level", "none"),
+                        escalation_reason=escalation.get("reason", ""),
+                    )
+                else:
+                    # Transcription failed — ask for text
+                    reply = "Ji sir, voice message clear nahi aa raha. Text mein bata dijiye please!"
+                    return ReplyResponse(reply=reply, status="ok", should_reply=True)
+            else:
+                # No audio data or no OpenAI key — ask for text
+                reply = "Ji sir, voice message text mein bhej dijiye please — jaldi reply karunga!"
+                log_activity(
+                    source="api-reply",
+                    action="voice-text-request",
+                    details={
+                        "customer_phone": req.customer_phone[-4:] if req.customer_phone else "unknown",
+                        "customer_name": req.customer_name or "unknown",
+                    },
+                    items_count=0,
+                )
+                return ReplyResponse(reply=reply, status="ok", should_reply=True)
         # Other media: skip silently (images, stickers, etc.)
         return ReplyResponse(reply="", status="skipped", should_reply=False)
 
