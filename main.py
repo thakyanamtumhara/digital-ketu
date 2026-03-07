@@ -1654,6 +1654,9 @@ async def learn_voice_note(req: VoiceNoteRequest):
             },
             items_count=result.get("count", 0),
         )
+        # Track that this voice note added to knowledge
+        from learner.audio_transcriber import track_knowledge_from_voice
+        track_knowledge_from_voice()
 
     return result
 
