@@ -14,6 +14,9 @@ from core.customer_memory import (
 )
 from core.escalation import detect_escalation, format_escalation_notice, LEVEL_ESCALATE
 from core.ketu_only import detect_ketu_only, log_deferred_question
+from core.confidence import score_confidence, CONFIDENCE_DEFER_THRESHOLD
+from core.peak_hours import should_defer_borderline, track_ketu_reply
+from core.reply_length import track_ai_reply, get_length_constraint
 from core.token_budget import (
     estimate_tokens, truncate_to_budget, truncate_history, log_budget_usage,
     BUDGET_KNOWLEDGE_TOKENS, BUDGET_HISTORY_TOKENS, BUDGET_TOTAL_INPUT_TOKENS,
@@ -360,13 +363,20 @@ def is_shutup_active(customer_phone: str) -> bool:
     return False
 
 
-def ketu_manual_reply(customer_phone: str):
+def ketu_manual_reply(customer_phone: str, reply_text: str = ""):
     """Called when Ketu manually replies to a customer.
 
     Activates shut-up mode so AI doesn't jump back into the conversation.
     wwbun should call this (via /api/ketu-replied) when it detects Ketu typing.
+    Also tracks Ketu's activity for peak hours and reply length.
     """
     activate_shutup(customer_phone, reason="ketu_manual_reply", minutes=10)
+    # Track for peak hours detection
+    track_ketu_reply()
+    # Track reply length for auto-constraint
+    if reply_text:
+        from core.reply_length import track_ketu_reply as track_ketu_len
+        track_ketu_len(reply_text)
 
 
 def _load_ender_patterns() -> tuple[set, set]:
@@ -675,6 +685,83 @@ def generate_reply(
             activate_shutup(customer_phone, reason="ketu_only_deferral", minutes=10)
         return defer_reply
 
+    # --- CONFIDENCE SCORING ---
+    # Score how confident we are about replying to this message.
+    # Low confidence → defer to Ketu instead of risking fabrication.
+    # Borderline + Ketu active → also defer (he's online, let him handle it).
+    pre_classification = classify_message(message)
+    faq_data = None
+    ketu_only_cfg = None
+    try:
+        knowledge = load_knowledge()
+        faq_data = knowledge.get("faq", {}).get("faqs", [])
+        from core.ketu_only import _load_config as _load_ketu_config
+        ketu_only_cfg = _load_ketu_config()
+    except Exception:
+        pass
+
+    confidence = score_confidence(
+        message=message,
+        classification=pre_classification,
+        customer_phone=customer_phone,
+        faq_data=faq_data,
+        ketu_only_config=ketu_only_cfg,
+    )
+
+    if confidence["should_defer"]:
+        defer_reply = "Bhai, ye Ketu sir khud batayenge — thodi der mein reply aayega."
+        logger.info(
+            f"[Confidence] LOW score={confidence['score']} — deferring to Ketu. "
+            f"Reason: {confidence['reason']}. Message: '{message[:50]}'"
+        )
+        log_deferred_question(
+            customer_phone=customer_phone,
+            customer_name=customer_name,
+            message=message,
+            category_id="low_confidence",
+            category_name="Low Confidence",
+            reason=f"confidence={confidence['score']}: {confidence['reason']}",
+            defer_reply=defer_reply,
+        )
+        if customer_phone:
+            _conversations[customer_phone] = messages + [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": defer_reply},
+            ]
+            _conversation_timestamps[customer_phone] = time.time()
+            update_profile(customer_phone, customer_name, message)
+            activate_shutup(customer_phone, reason="low_confidence_deferral", minutes=10)
+        return defer_reply
+
+    # Check if borderline confidence should defer during Ketu's active hours
+    peak_defer = should_defer_borderline(confidence["score"])
+    if peak_defer:
+        defer_reply = peak_defer["defer_reply"]
+        logger.info(
+            f"[PeakHours] Deferring borderline (score={confidence['score']}) — "
+            f"reason: {peak_defer['reason']}. Message: '{message[:50]}'"
+        )
+        log_deferred_question(
+            customer_phone=customer_phone,
+            customer_name=customer_name,
+            message=message,
+            category_id="peak_hours_borderline",
+            category_name="Peak Hours Defer",
+            reason=f"confidence={confidence['score']}, {peak_defer['reason']}",
+            defer_reply=defer_reply,
+        )
+        if customer_phone:
+            _conversations[customer_phone] = messages + [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": defer_reply},
+            ]
+            _conversation_timestamps[customer_phone] = time.time()
+            update_profile(customer_phone, customer_name, message)
+            activate_shutup(customer_phone, reason="peak_hours_deferral", minutes=10)
+        return defer_reply
+
+    logger.info(f"[Confidence] score={confidence['score']} — {confidence['reason']}")
+
     # Trim conversation history to last 4 messages (2 exchanges) before adding new one
     # Budget: max ~400 tokens for history. Saves thousands of tokens per call.
     if len(messages) > 3:
@@ -743,6 +830,11 @@ def generate_reply(
             system_blocks[-1]["text"] += f"\n>> LANGUAGE: Customer speaks {detected_lang.upper()}. Reply in simple English."
         elif detected_lang == "gujarati":
             system_blocks[-1]["text"] += "\n>> LANGUAGE: Customer speaks GUJARATI. Reply in simple Hindi/English."
+
+    # Reply length constraint — auto-enforced when AI writes too long vs Ketu
+    length_constraint = get_length_constraint()
+    if length_constraint:
+        system_blocks[-1]["text"] += f"\n{length_constraint}"
 
     # Tell AI if this is the first message
     user_msg_count = sum(1 for m in messages if m.get("role") == "user")
@@ -881,6 +973,9 @@ def generate_reply(
                         logger.info(f"[HaikuFallback] Sonnet saved the reply: '{reply[:40]}'")
                 except Exception as fb_err:
                     logger.warning(f"[HaikuFallback] Sonnet retry also failed: {fb_err}")
+
+            # Track AI reply length for auto-constraint learning
+            track_ai_reply(reply)
 
             # Store conversation history (keep only last 4 messages = 2 exchanges)
             if customer_phone:

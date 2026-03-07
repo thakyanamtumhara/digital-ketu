@@ -847,9 +847,13 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
             if broken_sids and not use_flag:
                 # Last resort heuristic: short (≤4 words) = customer, long (5+ words) = Ketu
                 words = len(content.split())
-                if words <= 4:
+                if is_ai:
+                    # AI reply — clear customer buffer (don't let messages leak past)
+                    customer_msgs_buffer.clear()
+                    last_customer_ts = None
+                elif words <= 4:
                     _add_to_buffer(content)
-                elif words >= 5 and not is_ai and customer_msgs_buffer:
+                elif words >= 5 and customer_msgs_buffer:
                     result = _try_create_pair(content, is_ai)
                     if result == "low_quality":
                         skipped_low_quality += 1
@@ -867,6 +871,12 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
                         skipped_low_quality += 1
                     elif result == "no_intent":
                         skipped_no_intent += 1
+                    customer_msgs_buffer.clear()
+                    last_customer_ts = None
+                elif is_owner and is_ai:
+                    # AI-generated owner reply — clear customer buffer to prevent
+                    # customer messages from leaking past AI replies into the next
+                    # manual Ketu reply. Without this, messages accumulate wrongly.
                     customer_msgs_buffer.clear()
                     last_customer_ts = None
 
@@ -956,6 +966,21 @@ def _save_learning_buffer(buffer: list[dict]):
             kv_set("wwbun_learning_buffer", buffer)
     except Exception as e:
         logger.warning(f"[Buffer] Save failed: {e}")
+
+
+def _message_fingerprint(m: dict) -> str:
+    """Create a unique fingerprint for a message to detect duplicates.
+
+    Uses chat_id + sender_id + content + timestamp to identify the same message
+    sent across multiple wwbun syncs.
+    """
+    chat_id = m.get("chat_id", m.get("remote_jid", ""))
+    sender = m.get("sender_id", "")
+    content = (m.get("content", "") or m.get("text", "") or m.get("body", "")).strip()
+    ts = str(m.get("timestamp", m.get("created_at", "")))
+    if not content:
+        return ""  # Skip empty messages
+    return f"{chat_id}|{sender}|{content[:100]}|{ts}"
 
 
 def _safe_bool(val) -> bool:
@@ -1233,9 +1258,32 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     else:
         logger.warning("[wwbun-sync DEBUG] Received EMPTY messages list!")
 
-    # Add new messages to buffer
+    # Add new messages to buffer — DEDUPLICATE to prevent wwbun sending
+    # same "last 20 messages" across multiple syncs from creating duplicate pairs.
     buffer = _get_learning_buffer()
-    buffer.extend(req.messages)
+
+    # Build a set of existing message fingerprints for dedup
+    existing_fps = set()
+    for m in buffer:
+        fp = _message_fingerprint(m)
+        if fp:
+            existing_fps.add(fp)
+
+    # Only add genuinely new messages
+    new_count = 0
+    for m in req.messages:
+        fp = _message_fingerprint(m)
+        if fp and fp in existing_fps:
+            continue  # Skip duplicate
+        buffer.append(m)
+        if fp:
+            existing_fps.add(fp)
+        new_count += 1
+
+    logger.info(
+        f"[wwbun-sync DEDUP] received={len(req.messages)}, new={new_count}, "
+        f"duplicates_skipped={len(req.messages) - new_count}, buffer_total={len(buffer)}"
+    )
 
     # Cap buffer at 500 messages to prevent unbounded growth
     if len(buffer) > 500:
@@ -1246,6 +1294,16 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     # Extract pairs for display and count quality for threshold (may differ when data is broken)
     buffer_pairs = _extract_pairs_from_buffer(buffer, req.owner_user_id)
     quality_count = _count_quality_owner_messages(buffer, req.owner_user_id)
+
+    # Track Ketu's manual reply lengths and peak hours from new pairs
+    if buffer_pairs:
+        from core.reply_length import track_ketu_reply as _track_ketu_len
+        from core.peak_hours import track_ketu_replies_batch
+        manual_pairs = [p for p in buffer_pairs if not p.get("ai")]
+        for p in manual_pairs:
+            _track_ketu_len(p["ketu"])
+        if manual_pairs:
+            track_ketu_replies_batch(len(manual_pairs))
     logger.info(
         f"[wwbun-sync QUALITY] buffer_size={len(buffer)}, quality_count={quality_count}, "
         f"pairs_for_display={len(buffer_pairs)}, "
@@ -1943,7 +2001,7 @@ async def api_ketu_replied(req: KetuRepliedRequest):
     Also logs the customer's last question to the ketu-only queue so
     the dashboard shows what Ketu had to handle manually.
     """
-    ketu_manual_reply(req.customer_phone)
+    ketu_manual_reply(req.customer_phone, reply_text=req.ketu_message or "")
 
     # Log the customer's last question to ketu-only queue
     # so "Needs Ketu's Reply" section shows what Ketu handled
@@ -2493,6 +2551,20 @@ async def backup_knowledge():
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename=digital-ketu-backup-{date_str}.zip"},
     )
+
+
+# --- Confidence & Peak Hours & Reply Length Stats ---
+
+
+@app.get("/api/confidence/stats")
+async def confidence_stats():
+    """Get reply confidence scoring stats."""
+    from core.peak_hours import get_peak_hours_stats
+    from core.reply_length import get_length_stats
+    return {
+        "peak_hours": get_peak_hours_stats(),
+        "reply_length": get_length_stats(),
+    }
 
 
 # --- Scheduler Status ---
