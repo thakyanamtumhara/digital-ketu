@@ -65,6 +65,19 @@ _JUNK_PATTERNS = [
     r"^\d{10,13}$",  # Just a phone number
     r"^https?://maps\.google",  # Google Maps links (location sharing)
     r"^https?://wa\.me/",  # WhatsApp links
+    # Media-only placeholders — no learning value for text-based AI
+    r"^\[?image\]?$",
+    r"^\[?video\]?$",
+    r"^\[?audio\]?$",
+    r"^\[?document\]?$",
+    r"^\[?sticker\]?$",
+    r"^\[?voice\s*note\]?$",
+    r"^\[?gif\]?$",
+    r"^\[?contact\s*card\]?$",
+    r"^\[?location\]?$",
+    r"^\[?image\s*sent\]?$",
+    r"^\[?document\s*sent\]?$",
+    r"^\[?video\s*sent\]?$",
     # Welcome / automated template messages — no learning value
     r"welcome\s*(to|sir|ji|bhai|!)",
     r"swagat\s*hai",
@@ -103,6 +116,54 @@ def is_junk_message(text: str) -> bool:
     for pattern in _JUNK_COMPILED:
         if pattern.search(cleaned):
             return True
+
+    return False
+
+
+def is_media_only_message(text: str) -> bool:
+    """Check if a message is media-only (image, document, video, etc.) with no real text content.
+
+    These are not useful for text-based learning — an AI can't learn to reply with images.
+    Also catches cases like '[Image sent — could be payment screenshot]' or '[Document]'.
+    """
+    cleaned = text.strip().lower()
+    if not cleaned:
+        return True
+
+    # Direct media placeholders: [Image], [Document], [Video], etc.
+    if re.match(r'^\[?\s*(?:image|video|audio|document|sticker|voice\s*note|gif|contact\s*card|location|photo|pdf|file)'
+                r'(?:\s+sent)?(?:\s*[-—:].*)?\s*\]?\s*$', cleaned, re.IGNORECASE):
+        return True
+
+    # WhatsApp export format: <media omitted>, <image omitted>, etc.
+    if re.match(r'^<\s*(?:media|image|video|audio|document|sticker|contact\s*card)\s*omitted\s*>$', cleaned, re.IGNORECASE):
+        return True
+
+    return False
+
+
+def is_low_quality_owner_reply(text: str) -> bool:
+    """Check if an owner (Ketu) reply is too low-quality to be a learning pair.
+
+    Catches:
+    - Media-only replies (image, document, etc.)
+    - Very short acknowledgments that don't teach anything
+    - Pure URLs with no explanation
+    """
+    if is_media_only_message(text):
+        return True
+    if is_junk_message(text):
+        return True
+
+    cleaned = text.strip()
+
+    # Pure URL with no explanation text (just a link, no context)
+    if re.match(r'^https?://\S+$', cleaned) and len(cleaned.split()) == 1:
+        return True
+
+    # Too short for a meaningful owner reply (less than 3 words)
+    if len(cleaned.split()) < _MIN_WORDS_OWNER:
+        return True
 
     return False
 

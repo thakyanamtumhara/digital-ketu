@@ -27,6 +27,7 @@ from learner.chat_learner import (
     learn_conversation_enders,
     detect_bought_customers_from_chat,
     learn_repeat_buyer_patterns,
+    is_low_quality_owner_reply,
 )
 from learner.youtube_learner import process_video
 from scheduler import (
@@ -780,6 +781,7 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
         by_chat.setdefault(chat_id, []).append(m)
 
     all_pairs = []
+    skipped_low_quality = 0
     for chat_id, chat_msgs in by_chat.items():
         chat_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
         last_customer_msg = ""
@@ -797,6 +799,11 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
                 if words <= 4:
                     last_customer_msg = content
                 elif words >= 5 and not is_ai and last_customer_msg:
+                    # Skip low-quality owner replies (media-only, too short, junk)
+                    if is_low_quality_owner_reply(content):
+                        skipped_low_quality += 1
+                        last_customer_msg = ""
+                        continue
                     all_pairs.append({
                         "customer": last_customer_msg[:100],
                         "ketu": content[:120],
@@ -809,6 +816,11 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
                 if not is_owner:
                     last_customer_msg = content
                 elif is_owner and not is_ai and last_customer_msg:
+                    # Skip low-quality owner replies (media-only, too short, junk)
+                    if is_low_quality_owner_reply(content):
+                        skipped_low_quality += 1
+                        last_customer_msg = ""
+                        continue
                     all_pairs.append({
                         "customer": last_customer_msg[:100],
                         "ketu": content[:120],
@@ -819,7 +831,8 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
 
     logger.info(
         f"[extract-pairs] msgs={len(messages)}, chats={len(by_chat)}, "
-        f"pairs={len(all_pairs)}, broken_sids={broken_sids}, use_flag={use_flag}"
+        f"pairs={len(all_pairs)}, skipped_low_quality={skipped_low_quality}, "
+        f"broken_sids={broken_sids}, use_flag={use_flag}"
     )
     return all_pairs
 
