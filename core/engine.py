@@ -476,13 +476,15 @@ def _is_conversation_ender(message: str, last_ai_message: str = "") -> bool:
     # Short messages (1-3 words) that look like acknowledgements
     words = msg_clean.split()
     if len(words) <= 3:
-        # "ok bhai", "thanks sir", "theek hai ji", "accha ok"
-        if any(w in enders for w in words):
+        # "ok bhai", "thanks sir", "theek hai ji", "accha ok", "thike, dhanyawad"
+        # Strip commas/punctuation from individual words for matching
+        clean_words = [w.strip(",.!;:") for w in words]
+        if any(w in enders for w in clean_words):
             # But NOT if they're asking something (contains question mark or question words)
             question_words = {"kya", "kab", "kaise", "kitna", "kitne", "kaha", "kahan",
                               "what", "when", "how", "which", "where", "why", "price",
                               "rate", "sample", "order", "send", "bhej", "batao", "bata"}
-            if not any(w in question_words for w in words) and "?" not in msg:
+            if not any(w in question_words for w in clean_words) and "?" not in msg:
                 return True
 
     return False
@@ -620,6 +622,15 @@ def generate_reply(
             if msg_clean in enders:
                 is_ender = True
                 logger.info(f"[Ender] Pure ender detected without history: '{message[:50]}'")
+            elif len(msg_clean.split()) <= 3:
+                # Also catch compound enders like "thike, dhanyawad" without history
+                clean_words = [w.strip(",.!;:") for w in msg_clean.split()]
+                question_words = {"kya", "kab", "kaise", "kitna", "kitne", "kaha", "kahan",
+                                  "what", "when", "how", "which", "where", "why", "price",
+                                  "rate", "sample", "order", "send", "bhej", "batao", "bata"}
+                if any(w in enders for w in clean_words) and not any(w in question_words for w in clean_words) and "?" not in message:
+                    is_ender = True
+                    logger.info(f"[Ender] Compound ender detected without history: '{message[:50]}'")
 
     if is_ender:
         logger.info(f"Conversation ender detected: '{message[:50]}' — skipping reply")
