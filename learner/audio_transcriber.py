@@ -305,5 +305,3 @@ async def process_whatsapp_audio(
         customer_phone=customer_phone,
         source="whatsapp",
     )
-
-    return text
