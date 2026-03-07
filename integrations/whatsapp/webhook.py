@@ -10,7 +10,8 @@ from fastapi import APIRouter, Request, Response, HTTPException
 from core.config import settings
 from core.engine import generate_reply
 from core.conversation_log import log_conversation, get_recent_conversations, get_last_ai_reply, mark_corrected
-from integrations.whatsapp.sender import send_text_message
+from core.context_selector import classify_message
+from integrations.whatsapp.sender import send_text_message, send_image_message
 from learner.audio_transcriber import process_whatsapp_audio
 from learner.realtime_learner import buffer_conversation, learn_from_correction
 
@@ -224,11 +225,34 @@ async def receive_message(request: Request):
                     # Transcribe audio using Whisper
                     audio_info = msg.get("audio", {})
                     media_id = audio_info.get("id", "")
-                    if media_id and settings.openai_api_key:
-                        text = await process_whatsapp_audio(media_id, customer_phone=sender) or ""
+                    if not settings.openai_api_key:
+                        logger.warning(f"[VoiceNote] OpenAI key not set — cannot transcribe audio from {sender}")
+                        if settings.auto_reply_enabled:
+                            await send_text_message(
+                                to=sender,
+                                message="Ji sir, voice message mila. Abhi voice support setup ho raha hai. Text mein bata dijiye, turant reply karunga!",
+                            )
+                        text = ""
+                    elif media_id:
+                        logger.info(f"[VoiceNote] Transcribing audio from {sender}, media_id={media_id[:20]}")
+                        try:
+                            text = await process_whatsapp_audio(media_id, customer_phone=sender) or ""
+                        except Exception as ve:
+                            logger.error(f"[VoiceNote] Transcription crashed for {sender}: {ve}")
+                            from core.error_tracker import track_error
+                            track_error("voice-transcribe", str(ve), {"phone": sender[-4:], "media_id": media_id[:20]})
+                            text = ""
                         if text:
-                            logger.info(f"Audio transcribed from {sender}: {text[:60]}...")
+                            logger.info(f"[VoiceNote] Transcribed from {sender}: '{text[:60]}'")
+                        else:
+                            logger.warning(f"[VoiceNote] Empty transcription from {sender}")
+                            if settings.auto_reply_enabled:
+                                await send_text_message(
+                                    to=sender,
+                                    message="Ji sir, voice message clear nahi aa raha. Text mein bata dijiye please!",
+                                )
                     else:
+                        logger.warning(f"[VoiceNote] No media_id in audio message from {sender}")
                         text = ""
                 elif msg_type in ("image", "video", "document", "sticker", "location", "contacts"):
                     # Unsupported media — send polite reply
@@ -334,7 +358,71 @@ async def receive_message(request: Request):
                     customer_phone=sender,
                 )
 
+                # PRODUCT IMAGE — send catalog image if customer asked about a specific product
+                # Zero API cost — just a WhatsApp image message
+                await _maybe_send_product_image(sender, text)
+
     return {"status": "ok"}
+
+
+# Track which products' images we already sent to each customer (avoid spam)
+_sent_product_images: dict[str, set] = {}  # phone -> set of product_ids sent
+
+
+async def _maybe_send_product_image(sender: str, message: str):
+    """Send product catalog image if customer asked about a specific product.
+
+    Rules:
+    - Only send if exactly 1-2 products matched (not bulk catalog dump)
+    - Only send each product image ONCE per customer (no spam)
+    - Zero cost — just WhatsApp API call
+    """
+    try:
+        classification = classify_message(message)
+        product_ids = classification.get("product_ids", [])
+
+        # Only send for specific product queries (1-2 products, not 5+)
+        if not product_ids or len(product_ids) > 2:
+            return
+
+        # Load product catalog for image URLs
+        from core.knowledge import load_knowledge
+        knowledge = load_knowledge()
+        catalog = knowledge.get("products", {}).get("catalog", [])
+        product_map = {p["id"]: p for p in catalog if "id" in p}
+
+        sent = _sent_product_images.get(sender, set())
+
+        for pid in product_ids[:2]:
+            if pid in sent:
+                continue  # Already sent this product's image
+
+            product = product_map.get(pid)
+            if not product:
+                continue
+
+            image_url = product.get("image_url", "")
+            if not image_url:
+                continue
+
+            caption = f"{product.get('name', '')} | {product.get('gsm', '')}GSM | sale91.com/catalog"
+            await send_image_message(to=sender, image_url=image_url, caption=caption)
+
+            # Track sent images
+            if sender not in _sent_product_images:
+                _sent_product_images[sender] = set()
+            _sent_product_images[sender].add(pid)
+            logger.info(f"[CatalogImage] Sent {pid} image to {sender[-4:]}")
+
+        # Cleanup — keep only last 200 customers
+        if len(_sent_product_images) > 200:
+            oldest_keys = list(_sent_product_images.keys())[:50]
+            for k in oldest_keys:
+                _sent_product_images.pop(k, None)
+
+    except Exception as e:
+        # Non-critical — don't break the reply flow
+        logger.warning(f"[CatalogImage] Failed for {sender[-4:]}: {e}")
 
 
 def _normalize_phone(phone: str) -> str:
