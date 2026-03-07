@@ -416,8 +416,9 @@ def get_repeat_customers(days: int = 30) -> list[dict]:
             stage = data.get("stage", STAGE_NEW)
             already_followed = data.get("follow_up_sent", False)
 
-            # Repeat or bought customers who haven't been followed up
-            if stage in (STAGE_REPEAT, STAGE_BOUGHT) and not already_followed:
+            # Only REPEAT customers (ordered before, coming back) — NOT freshly bought
+            # BOUGHT = just paid, order is dispatching → no follow-up needed
+            if stage == STAGE_REPEAT and not already_followed:
                 last_purchase = data.get("last_purchase_at", "")
                 days_since = 0
                 if last_purchase:
