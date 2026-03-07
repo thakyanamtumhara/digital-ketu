@@ -337,11 +337,76 @@ def test_10_full_production_dedup():
 
 
 # ──────────────────────────────────────────────────────────────────────
+# TEST 11: No chat_id — messages from different customers must NOT mix
+#   (THE REAL PRODUCTION BUG — wwbun doesn't send chat_id)
+# ──────────────────────────────────────────────────────────────────────
+def test_11_no_chat_id_different_customers():
+    """wwbun sends no chat_id. 3 different customers ask questions, Ketu replies.
+    Each customer's messages must stay separate — NO cross-customer combining."""
+    messages = [
+        # Customer 1: acid wash inquiry
+        {"sender_id": "919111111111", "content": "Tell me the wholesale price of acid t-shirts", "timestamp": "2026-03-07T20:30:00+05:30", "is_owner": False, "is_ai_generated": False},
+        {"sender_id": OWNER_ID, "content": "Acid wash Rs 280 bulk mein, 50 pcs minimum", "timestamp": "2026-03-07T20:31:00+05:30", "is_owner": True, "is_ai_generated": False},
+        # Customer 2: sends image + hello (different person!)
+        {"sender_id": "919222222222", "content": "[Image]", "timestamp": "2026-03-07T20:32:00+05:30", "is_owner": False, "is_ai_generated": False},
+        {"sender_id": "919222222222", "content": "Hello", "timestamp": "2026-03-07T20:32:30+05:30", "is_owner": False, "is_ai_generated": False},
+        {"sender_id": OWNER_ID, "content": "Ji sir, kaise help kar sakta hun", "timestamp": "2026-03-07T20:33:00+05:30", "is_owner": True, "is_ai_generated": False},
+        # Customer 3: Kolkata delivery question
+        {"sender_id": "919333333333", "content": "If I place an order in Kolkata, how long will it take to receive it", "timestamp": "2026-03-07T20:34:00+05:30", "is_owner": False, "is_ai_generated": False},
+        {"sender_id": OWNER_ID, "content": "Usually 4 to 5 days, train option available on website", "timestamp": "2026-03-07T20:35:00+05:30", "is_owner": True, "is_ai_generated": False},
+    ]
+    pairs = _extract_conversation_pairs(messages, OWNER_ID)
+
+    # Should get 2 pairs (Customer 1 + Customer 3 are quality, Customer 2 is greeting/no-intent)
+    # CRITICAL: "Tell me the wholesale price" must NOT be combined with "[Image]" or "Hello"
+    acid_pairs = [p for p in pairs if "acid" in p["customer"].lower() or "wholesale" in p["customer"].lower()]
+    kolkata_pairs = [p for p in pairs if "Kolkata" in p["customer"] or "order" in p["customer"].lower()]
+
+    # Verify acid wash pair is clean
+    if acid_pairs:
+        assert "[Image]" not in acid_pairs[0]["customer"], f"[Image] leaked into acid pair: {acid_pairs[0]['customer']}"
+        assert "Hello" not in acid_pairs[0]["customer"], f"Hello leaked into acid pair: {acid_pairs[0]['customer']}"
+        assert "Kolkata" not in acid_pairs[0]["customer"], f"Kolkata leaked into acid pair: {acid_pairs[0]['customer']}"
+
+    # Verify Kolkata pair is clean
+    if kolkata_pairs:
+        assert "acid" not in kolkata_pairs[0]["customer"].lower(), f"acid leaked into Kolkata pair: {kolkata_pairs[0]['customer']}"
+        assert "[Image]" not in kolkata_pairs[0]["customer"], f"[Image] leaked into Kolkata pair: {kolkata_pairs[0]['customer']}"
+
+    # No pair should have messages from multiple customers combined
+    for p in pairs:
+        print(f"  BUYER: {p['customer'][:80]} → KETU: {p['ketu'][:60]}")
+
+    print(f"PASS test_11: No chat_id, 3 customers — no cross-customer mixing ({len(pairs)} pairs)")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# TEST 12: No chat_id — same customer's multiple messages still combine
+# ──────────────────────────────────────────────────────────────────────
+def test_12_no_chat_id_same_customer_combines():
+    """wwbun sends no chat_id. Same customer sends 2 messages, Ketu replies once.
+    The 2 messages from same sender_id should still combine correctly."""
+    messages = [
+        {"sender_id": "919444444444", "content": "Bhaiya parcel late lagwaya", "timestamp": "2026-03-07T21:00:00+05:30", "is_owner": False, "is_ai_generated": False},
+        {"sender_id": "919444444444", "content": "Kal miljayega?", "timestamp": "2026-03-07T21:00:30+05:30", "is_owner": False, "is_ai_generated": False},
+        {"sender_id": OWNER_ID, "content": "7 baje hi dispatch hua tha bhai", "timestamp": "2026-03-07T21:02:00+05:30", "is_owner": True, "is_ai_generated": False},
+    ]
+    pairs = _extract_conversation_pairs(messages, OWNER_ID)
+
+    assert len(pairs) == 1, f"Expected 1 pair, got {len(pairs)}"
+    assert "parcel late lagwaya" in pairs[0]["customer"].lower()
+    assert "Kal miljayega?" in pairs[0]["customer"]
+    assert "dispatch" in pairs[0]["ketu"]
+    print(f"PASS test_12: No chat_id, same customer 2 msgs → correctly combined")
+    print(f"  BUYER: {pairs[0]['customer']} → KETU: {pairs[0]['ketu']}")
+
+
+# ──────────────────────────────────────────────────────────────────────
 # RUN ALL TESTS
 # ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("=" * 70)
-    print("  10 PAIR EXTRACTION TESTS — all variations")
+    print("  12 PAIR EXTRACTION TESTS — all variations")
     print("=" * 70)
     print()
 
@@ -356,6 +421,8 @@ if __name__ == "__main__":
         test_8_rapid_fire_buyer,
         test_9_mixed_ai_and_manual_same_chat,
         test_10_full_production_dedup,
+        test_11_no_chat_id_different_customers,
+        test_12_no_chat_id_same_customer_combines,
     ]
 
     passed = 0

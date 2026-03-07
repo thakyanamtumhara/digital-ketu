@@ -777,10 +777,71 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
             logger.warning("[extract-pairs] sender_ids AND is_owner BOTH unreliable → word-count heuristic")
 
     # Group by chat_id (same conversation)
+    # CRITICAL: when chat_id is missing (wwbun doesn't send it), fall back to
+    # sender_id for NON-owner messages so different customers stay separated.
+    # Owner messages go into the same group as the customer they're replying to.
     by_chat: dict[str, list] = {}
     for m in messages:
-        chat_id = m.get("chat_id", m.get("remote_jid", "unknown"))
+        chat_id = m.get("chat_id", m.get("remote_jid", ""))
+        if not chat_id:
+            # No chat_id — use sender_id to group customer messages separately.
+            # Owner messages: group by "unknown" for now, then re-assign below.
+            sid = str(m.get("sender_id", ""))
+            is_owner = _is_owner_by_flag(m) if use_flag else _is_owner_message(m, owner_user_id)
+            if is_owner:
+                chat_id = f"_owner_{sid}"
+            else:
+                chat_id = f"_cust_{sid}"
         by_chat.setdefault(chat_id, []).append(m)
+
+    # When chat_id is missing, owner messages are in separate "_owner_*" groups.
+    # We need to interleave them with customer groups by timestamp so pairing works.
+    # Strategy: if we have _cust_ and _owner_ groups, merge everything into one
+    # timeline and re-group by customer sender_id conversation threads.
+    has_synthetic_groups = any(k.startswith("_cust_") or k.startswith("_owner_") for k in by_chat)
+    if has_synthetic_groups:
+        # Collect all messages with synthetic chat_ids
+        synthetic_msgs = []
+        real_groups = {}
+        for k, v in by_chat.items():
+            if k.startswith("_cust_") or k.startswith("_owner_"):
+                synthetic_msgs.extend(v)
+            else:
+                real_groups[k] = v
+
+        if synthetic_msgs:
+            # Sort by timestamp and rebuild groups: each customer sender_id
+            # gets its own group, with owner messages assigned to the most
+            # recent customer who spoke before them.
+            synthetic_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
+
+            # Find all unique customer sender_ids
+            cust_sids = []
+            for sm in synthetic_msgs:
+                sid = str(sm.get("sender_id", ""))
+                is_owner = _is_owner_by_flag(sm) if use_flag else _is_owner_message(sm, owner_user_id)
+                if not is_owner and sid not in cust_sids:
+                    cust_sids.append(sid)
+
+            # Assign each message to a customer-based group
+            rebuilt: dict[str, list] = {}
+            current_cust_group = None
+            for sm in synthetic_msgs:
+                sid = str(sm.get("sender_id", ""))
+                is_owner = _is_owner_by_flag(sm) if use_flag else _is_owner_message(sm, owner_user_id)
+                if not is_owner:
+                    current_cust_group = f"_thread_{sid}"
+                    rebuilt.setdefault(current_cust_group, []).append(sm)
+                elif current_cust_group:
+                    # Owner replying to the current customer thread
+                    rebuilt.setdefault(current_cust_group, []).append(sm)
+                else:
+                    # Owner message before any customer — skip or put in first customer group
+                    if cust_sids:
+                        current_cust_group = f"_thread_{cust_sids[0]}"
+                        rebuilt.setdefault(current_cust_group, []).append(sm)
+
+            by_chat = {**real_groups, **rebuilt}
 
     all_pairs = []
     skipped_low_quality = 0
