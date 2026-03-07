@@ -784,67 +784,90 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
     all_pairs = []
     skipped_low_quality = 0
     skipped_no_intent = 0
+    # Max time gap (5 min) between consecutive customer messages to combine them.
+    # If gap > 5 min, treat as a new conversation thread and reset the buffer.
+    _COMBINE_MAX_GAP_SEC = 300  # 5 minutes
+
+    def _parse_ts(msg_dict: dict):
+        """Parse timestamp from message, return datetime or None."""
+        ts = msg_dict.get("timestamp") or msg_dict.get("created_at") or ""
+        if not ts:
+            return None
+        try:
+            from datetime import datetime as _dt
+            if isinstance(ts, str):
+                # ISO format: 2024-01-15T10:30:00.000Z
+                return _dt.fromisoformat(ts.replace("Z", "+00:00"))
+            return ts  # already a datetime
+        except Exception:
+            return None
+
     for chat_id, chat_msgs in by_chat.items():
         chat_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
         # Multi-message combining: accumulate consecutive customer messages
         customer_msgs_buffer: list[str] = []
+        last_customer_ts = None  # track timestamp of last buffered customer msg
 
         for msg in chat_msgs:
             content = (msg.get("content", "") or msg.get("text", "") or msg.get("body", "")).strip()
             if not content:
                 continue
 
+            msg_ts = _parse_ts(msg)
             is_ai = _safe_bool(msg.get("is_ai_generated"))
+
+            def _add_to_buffer(text: str):
+                """Add customer message to buffer, respecting time gap."""
+                nonlocal last_customer_ts
+                # If time gap > 5 min from last buffered msg, reset buffer (new thread)
+                if customer_msgs_buffer and msg_ts and last_customer_ts:
+                    gap = (msg_ts - last_customer_ts).total_seconds()
+                    if gap > _COMBINE_MAX_GAP_SEC:
+                        customer_msgs_buffer.clear()
+                customer_msgs_buffer.append(text)
+                last_customer_ts = msg_ts
+
+            def _try_create_pair(owner_content: str, is_ai_flag: bool):
+                """Try to create a quality pair from buffered customer msgs + owner reply."""
+                nonlocal last_customer_ts
+                if is_low_quality_owner_reply(owner_content):
+                    return "low_quality"
+                combined_customer = " | ".join(customer_msgs_buffer)
+                if not has_business_intent(combined_customer):
+                    return "no_intent"
+                all_pairs.append({
+                    "customer": combined_customer[:200],
+                    "ketu": owner_content[:120],
+                    "ai": is_ai_flag,
+                    "chat_id": chat_id,
+                })
+                return "ok"
 
             if broken_sids and not use_flag:
                 # Last resort heuristic: short (≤4 words) = customer, long (5+ words) = Ketu
                 words = len(content.split())
                 if words <= 4:
-                    customer_msgs_buffer.append(content)
+                    _add_to_buffer(content)
                 elif words >= 5 and not is_ai and customer_msgs_buffer:
-                    # Skip low-quality owner replies (media-only, too short, junk)
-                    if is_low_quality_owner_reply(content):
+                    result = _try_create_pair(content, is_ai)
+                    if result == "low_quality":
                         skipped_low_quality += 1
-                        customer_msgs_buffer.clear()
-                        continue
-                    # Combine consecutive customer messages for full context
-                    combined_customer = " | ".join(customer_msgs_buffer)
-                    # Check business intent on combined customer message
-                    if not has_business_intent(combined_customer):
+                    elif result == "no_intent":
                         skipped_no_intent += 1
-                        customer_msgs_buffer.clear()
-                        continue
-                    all_pairs.append({
-                        "customer": combined_customer[:200],
-                        "ketu": content[:120],
-                        "ai": is_ai,
-                        "chat_id": chat_id,
-                    })
                     customer_msgs_buffer.clear()
+                    last_customer_ts = None
             else:
                 is_owner = _is_owner_by_flag(msg) if use_flag else _is_owner_message(msg, owner_user_id)
                 if not is_owner:
-                    customer_msgs_buffer.append(content)
+                    _add_to_buffer(content)
                 elif is_owner and not is_ai and customer_msgs_buffer:
-                    # Skip low-quality owner replies (media-only, too short, junk)
-                    if is_low_quality_owner_reply(content):
+                    result = _try_create_pair(content, is_ai)
+                    if result == "low_quality":
                         skipped_low_quality += 1
-                        customer_msgs_buffer.clear()
-                        continue
-                    # Combine consecutive customer messages for full context
-                    combined_customer = " | ".join(customer_msgs_buffer)
-                    # Check business intent on combined customer message
-                    if not has_business_intent(combined_customer):
+                    elif result == "no_intent":
                         skipped_no_intent += 1
-                        customer_msgs_buffer.clear()
-                        continue
-                    all_pairs.append({
-                        "customer": combined_customer[:200],
-                        "ketu": content[:120],
-                        "ai": is_ai,
-                        "chat_id": chat_id,
-                    })
                     customer_msgs_buffer.clear()
+                    last_customer_ts = None
 
     logger.info(
         f"[extract-pairs] msgs={len(messages)}, chats={len(by_chat)}, "
