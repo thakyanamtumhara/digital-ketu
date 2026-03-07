@@ -796,8 +796,9 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
 
     # When chat_id is missing, owner messages are in separate "_owner_*" groups.
     # We need to assign each owner reply to the correct customer thread.
-    # Strategy: group customer msgs by sender_id, then assign owner replies
-    # round-robin to customer threads sorted by first-message timestamp.
+    # Strategy: process chronologically — each Ketu reply goes to the thread
+    # with the oldest UNANSWERED customer message (not yet replied to since
+    # that customer's last message).
     has_synthetic_groups = any(k.startswith("_cust_") or k.startswith("_owner_") for k in by_chat)
     if has_synthetic_groups:
         # Separate customer threads and owner messages
@@ -818,28 +819,53 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
             # Sort owner messages by timestamp
             owner_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
 
-            # Sort customer threads by their FIRST message timestamp
-            thread_order = sorted(
-                cust_threads.keys(),
-                key=lambda sid: cust_threads[sid][0].get("timestamp", cust_threads[sid][0].get("created_at", ""))
-            )
+            # Build a timeline of ALL customer messages across all threads
+            # to know when each thread has "new" unanswered messages.
+            # Track: last_owner_reply_ts per thread — any customer msg AFTER this
+            # means the thread has unanswered messages.
+            last_reply_ts: dict[str, str] = {}  # sid → timestamp of last assigned owner reply
 
-            # Assign each owner reply to the next un-replied customer thread.
-            # Ketu typically replies in the order customers messaged.
-            replied_threads = set()
             for owner_msg in owner_msgs:
-                # Find the next customer thread that hasn't been replied to
-                target_sid = None
-                for sid in thread_order:
-                    if sid not in replied_threads:
-                        target_sid = sid
-                        break
-                if not target_sid:
-                    # All threads replied — assign to last thread (extra reply)
-                    target_sid = thread_order[-1] if thread_order else None
-                if target_sid:
-                    cust_threads[target_sid].append(owner_msg)
-                    replied_threads.add(target_sid)
+                owner_ts = owner_msg.get("timestamp", owner_msg.get("created_at", ""))
+
+                # Find threads with unanswered customer messages:
+                # A thread is "unanswered" if it has customer messages with
+                # timestamps AFTER the last owner reply assigned to it.
+                unanswered = []
+                for sid, msgs in cust_threads.items():
+                    last_reply = last_reply_ts.get(sid, "")
+                    # Find the latest customer msg in this thread
+                    latest_cust_ts = ""
+                    for m in msgs:
+                        m_ts = m.get("timestamp", m.get("created_at", ""))
+                        m_is_owner = _is_owner_by_flag(m) if use_flag else _is_owner_message(m, owner_user_id)
+                        if not m_is_owner and m_ts > latest_cust_ts:
+                            latest_cust_ts = m_ts
+                    # Thread has unanswered msgs if latest customer msg is after last reply
+                    if latest_cust_ts and latest_cust_ts > last_reply:
+                        # Use the FIRST unanswered customer msg timestamp for ordering
+                        first_unanswered = ""
+                        for m in msgs:
+                            m_ts = m.get("timestamp", m.get("created_at", ""))
+                            m_is_owner = _is_owner_by_flag(m) if use_flag else _is_owner_message(m, owner_user_id)
+                            if not m_is_owner and m_ts > last_reply:
+                                first_unanswered = m_ts
+                                break
+                        unanswered.append((sid, first_unanswered))
+
+                if unanswered:
+                    # Assign to thread with oldest unanswered message
+                    unanswered.sort(key=lambda x: x[1])
+                    target_sid = unanswered[0][0]
+                else:
+                    # All threads answered — assign to thread with oldest first msg
+                    target_sid = sorted(
+                        cust_threads.keys(),
+                        key=lambda s: cust_threads[s][0].get("timestamp", cust_threads[s][0].get("created_at", ""))
+                    )[0]
+
+                cust_threads[target_sid].append(owner_msg)
+                last_reply_ts[target_sid] = owner_ts
 
             # Rebuild by_chat with proper thread groups
             rebuilt = {}
