@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from core.config import settings, init_knowledge_dir, KNOWLEDGE_DIR
-from core.engine import generate_reply, get_customer_insights, get_faq_hit_rates, invalidate_ender_cache, get_last_escalation, ketu_manual_reply, activate_shutup
+from core.engine import generate_reply, get_customer_insights, get_faq_hit_rates, invalidate_ender_cache, get_last_escalation, ketu_manual_reply, activate_shutup, track_wwbun_insights
 from core.knowledge import load_knowledge, invalidate_cache
 from core.activity_log import log_activity, get_activity_log, get_today_summary, get_storage_stats
 from integrations.whatsapp.webhook import router as whatsapp_router
@@ -1065,6 +1065,13 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     invalidate_ender_cache()
     _mark_run("whatsapp")
 
+    # --- Track ALL customer messages for insights (free, no AI cost) ---
+    insights_result = await asyncio.to_thread(
+        track_wwbun_insights,
+        messages=req.messages,
+        owner_user_id=req.owner_user_id,
+    )
+
     # --- PAID feature: accumulate messages for batch Claude learning ---
 
     # Debug: log what wwbun is sending so we can trace pairing issues
@@ -2020,6 +2027,24 @@ async def dashboard_storage():
 async def customer_insights():
     """Customer message analytics — top customers, peak hours."""
     return get_customer_insights()
+
+
+@app.post("/api/insights/customers/reset")
+async def reset_customer_insights():
+    """Reset customer insights counters. Use after fixing tracking bugs."""
+    from core.database import is_db_available, kv_set
+    if is_db_available():
+        kv_set("customer_insights", {
+            "message_counts": {},
+            "names": {},
+            "hourly": {},
+        })
+    # Also clear in-memory
+    from core.engine import _customer_message_counts, _customer_names, _hourly_message_counts
+    _customer_message_counts.clear()
+    _customer_names.clear()
+    _hourly_message_counts.clear()
+    return {"status": "reset", "message": "Customer insights cleared. Will rebuild from incoming messages."}
 
 
 # --- FAQ Hit Rate ---

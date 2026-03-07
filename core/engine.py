@@ -888,6 +888,72 @@ def track_faq_hit(question: str):
         pass
 
 
+def track_wwbun_insights(messages: list[dict], owner_user_id: str) -> dict:
+    """Track customer insights from wwbun sync messages.
+
+    This counts ALL messages (customer + Ketu) from wwbun, not just AI-replied ones.
+    This gives accurate total message counts and customer counts.
+    """
+    _load_customer_insights_from_db()
+
+    tracked = 0
+    for msg in messages:
+        # Skip owner messages — we only count customer messages for insights
+        sender_id = str(msg.get("sender_id", ""))
+        is_owner = msg.get("is_owner", False) or sender_id == owner_user_id
+        if is_owner:
+            continue
+
+        content = msg.get("content", "") or msg.get("text", "") or ""
+        if not content.strip():
+            continue
+
+        # Extract phone from sender_id or chat_id (last 4 digits)
+        phone_raw = msg.get("chat_id", "") or msg.get("remote_jid", "") or sender_id
+        # Clean phone: remove @s.whatsapp.net etc
+        phone_clean = phone_raw.split("@")[0] if "@" in phone_raw else phone_raw
+        key = phone_clean[-4:] if len(phone_clean) >= 4 else phone_clean
+        if not key:
+            continue
+
+        # Count message
+        _customer_message_counts[key] = _customer_message_counts.get(key, 0) + 1
+
+        # Track name from push_name or contact_name
+        name = msg.get("push_name", "") or msg.get("contact_name", "") or msg.get("notify", "")
+        if name and key:
+            _customer_names[key] = name
+
+        # Track hourly (use message timestamp if available, else current time)
+        try:
+            ts = msg.get("timestamp")
+            if ts:
+                from datetime import datetime, timezone, timedelta
+                ist = timezone(timedelta(hours=5, minutes=30))
+                if isinstance(ts, (int, float)):
+                    dt = datetime.fromtimestamp(ts, tz=ist)
+                else:
+                    dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00")).astimezone(ist)
+                hour = dt.hour
+            else:
+                from datetime import datetime, timezone, timedelta
+                ist = timezone(timedelta(hours=5, minutes=30))
+                hour = datetime.now(ist).hour
+        except Exception:
+            from datetime import datetime, timezone, timedelta
+            ist = timezone(timedelta(hours=5, minutes=30))
+            hour = datetime.now(ist).hour
+
+        _hourly_message_counts[hour] = _hourly_message_counts.get(hour, 0) + 1
+        tracked += 1
+
+    if tracked > 0:
+        _save_customer_insights_to_db()
+        logger.info(f"[Insights] Tracked {tracked} customer messages from wwbun sync")
+
+    return {"tracked": tracked}
+
+
 def get_customer_insights() -> dict:
     """Get customer message insights."""
     _load_customer_insights_from_db()
