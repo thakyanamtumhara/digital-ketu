@@ -795,52 +795,56 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
         by_chat.setdefault(chat_id, []).append(m)
 
     # When chat_id is missing, owner messages are in separate "_owner_*" groups.
-    # We need to interleave them with customer groups by timestamp so pairing works.
-    # Strategy: if we have _cust_ and _owner_ groups, merge everything into one
-    # timeline and re-group by customer sender_id conversation threads.
+    # We need to assign each owner reply to the correct customer thread.
+    # Strategy: group customer msgs by sender_id, then assign owner replies
+    # round-robin to customer threads sorted by first-message timestamp.
     has_synthetic_groups = any(k.startswith("_cust_") or k.startswith("_owner_") for k in by_chat)
     if has_synthetic_groups:
-        # Collect all messages with synthetic chat_ids
-        synthetic_msgs = []
-        real_groups = {}
+        # Separate customer threads and owner messages
+        cust_threads: dict[str, list] = {}  # sender_id → messages
+        owner_msgs: list = []
+        real_groups: dict[str, list] = {}
+
         for k, v in by_chat.items():
-            if k.startswith("_cust_") or k.startswith("_owner_"):
-                synthetic_msgs.extend(v)
+            if k.startswith("_cust_"):
+                sid = k[len("_cust_"):]
+                cust_threads[sid] = sorted(v, key=lambda x: x.get("timestamp", x.get("created_at", "")))
+            elif k.startswith("_owner_"):
+                owner_msgs.extend(v)
             else:
                 real_groups[k] = v
 
-        if synthetic_msgs:
-            # Sort by timestamp and rebuild groups: each customer sender_id
-            # gets its own group, with owner messages assigned to the most
-            # recent customer who spoke before them.
-            synthetic_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
+        if cust_threads:
+            # Sort owner messages by timestamp
+            owner_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
 
-            # Find all unique customer sender_ids
-            cust_sids = []
-            for sm in synthetic_msgs:
-                sid = str(sm.get("sender_id", ""))
-                is_owner = _is_owner_by_flag(sm) if use_flag else _is_owner_message(sm, owner_user_id)
-                if not is_owner and sid not in cust_sids:
-                    cust_sids.append(sid)
+            # Sort customer threads by their FIRST message timestamp
+            thread_order = sorted(
+                cust_threads.keys(),
+                key=lambda sid: cust_threads[sid][0].get("timestamp", cust_threads[sid][0].get("created_at", ""))
+            )
 
-            # Assign each message to a customer-based group
-            rebuilt: dict[str, list] = {}
-            current_cust_group = None
-            for sm in synthetic_msgs:
-                sid = str(sm.get("sender_id", ""))
-                is_owner = _is_owner_by_flag(sm) if use_flag else _is_owner_message(sm, owner_user_id)
-                if not is_owner:
-                    current_cust_group = f"_thread_{sid}"
-                    rebuilt.setdefault(current_cust_group, []).append(sm)
-                elif current_cust_group:
-                    # Owner replying to the current customer thread
-                    rebuilt.setdefault(current_cust_group, []).append(sm)
-                else:
-                    # Owner message before any customer — skip or put in first customer group
-                    if cust_sids:
-                        current_cust_group = f"_thread_{cust_sids[0]}"
-                        rebuilt.setdefault(current_cust_group, []).append(sm)
+            # Assign each owner reply to the next un-replied customer thread.
+            # Ketu typically replies in the order customers messaged.
+            replied_threads = set()
+            for owner_msg in owner_msgs:
+                # Find the next customer thread that hasn't been replied to
+                target_sid = None
+                for sid in thread_order:
+                    if sid not in replied_threads:
+                        target_sid = sid
+                        break
+                if not target_sid:
+                    # All threads replied — assign to last thread (extra reply)
+                    target_sid = thread_order[-1] if thread_order else None
+                if target_sid:
+                    cust_threads[target_sid].append(owner_msg)
+                    replied_threads.add(target_sid)
 
+            # Rebuild by_chat with proper thread groups
+            rebuilt = {}
+            for sid, msgs in cust_threads.items():
+                rebuilt[f"_thread_{sid}"] = sorted(msgs, key=lambda x: x.get("timestamp", x.get("created_at", "")))
             by_chat = {**real_groups, **rebuilt}
 
     all_pairs = []
