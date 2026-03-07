@@ -898,9 +898,9 @@ def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
 # We buffer them and only call Claude when we have 10+ quality pairs.
 # Free features (enders, bought detection, repeat buyer) still run immediately.
 
-_LEARNING_BUFFER_MIN_PAIRS = 10  # Need 10 quality Ketu manual messages before learning
-_LEARNING_FLUSH_COOLDOWN = 600  # 10 minutes minimum between Claude learning calls
-_LEARNING_FORCE_FLUSH_PAIRS = 30  # Force flush if 30+ quality pairs (too much data waiting)
+_LEARNING_BUFFER_MIN_PAIRS = 20  # Need 20 quality Ketu manual pairs before learning (bigger batch = better pattern detection)
+_LEARNING_FLUSH_COOLDOWN = 1800  # 30 minutes minimum between Claude learning calls (was 10 min — saves ~50% learning cost)
+_LEARNING_FORCE_FLUSH_PAIRS = 50  # Force flush if 50+ quality pairs (too much data waiting)
 _last_flush_time: float = 0  # Timestamp of last Claude learning flush
 _last_owner_user_id = ""  # Remember last owner_user_id from sync calls
 
