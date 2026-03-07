@@ -962,6 +962,11 @@
         <h3>Customer Insights</h3>
         <span class="badge" id="customerBadge">0 customers</span>
       </div>
+      <!-- Source toggle: Digital Ketu vs Total -->
+      <div style="display:flex;gap:0;margin:0 14px 8px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);">
+        <button id="srcAI" onclick="switchInsightSource('ai')" style="flex:1;padding:8px 0;font-size:11px;font-weight:700;border:none;cursor:pointer;background:var(--accent);color:#fff;transition:all 0.2s;">Digital Ketu</button>
+        <button id="srcTotal" onclick="switchInsightSource('total')" style="flex:1;padding:8px 0;font-size:11px;font-weight:700;border:none;cursor:pointer;background:rgba(255,255,255,0.05);color:var(--text-dim);transition:all 0.2s;">Total (AI + Manual)</button>
+      </div>
       <div class="tab-bar">
         <button class="tab-btn active" onclick="switchInsightTab('top')">Top Customers</button>
         <button class="tab-btn" onclick="switchInsightTab('hours')">Peak Hours</button>
@@ -1948,19 +1953,34 @@ async function loadErrors() {
 
 // ---- CUSTOMER INSIGHTS ----
 
+let _insightsData = null;
+let _insightSource = 'ai'; // 'ai' or 'total'
+
 async function loadInsights() {
   const [customers, faqHits] = await Promise.all([
     fetchJSON('/api/insights/customers'),
     fetchJSON('/api/insights/faq-hits'),
   ]);
 
+  _insightsData = { customers, faqHits };
+  renderInsights();
+}
+
+function renderInsights() {
+  const customers = _insightsData?.customers;
+  const faqHits = _insightsData?.faqHits;
+  const isTotal = _insightSource === 'total';
+
   if (customers) {
+    const msgs = isTotal ? (customers.total_all_messages || 0) : customers.total_messages;
+    const custs = isTotal ? (customers.total_all_customers || 0) : customers.unique_customers;
+    const label = isTotal ? 'Total' : 'DK';
     document.getElementById('customerBadge').textContent =
-      `${customers.unique_customers} customers | ${customers.total_messages} msgs`;
+      `${custs} customers | ${msgs} msgs`;
 
     // Top customers tab
     const topTab = document.getElementById('itab-top');
-    const topList = customers.top_customers || [];
+    const topList = isTotal ? (customers.total_top_customers || []) : (customers.top_customers || []);
     if (topList.length) {
       const maxCount = topList[0]?.messages || 1;
       topTab.innerHTML = topList.map(c => `
@@ -1976,7 +1996,7 @@ async function loadInsights() {
 
     // Peak hours tab
     const hoursTab = document.getElementById('itab-hours');
-    const hourly = customers.hourly_distribution || {};
+    const hourly = isTotal ? (customers.total_hourly_distribution || {}) : (customers.hourly_distribution || {});
     const hourEntries = Object.entries(hourly).sort((a, b) => b[1] - a[1]);
     if (hourEntries.length) {
       const maxH = hourEntries[0]?.[1] || 1;
@@ -2010,6 +2030,20 @@ async function loadInsights() {
       faqTab.innerHTML = '<div class="empty-state">No FAQ usage data yet — will track as customers ask questions</div>';
     }
   }
+}
+
+function switchInsightSource(source) {
+  _insightSource = source;
+  const aiBtn = document.getElementById('srcAI');
+  const totalBtn = document.getElementById('srcTotal');
+  if (source === 'ai') {
+    aiBtn.style.background = 'var(--accent)'; aiBtn.style.color = '#fff';
+    totalBtn.style.background = 'rgba(255,255,255,0.05)'; totalBtn.style.color = 'var(--text-dim)';
+  } else {
+    totalBtn.style.background = 'var(--accent)'; totalBtn.style.color = '#fff';
+    aiBtn.style.background = 'rgba(255,255,255,0.05)'; aiBtn.style.color = 'var(--text-dim)';
+  }
+  renderInsights();
 }
 
 function switchInsightTab(tabName) {

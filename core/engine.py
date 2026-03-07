@@ -29,9 +29,13 @@ _conversation_timestamps: dict[str, float] = {}
 CONVERSATION_TTL = 3600  # 1 hour
 
 # Customer insights tracking (DB-persisted, survives deploys)
-_customer_message_counts: dict[str, int] = {}  # phone_last4 -> count
+# "ai_" prefix = Digital Ketu AI replies only
+# "total_" prefix = All messages (AI + manual Ketu replies) from wwbun
+_customer_message_counts: dict[str, int] = {}  # phone_last4 -> count (AI only)
 _customer_names: dict[str, str] = {}  # phone_last4 -> name
-_hourly_message_counts: dict[int, int] = {}  # hour (0-23) -> count
+_hourly_message_counts: dict[int, int] = {}  # hour (0-23) -> count (AI only)
+_total_customer_counts: dict[str, int] = {}  # phone_last4 -> count (all messages)
+_total_hourly_counts: dict[int, int] = {}  # hour (0-23) -> count (all messages)
 _insights_loaded = False
 
 # FAQ hit rate tracking
@@ -79,7 +83,8 @@ _estimated_full_tokens: int = 5500  # conservative default
 
 def _load_customer_insights_from_db():
     """Load customer insights from DB on first access (survives deploys)."""
-    global _customer_message_counts, _customer_names, _hourly_message_counts, _insights_loaded
+    global _customer_message_counts, _customer_names, _hourly_message_counts
+    global _total_customer_counts, _total_hourly_counts, _insights_loaded
     if _insights_loaded:
         return
     _insights_loaded = True
@@ -87,14 +92,22 @@ def _load_customer_insights_from_db():
         from core.database import is_db_available, kv_get
         if not is_db_available():
             return
+        # Load AI-only insights
         data = kv_get("customer_insights")
         if data:
             _customer_message_counts.update(data.get("message_counts", {}))
             _customer_names.update(data.get("names", {}))
-            # DB stores hour keys as strings, convert back to int
             for h, c in data.get("hourly", {}).items():
                 _hourly_message_counts[int(h)] = _hourly_message_counts.get(int(h), 0) + c
-            logger.info(f"[Insights] Loaded from DB: {len(_customer_message_counts)} customers")
+            logger.info(f"[Insights] Loaded AI insights: {len(_customer_message_counts)} customers")
+        # Load total insights (wwbun)
+        total_data = kv_get("customer_insights_total")
+        if total_data:
+            _total_customer_counts.update(total_data.get("message_counts", {}))
+            _customer_names.update(total_data.get("names", {}))  # names are shared
+            for h, c in total_data.get("hourly", {}).items():
+                _total_hourly_counts[int(h)] = _total_hourly_counts.get(int(h), 0) + c
+            logger.info(f"[Insights] Loaded total insights: {len(_total_customer_counts)} customers")
     except Exception as e:
         logger.warning(f"[Insights] DB load failed: {e}")
 
@@ -105,10 +118,17 @@ def _save_customer_insights_to_db():
         from core.database import is_db_available, kv_set
         if not is_db_available():
             return
+        # Save AI-only insights
         kv_set("customer_insights", {
             "message_counts": _customer_message_counts,
             "names": _customer_names,
             "hourly": _hourly_message_counts,
+        })
+        # Save total insights
+        kv_set("customer_insights_total", {
+            "message_counts": _total_customer_counts,
+            "names": _customer_names,
+            "hourly": _total_hourly_counts,
         })
     except Exception as e:
         logger.warning(f"[Insights] DB save failed: {e}")
@@ -889,10 +909,10 @@ def track_faq_hit(question: str):
 
 
 def track_wwbun_insights(messages: list[dict], owner_user_id: str) -> dict:
-    """Track customer insights from wwbun sync messages.
+    """Track TOTAL customer insights from wwbun sync messages.
 
-    This counts ALL messages (customer + Ketu) from wwbun, not just AI-replied ones.
-    This gives accurate total message counts and customer counts.
+    This counts ALL customer messages (both AI-replied and manual Ketu replies).
+    Writes to _total_* counters, separate from _customer_* (AI-only) counters.
     """
     _load_customer_insights_from_db()
 
@@ -916,8 +936,8 @@ def track_wwbun_insights(messages: list[dict], owner_user_id: str) -> dict:
         if not key:
             continue
 
-        # Count message
-        _customer_message_counts[key] = _customer_message_counts.get(key, 0) + 1
+        # Count in TOTAL insights (AI + manual)
+        _total_customer_counts[key] = _total_customer_counts.get(key, 0) + 1
 
         # Track name from push_name or contact_name
         name = msg.get("push_name", "") or msg.get("contact_name", "") or msg.get("notify", "")
@@ -944,7 +964,7 @@ def track_wwbun_insights(messages: list[dict], owner_user_id: str) -> dict:
             ist = timezone(timedelta(hours=5, minutes=30))
             hour = datetime.now(ist).hour
 
-        _hourly_message_counts[hour] = _hourly_message_counts.get(hour, 0) + 1
+        _total_hourly_counts[hour] = _total_hourly_counts.get(hour, 0) + 1
         tracked += 1
 
     if tracked > 0:
@@ -955,31 +975,48 @@ def track_wwbun_insights(messages: list[dict], owner_user_id: str) -> dict:
 
 
 def get_customer_insights() -> dict:
-    """Get customer message insights."""
+    """Get customer message insights — both AI-only and Total views."""
     _load_customer_insights_from_db()
-    # Top 10 customers by message count
-    sorted_customers = sorted(
+
+    # --- Digital Ketu (AI only) ---
+    ai_sorted = sorted(
         _customer_message_counts.items(), key=lambda x: x[1], reverse=True
     )[:10]
-    top_customers = [
+    ai_top = [
         {"phone_last4": phone, "name": _customer_names.get(phone, "Unknown"), "messages": count}
-        for phone, count in sorted_customers
+        for phone, count in ai_sorted
     ]
+    ai_total_msgs = sum(_customer_message_counts.values())
+    ai_unique = len(_customer_message_counts)
 
-    # Peak hours
-    peak_hours = sorted(
-        _hourly_message_counts.items(), key=lambda x: x[1], reverse=True
-    )[:5]
-
-    total_messages = sum(_customer_message_counts.values())
-    unique_customers = len(_customer_message_counts)
+    # --- Total (AI + Manual Ketu) ---
+    total_sorted = sorted(
+        _total_customer_counts.items(), key=lambda x: x[1], reverse=True
+    )[:10]
+    total_top = [
+        {"phone_last4": phone, "name": _customer_names.get(phone, "Unknown"), "messages": count}
+        for phone, count in total_sorted
+    ]
+    total_msgs = sum(_total_customer_counts.values())
+    total_unique = len(_total_customer_counts)
 
     return {
-        "total_messages": total_messages,
-        "unique_customers": unique_customers,
-        "top_customers": top_customers,
-        "peak_hours": [{"hour": h, "count": c} for h, c in peak_hours],
+        # AI-only (Digital Ketu replies)
+        "total_messages": ai_total_msgs,
+        "unique_customers": ai_unique,
+        "top_customers": ai_top,
+        "peak_hours": sorted(
+            _hourly_message_counts.items(), key=lambda x: x[1], reverse=True
+        )[:5],
         "hourly_distribution": dict(sorted(_hourly_message_counts.items())),
+        # Total (all messages including manual Ketu replies)
+        "total_all_messages": total_msgs,
+        "total_all_customers": total_unique,
+        "total_top_customers": total_top,
+        "total_peak_hours": sorted(
+            _total_hourly_counts.items(), key=lambda x: x[1], reverse=True
+        )[:5],
+        "total_hourly_distribution": dict(sorted(_total_hourly_counts.items())),
     }
 
 

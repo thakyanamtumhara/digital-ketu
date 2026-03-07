@@ -212,6 +212,26 @@ async def api_reply(req: ReplyRequest):
     If should_reply is false, wwbun should NOT send anything — customer
     just acknowledged (said "ok", "thanks", etc.) and conversation is done.
     """
+    # Handle media markers from wwbun — these are not real text messages
+    msg_lower = req.message.strip().lower()
+    if msg_lower in ("[audio]", "[image]", "[video]", "[sticker]", "[document]",
+                      "[location]", "[contacts]", "[system message]"):
+        # Voice notes: politely ask for text (can't transcribe without audio data)
+        if msg_lower == "[audio]":
+            reply = "Ji sir, voice message text mein bhej dijiye please — jaldi reply karunga!"
+            log_activity(
+                source="api-reply",
+                action="voice-text-request",
+                details={
+                    "customer_phone": req.customer_phone[-4:] if req.customer_phone else "unknown",
+                    "customer_name": req.customer_name or "unknown",
+                },
+                items_count=0,
+            )
+            return ReplyResponse(reply=reply, status="ok", should_reply=True)
+        # Other media: skip silently (images, stickers, etc.)
+        return ReplyResponse(reply="", status="skipped", should_reply=False)
+
     reply = await asyncio.to_thread(
         generate_reply,
         message=req.message,
@@ -2039,12 +2059,20 @@ async def reset_customer_insights():
             "names": {},
             "hourly": {},
         })
+        kv_set("customer_insights_total", {
+            "message_counts": {},
+            "names": {},
+            "hourly": {},
+        })
     # Also clear in-memory
     from core.engine import _customer_message_counts, _customer_names, _hourly_message_counts
+    from core.engine import _total_customer_counts, _total_hourly_counts
     _customer_message_counts.clear()
     _customer_names.clear()
     _hourly_message_counts.clear()
-    return {"status": "reset", "message": "Customer insights cleared. Will rebuild from incoming messages."}
+    _total_customer_counts.clear()
+    _total_hourly_counts.clear()
+    return {"status": "reset", "message": "Both AI and Total customer insights cleared. Will rebuild from incoming messages."}
 
 
 # --- FAQ Hit Rate ---
