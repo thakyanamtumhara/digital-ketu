@@ -52,13 +52,26 @@ SHUTUP_COOLDOWN = 300  # 5 minutes — AI won't reply to this customer for 5 min
 _prompt_cache: dict[str, tuple[str, float]] = {}
 PROMPT_CACHE_TTL = 60  # seconds — same as knowledge cache TTL
 
-# Haiku is the DEFAULT model for ALL replies (₹0.15-0.25/reply)
-# Sonnet is ONLY used for escalation (angry customer, complaint)
+# Haiku is the DEFAULT model for simple queries (₹0.05-0.08/reply)
+# Sonnet is used for complex/high-value conversations (₹0.30-0.40/reply)
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 SONNET_MODEL = "claude-sonnet-4-20250514"
 
-# Only these situations use Sonnet (everything else = Haiku)
-SONNET_ONLY_REASONS = {"escalation"}
+# Intents that deserve Sonnet's better reasoning and tone
+# These are conversations where quality directly impacts sales conversion
+SONNET_INTENTS = {
+    "return_complaint",     # Empathy matters — bad reply = lost customer
+    "price_product",        # Negotiation/upsell — Sonnet handles "mehnga hai" better
+    "dropshipping",         # Complex explanation — needs clarity
+}
+
+# Situations that ALWAYS use Sonnet (regardless of intent)
+SONNET_ALWAYS_REASONS = {"escalation"}
+
+# Intents that are fine with Haiku (simple, factual replies)
+# greeting, product_inquiry, gsm_fabric, shipping_delivery, payment,
+# order_how, location_visit, gst_invoice, moq, printing
+# These are straightforward — Haiku gives identical quality for 10x less
 
 # Estimated full context token count (for savings tracking)
 _estimated_full_tokens: int = 5500  # conservative default
@@ -443,6 +456,34 @@ def _is_conversation_ender(message: str, last_ai_message: str = "") -> bool:
     return False
 
 
+def _is_weak_reply(reply: str, original_message: str) -> bool:
+    """Detect weak/low-quality AI replies that should be retried with Sonnet.
+
+    Catches: empty, too short, repetitive, unhelpful generic responses,
+    or replies that don't address the customer's question.
+    """
+    if not reply or len(reply.strip()) < 5:
+        return True
+
+    r = reply.strip().lower()
+
+    # Repetitive/generic filler replies
+    weak_patterns = [
+        "i don't know", "i'm not sure", "please contact",
+        "whatsapp karo", "whatsapp pe", "dm karo",  # AI should NEVER say these
+        "i apologize", "i'm sorry i can",
+    ]
+    if any(p in r for p in weak_patterns):
+        logger.info(f"[QualityCheck] Weak pattern detected in reply: '{reply[:40]}'")
+        return True
+
+    # Reply is just the customer's message echoed back
+    if r == original_message.strip().lower():
+        return True
+
+    return False
+
+
 def generate_reply(
     message: str,
     customer_phone: str = "",
@@ -649,15 +690,29 @@ def generate_reply(
     if user_msg_count == 1:
         system_blocks[-1]["text"] += "\n>> PEHLA MESSAGE. Catalogue link: sale91.com/catalog"
 
-    # Model selection — Haiku for ALL replies EXCEPT escalation
-    # Haiku 4.5 is excellent for 1-2 line Hinglish replies and costs 10x less
+    # Smart model selection — Sonnet for complex/high-value, Haiku for simple
+    intents = classification.get("intents", []) if classification else []
+    sonnet_reason = ""
+
     if use_sonnet:
+        # Escalation — always Sonnet
+        sonnet_reason = "escalation"
+    elif classification and classification.get("is_complex"):
+        # Unclassified message — Sonnet handles ambiguity better
+        sonnet_reason = "unclassified/complex"
+    elif any(intent in SONNET_INTENTS for intent in intents):
+        # High-value intent — better tone and reasoning
+        sonnet_reason = f"high-value intent: {[i for i in intents if i in SONNET_INTENTS]}"
+    elif user_msg_count == 1:
+        # First message — first impression matters for conversion
+        sonnet_reason = "first_message"
+
+    if sonnet_reason:
         model = SONNET_MODEL
-        logger.info(f"[ModelSelect] Sonnet — escalation detected")
+        logger.info(f"[ModelSelect] Sonnet — {sonnet_reason}")
     else:
         model = HAIKU_MODEL
-        intents = classification.get("intents", []) if classification else []
-        logger.info(f"[ModelSelect] Haiku (default) — intents: {intents}")
+        logger.info(f"[ModelSelect] Haiku — intents: {intents}")
 
     # Log total estimated input tokens
     system_text_total = sum(estimate_tokens(b["text"]) for b in system_blocks)
@@ -721,8 +776,9 @@ def generate_reply(
                     f"model={response.model}, customer={customer_phone[-4:] if customer_phone else '?'}"
                 )
 
-            # HAIKU FALLBACK — if Haiku gave empty/garbage reply, retry once with Sonnet
-            if model == HAIKU_MODEL and (not reply or len(reply.strip()) < 5):
+            # QUALITY CHECK + FALLBACK — detect weak replies and retry with Sonnet
+            _reply_is_weak = _is_weak_reply(reply, message)
+            if model == HAIKU_MODEL and _reply_is_weak:
                 logger.warning(
                     f"[HaikuFallback] Haiku returned poor reply ('{reply[:20]}'), retrying with Sonnet"
                 )
