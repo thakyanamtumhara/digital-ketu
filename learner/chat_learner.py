@@ -142,6 +142,70 @@ def is_media_only_message(text: str) -> bool:
     return False
 
 
+def has_business_intent(text: str) -> bool:
+    """Check if a customer message shows genuine business intent worth learning from.
+
+    Returns True if the message looks like a real business inquiry, order-related
+    question, complaint, product inquiry, or negotiation — the kind of messages
+    where the owner's reply would teach the AI something useful.
+
+    Returns False for random chit-chat, forwarded messages, or non-business content.
+    """
+    cleaned = text.strip().lower()
+    if not cleaned:
+        return False
+
+    # Too short to have business intent (single word greetings handled by junk filter)
+    words = cleaned.split()
+    if len(words) < _MIN_WORDS_CUSTOMER:
+        return False
+
+    # Business intent signals — if ANY match, it's likely a business message
+    _BUSINESS_SIGNALS = [
+        # Price / cost inquiry
+        r'(?:price|rate|cost|kitna|kitne|kya\s*rate|kya\s*price|amount|charges?|shipping\s*charge)',
+        # Product inquiry
+        r'(?:available|stock|hai\s*kya|milega|mil\s*jayega|in\s*stock|out\s*of\s*stock)',
+        r'(?:size|colour|color|gsm|material|quality|weight|dimension|specification)',
+        r'(?:sample|catalog|catalogue|brochure|photo|image|pics?|pictures?)',
+        # Order / purchase
+        r'(?:order|book|buy|purchase|kharidna|lena\s*hai|chahiye|chaiye|mangta|mangwana)',
+        r'(?:quantity|qty|minimum\s*order|moq|bulk|wholesale|retail)',
+        r'(?:cod|cash\s*on\s*delivery|online\s*payment|upi|gpay|phonepe|paytm|neft|rtgs)',
+        # Delivery / shipping
+        r'(?:delivery|dispatch|ship|courier|transport|deliver|bhej|bhejna|bhejdo)',
+        r'(?:pin\s*code|pincode|location|address|kahan|where)',
+        r'(?:time|kitne\s*din|days|kab\s*tak|when|estimated)',
+        # Negotiation
+        r'(?:discount|kam|less|kuch\s*kam|thoda\s*kam|best\s*price|final\s*price|last\s*price)',
+        # Complaint / issue
+        r'(?:problem|issue|defect|broken|damaged|wrong|galat|kharab|return|refund|exchange|replace)',
+        # Confirmation / follow-up
+        r'(?:confirm|payment\s*done|paid|sent|bhej\s*diya|kar\s*diya|ho\s*gaya|tracking)',
+        # Questions (generic business questions)
+        r'(?:kaise|how|kya|what|which|konsa|kaun)',
+    ]
+
+    for pattern in _BUSINESS_SIGNALS:
+        if re.search(pattern, cleaned, re.IGNORECASE):
+            return True
+
+    # If message has a question mark, it's likely an inquiry
+    if '?' in cleaned:
+        return True
+
+    # Messages with numbers often relate to quantities, prices, sizes
+    if re.search(r'\d+', cleaned) and len(words) >= 2:
+        return True
+
+    # If none of the signals match but it's long enough (5+ words),
+    # give it the benefit of the doubt — could be a detailed message
+    if len(words) >= 5:
+        return True
+
+    return False
+
+
 def is_low_quality_owner_reply(text: str) -> bool:
     """Check if an owner (Ketu) reply is too low-quality to be a learning pair.
 
@@ -149,6 +213,8 @@ def is_low_quality_owner_reply(text: str) -> bool:
     - Media-only replies (image, document, etc.)
     - Very short acknowledgments that don't teach anything
     - Pure URLs with no explanation
+    But KEEPS:
+    - URL + meaningful text (e.g., "Check this link for catalog: https://...")
     """
     if is_media_only_message(text):
         return True
@@ -160,6 +226,16 @@ def is_low_quality_owner_reply(text: str) -> bool:
     # Pure URL with no explanation text (just a link, no context)
     if re.match(r'^https?://\S+$', cleaned) and len(cleaned.split()) == 1:
         return True
+
+    # URL + text combo: strip URLs and check if remaining text is meaningful
+    text_without_urls = re.sub(r'https?://\S+', '', cleaned).strip()
+    if text_without_urls != cleaned:  # had URLs
+        # If there's meaningful text alongside the URL, keep it
+        if len(text_without_urls.split()) >= _MIN_WORDS_OWNER:
+            return False
+        # URL + junk text like "ok https://..." is still low quality
+        if not text_without_urls or is_junk_message(text_without_urls):
+            return True
 
     # Too short for a meaningful owner reply (less than 3 words)
     if len(cleaned.split()) < _MIN_WORDS_OWNER:

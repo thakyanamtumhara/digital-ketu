@@ -80,7 +80,7 @@ def buffer_conversation(
     _load_buffer_from_db()
 
     # Filter out junk messages — no point learning from "ok", "hmm", emojis etc.
-    from learner.chat_learner import is_junk_message, is_media_only_message
+    from learner.chat_learner import is_junk_message, is_media_only_message, has_business_intent
     if is_junk_message(customer_message) and is_junk_message(ai_reply):
         logger.debug(f"[Buffer] Skipped junk pair: '{customer_message[:30]}' / '{ai_reply[:30]}'")
         return
@@ -96,6 +96,10 @@ def buffer_conversation(
     # If customer sent media-only (image/document) and AI just acknowledged, skip
     if is_media_only_message(customer_message):
         logger.debug(f"[Buffer] Skipped media-only customer msg: '{customer_message[:30]}'")
+        return
+    # Only buffer conversations with business intent — skip random chit-chat
+    if not has_business_intent(customer_message):
+        logger.debug(f"[Buffer] Skipped no-business-intent: '{customer_message[:30]}'")
         return
 
     _conversation_buffer.append({

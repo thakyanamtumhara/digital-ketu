@@ -28,6 +28,7 @@ from learner.chat_learner import (
     detect_bought_customers_from_chat,
     learn_repeat_buyer_patterns,
     is_low_quality_owner_reply,
+    has_business_intent,
 )
 from learner.youtube_learner import process_video
 from scheduler import (
@@ -782,9 +783,11 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
 
     all_pairs = []
     skipped_low_quality = 0
+    skipped_no_intent = 0
     for chat_id, chat_msgs in by_chat.items():
         chat_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
-        last_customer_msg = ""
+        # Multi-message combining: accumulate consecutive customer messages
+        customer_msgs_buffer: list[str] = []
 
         for msg in chat_msgs:
             content = (msg.get("content", "") or msg.get("text", "") or msg.get("body", "")).strip()
@@ -797,41 +800,56 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
                 # Last resort heuristic: short (≤4 words) = customer, long (5+ words) = Ketu
                 words = len(content.split())
                 if words <= 4:
-                    last_customer_msg = content
-                elif words >= 5 and not is_ai and last_customer_msg:
+                    customer_msgs_buffer.append(content)
+                elif words >= 5 and not is_ai and customer_msgs_buffer:
                     # Skip low-quality owner replies (media-only, too short, junk)
                     if is_low_quality_owner_reply(content):
                         skipped_low_quality += 1
-                        last_customer_msg = ""
+                        customer_msgs_buffer.clear()
+                        continue
+                    # Combine consecutive customer messages for full context
+                    combined_customer = " | ".join(customer_msgs_buffer)
+                    # Check business intent on combined customer message
+                    if not has_business_intent(combined_customer):
+                        skipped_no_intent += 1
+                        customer_msgs_buffer.clear()
                         continue
                     all_pairs.append({
-                        "customer": last_customer_msg[:100],
+                        "customer": combined_customer[:200],
                         "ketu": content[:120],
                         "ai": is_ai,
                         "chat_id": chat_id,
                     })
-                    last_customer_msg = ""
+                    customer_msgs_buffer.clear()
             else:
                 is_owner = _is_owner_by_flag(msg) if use_flag else _is_owner_message(msg, owner_user_id)
                 if not is_owner:
-                    last_customer_msg = content
-                elif is_owner and not is_ai and last_customer_msg:
+                    customer_msgs_buffer.append(content)
+                elif is_owner and not is_ai and customer_msgs_buffer:
                     # Skip low-quality owner replies (media-only, too short, junk)
                     if is_low_quality_owner_reply(content):
                         skipped_low_quality += 1
-                        last_customer_msg = ""
+                        customer_msgs_buffer.clear()
+                        continue
+                    # Combine consecutive customer messages for full context
+                    combined_customer = " | ".join(customer_msgs_buffer)
+                    # Check business intent on combined customer message
+                    if not has_business_intent(combined_customer):
+                        skipped_no_intent += 1
+                        customer_msgs_buffer.clear()
                         continue
                     all_pairs.append({
-                        "customer": last_customer_msg[:100],
+                        "customer": combined_customer[:200],
                         "ketu": content[:120],
                         "ai": is_ai,
                         "chat_id": chat_id,
                     })
-                    last_customer_msg = ""
+                    customer_msgs_buffer.clear()
 
     logger.info(
         f"[extract-pairs] msgs={len(messages)}, chats={len(by_chat)}, "
         f"pairs={len(all_pairs)}, skipped_low_quality={skipped_low_quality}, "
+        f"skipped_no_intent={skipped_no_intent}, "
         f"broken_sids={broken_sids}, use_flag={use_flag}"
     )
     return all_pairs
