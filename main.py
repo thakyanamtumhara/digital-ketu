@@ -51,6 +51,7 @@ from learner.realtime_learner import (
     learn_from_correction,
     learn_from_voice_note,
     get_realtime_stats,
+    get_correction_stats,
 )
 from core.conversation_log import (
     get_recent_conversations,
@@ -1984,6 +1985,16 @@ async def api_ketu_replied(req: KetuRepliedRequest):
 async def realtime_learner_stats():
     """Get realtime learner statistics — buffer size, learning progress."""
     return get_realtime_stats()
+
+
+@app.get("/api/learn/correction-stats")
+async def correction_learning_stats():
+    """Correction learning statistics — what mistakes AI keeps making.
+
+    Shows error categories, how many times each type of mistake happened,
+    and whether an auto-rule was generated to prevent it.
+    """
+    return get_correction_stats()
 
 
 @app.get("/api/costs")

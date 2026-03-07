@@ -74,6 +74,9 @@ def buffer_conversation(
     Called after every AI reply. When buffer hits threshold,
     triggers batch analysis. Junk messages are filtered out
     before buffering to keep learning data high-quality.
+
+    Conversations from customers who later bought get priority=high,
+    making them more valuable for learning what converts.
     """
     global _conversation_count
 
@@ -102,12 +105,27 @@ def buffer_conversation(
         logger.debug(f"[Buffer] Skipped no-business-intent: '{customer_message[:30]}'")
         return
 
+    # Check if this customer already bought — conversations that led to sales
+    # are the most valuable learning data (priority=high)
+    priority = "normal"
+    if customer_phone:
+        try:
+            from core.customer_memory import get_profile, STAGE_BOUGHT, STAGE_REPEAT
+            profile = get_profile(customer_phone)
+            stage = profile.get("stage", "new")
+            if stage in (STAGE_BOUGHT, STAGE_REPEAT):
+                priority = "high"
+                logger.info(f"[Buffer] HIGH priority pair from buyer {customer_phone[-4:]}")
+        except Exception:
+            pass
+
     _conversation_buffer.append({
         "customer": customer_message,
         "reply": ai_reply,
         "name": customer_name,
         "phone_last4": customer_phone[-4:] if customer_phone else "",
         "time": datetime.now(IST).strftime("%I:%M %p"),
+        "priority": priority,
     })
     _conversation_count += 1
 
@@ -140,13 +158,33 @@ def _batch_learn_from_conversations():
 
         client = Anthropic(api_key=settings.anthropic_api_key)
 
+        # Prioritize conversations from buyers — these are the most valuable
+        # because they show what messaging style converts customers to sales
+        high_priority = [c for c in conversations if c.get("priority") == "high"]
+        normal = [c for c in conversations if c.get("priority") != "high"]
+
+        # Include ALL high-priority (buyer) conversations + fill rest with normal
+        # This ensures buyer conversations are always analyzed
+        max_convos = 20
+        selected = high_priority[:max_convos]
+        remaining_slots = max_convos - len(selected)
+        if remaining_slots > 0:
+            selected.extend(normal[-remaining_slots:])
+
+        if not selected:
+            selected = conversations[-max_convos:]
+
+        buyer_count = len([c for c in selected if c.get("priority") == "high"])
+
         conv_text = "\n".join(
-            f"Customer ({c['name'] or c['phone_last4']}): {c['customer']}\n"
+            f"Customer ({c['name'] or c['phone_last4']}){' [BUYER]' if c.get('priority') == 'high' else ''}: {c['customer']}\n"
             f"Digital Ketu: {c['reply']}"
-            for c in conversations[-20:]  # Last 20 conversations
+            for c in selected
         )
 
         prompt = f"""Analyze these recent conversations between customers and Digital Ketu (AI twin of Ketu, a t-shirt manufacturer).
+
+{f"IMPORTANT: {buyer_count} conversations are from customers who BOUGHT (marked [BUYER]). Pay EXTRA attention to these — learn what messaging style, tone, and answers led to successful sales." if buyer_count > 0 else ""}
 
 Conversations:
 {conv_text}
@@ -158,6 +196,8 @@ Extract (JSON only):
    Format: [{{"customer_asked": "...", "ai_replied": "...", "issue": "..."}}]
 3. "hot_topics": Top 3 topics customers are asking about right now
    Format: ["topic1", "topic2", "topic3"]
+4. "sales_patterns": What reply patterns/phrases appeared in conversations that led to a sale (from [BUYER] conversations only)
+   Format: [{{"pattern": "...", "example": "..."}}] or []
 
 Return ONLY valid JSON. If nothing notable, return empty arrays."""
 
@@ -226,6 +266,35 @@ Return ONLY valid JSON. If nothing notable, return empty arrays."""
                     items_count=0,
                 )
 
+            # Learn sales patterns from buyer conversations → style patterns
+            sales_patterns = analysis.get("sales_patterns", [])
+            if sales_patterns:
+                from learner.chat_learner import apply_knowledge_updates
+                from core.knowledge import invalidate_cache
+                from core.activity_log import log_activity
+
+                style_patterns = [
+                    f"[Sales] {sp['pattern']}" for sp in sales_patterns
+                    if isinstance(sp, dict) and sp.get("pattern")
+                ]
+                if style_patterns:
+                    result = apply_knowledge_updates({"style_patterns": style_patterns})
+                    if result.get("count", 0) > 0:
+                        invalidate_cache()
+                        log_activity(
+                            source="realtime-learner",
+                            action="sales-patterns",
+                            details={
+                                "patterns_learned": [sp.get("pattern", "") for sp in sales_patterns[:5]],
+                                "from_buyer_conversations": buyer_count,
+                            },
+                            items_count=result.get("count", 0),
+                        )
+                        logger.info(
+                            f"Realtime learner: Learned {result['count']} sales patterns "
+                            f"from {buyer_count} buyer conversations"
+                        )
+
     except Exception as e:
         logger.error(f"Realtime conversation learning error: {e}")
     finally:
@@ -233,6 +302,191 @@ Return ONLY valid JSON. If nothing notable, return empty arrays."""
 
 
 # --- Correction Learning ---
+
+# Track correction patterns in DB — when same mistake type repeats 3+ times,
+# auto-generate a stronger rule to prevent it permanently
+_CORRECTION_PATTERN_KEY = "correction_patterns"
+
+
+def _load_correction_patterns() -> dict:
+    """Load correction pattern history from DB."""
+    try:
+        from core.database import is_db_available, kv_get
+        if is_db_available():
+            data = kv_get(_CORRECTION_PATTERN_KEY)
+            if data and isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {"patterns": {}, "total_corrections": 0}
+
+
+def _save_correction_patterns(data: dict):
+    """Save correction pattern history to DB."""
+    try:
+        from core.database import is_db_available, kv_set
+        if is_db_available():
+            kv_set(_CORRECTION_PATTERN_KEY, data)
+    except Exception:
+        pass
+
+
+def _track_correction_pattern(what_went_wrong: str, customer_message: str, ketu_correction: str):
+    """Track what types of mistakes the AI keeps making.
+
+    When the same mistake type happens 3+ times, generates a stronger
+    rule and logs it for the dashboard. This is medium-impact correction
+    learning — catches recurring patterns the single-correction learning misses.
+    """
+    if not what_went_wrong:
+        return
+
+    data = _load_correction_patterns()
+    data["total_corrections"] = data.get("total_corrections", 0) + 1
+
+    # Normalize the error type to group similar mistakes
+    wrong_lower = what_went_wrong.lower()
+    error_category = "other"
+    if any(w in wrong_lower for w in ["too long", "wordy", "verbose", "lengthy"]):
+        error_category = "reply_too_long"
+    elif any(w in wrong_lower for w in ["fabricat", "made up", "fake", "invented", "wrong"]):
+        error_category = "fabricated_info"
+    elif any(w in wrong_lower for w in ["tone", "rude", "formal", "cold", "robotic"]):
+        error_category = "wrong_tone"
+    elif any(w in wrong_lower for w in ["price", "rate", "cost"]):
+        error_category = "wrong_price"
+    elif any(w in wrong_lower for w in ["emoji", "smiley"]):
+        error_category = "unwanted_emoji"
+    elif any(w in wrong_lower for w in ["language", "hindi", "english", "hinglish"]):
+        error_category = "wrong_language"
+    elif any(w in wrong_lower for w in ["sales pitch", "cta", "buy now", "order now"]):
+        error_category = "sales_pitch"
+    elif any(w in wrong_lower for w in ["generic", "template", "vague"]):
+        error_category = "too_generic"
+
+    patterns = data.get("patterns", {})
+    if error_category not in patterns:
+        patterns[error_category] = {
+            "count": 0,
+            "examples": [],
+            "rule_generated": False,
+        }
+
+    cat_data = patterns[error_category]
+    cat_data["count"] = cat_data.get("count", 0) + 1
+    cat_data["examples"] = (cat_data.get("examples", []) + [{
+        "customer": customer_message[:80],
+        "correction": ketu_correction[:80],
+        "error": what_went_wrong[:100],
+        "time": datetime.now(IST).strftime("%d %b %I:%M %p"),
+    }])[-5:]  # Keep last 5 examples
+
+    # When same mistake happens 3+ times and rule not yet generated → create strong rule
+    if cat_data["count"] >= 3 and not cat_data.get("rule_generated"):
+        _generate_correction_rule(error_category, cat_data)
+        cat_data["rule_generated"] = True
+
+    data["patterns"] = patterns
+    _save_correction_patterns(data)
+
+
+def _generate_correction_rule(error_category: str, cat_data: dict):
+    """Generate a strong rule from repeated correction patterns.
+
+    Called when the same type of mistake happens 3+ times.
+    Creates a new evolved_rule to prevent the mistake permanently.
+    """
+    # Map error categories to concrete rules
+    rule_map = {
+        "reply_too_long": "STRICT: Reply 10-15 words ONLY. Ketu har baar edit karta hai long reply ko. Chhota rakho.",
+        "fabricated_info": "NEVER fabricate information — stock, delivery dates, availability. Agar nahi pata toh 'Ketu sir batayenge' bol",
+        "wrong_tone": "Match Ketu's factory-owner tone — direct, confident, no unnecessary formality. Robotic/corporate tone avoid karo",
+        "wrong_price": "NEVER guess prices. ONLY use prices from the PRODUCTS section. Galat price se customer confuse hota hai",
+        "unwanted_emoji": "EMOJI MAT USE KAR. Ketu emoji nahi bhejta. Har baar edit karta hai. ZERO emojis",
+        "wrong_language": "Customer ki language match karo — Hindi mein bole toh Hindi, English mein toh English. Default Hinglish",
+        "sales_pitch": "SALES PITCH KABHI MAT KAR. 'Order now', 'Interested?' jaise CTA mat bol. Tu salesman nahi, factory owner hai",
+        "too_generic": "Generic template replies avoid karo. Customer ke specific sawaal ka specific jawab de — seedha, with details",
+    }
+
+    rule = rule_map.get(error_category)
+    if not rule:
+        # Build from examples
+        examples = cat_data.get("examples", [])
+        if examples:
+            rule = f"[Auto-correction] Mistake: {examples[0]['error']}. Ketu's way: {examples[0]['correction']}"
+        else:
+            return
+
+    try:
+        from core.database import is_db_available, load_knowledge_from_db, save_knowledge
+        prompt_data = None
+        if is_db_available():
+            prompt_data = load_knowledge_from_db("prompt")
+        if not prompt_data:
+            prompt_path = KNOWLEDGE_DIR / "prompt.json"
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    prompt_data = json.load(f)
+            except Exception:
+                prompt_data = {}
+
+        existing_rules = set(
+            r.lower() for r in prompt_data.get("reply_rules", [])
+            + prompt_data.get("evolved_rules", [])
+        )
+
+        if rule.lower() not in existing_rules:
+            prompt_data.setdefault("evolved_rules", []).append(rule)
+            if is_db_available():
+                save_knowledge("prompt", prompt_data)
+            # Also write to file
+            prompt_path = KNOWLEDGE_DIR / "prompt.json"
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                json.dump(prompt_data, f, indent=2, ensure_ascii=False)
+
+            from core.knowledge import invalidate_cache
+            invalidate_cache()
+
+            from core.activity_log import log_activity
+            log_activity(
+                source="correction-learner",
+                action="auto-rule-generated",
+                details={
+                    "error_category": error_category,
+                    "correction_count": cat_data.get("count", 0),
+                    "rule": rule,
+                    "examples": cat_data.get("examples", [])[:3],
+                },
+                items_count=1,
+            )
+            logger.info(
+                f"[CorrectionLearn] Auto-generated rule from {cat_data.get('count', 0)} corrections: "
+                f"{error_category} → '{rule[:60]}...'"
+            )
+    except Exception as e:
+        logger.warning(f"[CorrectionLearn] Rule generation failed (non-fatal): {e}")
+
+
+def get_correction_stats() -> dict:
+    """Get correction learning statistics for dashboard."""
+    data = _load_correction_patterns()
+    patterns = data.get("patterns", {})
+    return {
+        "total_corrections": data.get("total_corrections", 0),
+        "error_categories": {
+            cat: {
+                "count": info.get("count", 0),
+                "rule_generated": info.get("rule_generated", False),
+                "last_example": info.get("examples", [{}])[-1] if info.get("examples") else None,
+            }
+            for cat, info in patterns.items()
+        },
+        "top_mistakes": sorted(
+            [(cat, info.get("count", 0)) for cat, info in patterns.items()],
+            key=lambda x: x[1], reverse=True,
+        )[:5],
+    }
+
 
 def learn_from_correction(
     customer_message: str,
@@ -250,6 +504,7 @@ def learn_from_correction(
     1. The correct reply style/content → new FAQ or style pattern
     2. What the AI got wrong → evolve the prompt to avoid this
     3. The customer<>Ketu exchange → new example conversation
+    4. Track correction patterns → auto-generate rules when same mistake repeats 3+ times
     """
     client = Anthropic(api_key=settings.anthropic_api_key)
 
@@ -363,6 +618,13 @@ Return ONLY valid JSON."""
             ai_reply=ai_reply,
             ketu_correction=ketu_correction,
             what_went_wrong=analysis.get("what_went_wrong", ""),
+        )
+
+        # Track correction patterns — auto-generate rules when same mistake repeats 3+ times
+        _track_correction_pattern(
+            what_went_wrong=analysis.get("what_went_wrong", ""),
+            customer_message=customer_message,
+            ketu_correction=ketu_correction,
         )
 
         return {

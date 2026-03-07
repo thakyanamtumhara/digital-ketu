@@ -509,6 +509,19 @@ def extract_knowledge_from_wwbun_messages(
 
     # Include customer messages for context (to understand what Ketu was replying to)
     # but only learn FROM Ketu's messages
+    # Tag conversations from buyers ([BUYER]) for sales-prioritized learning
+    buyer_phones = set()
+    try:
+        from core.customer_memory import get_profile, STAGE_BOUGHT, STAGE_REPEAT
+        for m in filtered:
+            phone = m.get("contact_phone", "") or m.get("phone", "")
+            if phone and phone not in buyer_phones:
+                profile = get_profile(phone)
+                if profile.get("stage") in (STAGE_BOUGHT, STAGE_REPEAT):
+                    buyer_phones.add(phone)
+    except Exception:
+        pass
+
     chat_context = []
     for m in filtered[:200]:
         text = m.get("content", "") or m.get("text", "") or m.get("body", "")
@@ -520,9 +533,13 @@ def extract_knowledge_from_wwbun_messages(
         else:
             role = "KETU" if _is_owner_msg(m) else "CUSTOMER"
         is_ai = " [AI]" if m.get("is_ai_generated") else ""
-        chat_context.append(f"{role}{is_ai}: {text}")
+        # Tag buyer conversations for prioritized learning
+        phone = m.get("contact_phone", "") or m.get("phone", "")
+        buyer_tag = " [BUYER]" if phone in buyer_phones else ""
+        chat_context.append(f"{role}{is_ai}{buyer_tag}: {text}")
 
     chat_text = "\n".join(chat_context)
+    buyer_count = len(buyer_phones)
 
     # Load current prompt config for context
     prompt_config = _load_prompt_config()
@@ -530,6 +547,8 @@ def extract_knowledge_from_wwbun_messages(
     current_phrases = prompt_config.get("signature_phrases", []) + prompt_config.get("evolved_phrases", [])
 
     prompt = f"""Analyze these WhatsApp conversations. Learn from KETU's MANUAL messages only (NOT [AI] tagged). Use CUSTOMER messages as CONTEXT to understand why Ketu replied that way.
+
+{f"IMPORTANT: {buyer_count} conversations are from BUYERS (marked [BUYER]) — customers who actually purchased. Pay EXTRA attention to Ketu's messaging style in these chats. Learn what phrases, tone, and approach led to a sale." if buyer_count > 0 else ""}
 
 Messages:
 {chat_text}
@@ -553,11 +572,14 @@ Extract in JSON format:
      "new_rules": ["NEW reply patterns — how Ketu handles specific situations"],
      "example_conversations": [{{"customer": "question", "reply": "Ketu's reply"}}]
    }}
+5. "sales_patterns": Patterns from [BUYER] conversations that led to a sale — what Ketu said/did that converted
+   Format: [{{"pattern": "description of what worked", "example": "example message"}}] or []
 
 CRITICAL for prompt_evolution:
 - Only add genuinely NEW traits/phrases/rules (not duplicates)
 - Capture Ketu's unique selling style, humor, objection handling
 - If Ketu uses a phrase 2+ times, it's a signature — add it
+- PRIORITIZE learning from [BUYER] conversations — these show what actually converts
 
 Return ONLY valid JSON."""
 
@@ -601,6 +623,21 @@ def apply_knowledge_updates(updates: dict) -> dict:
     for skip_key in ("price_updates", "new_products", "product_updates"):
         if updates.pop(skip_key, None):
             logger.info(f"[apply] Skipped '{skip_key}' from chat — catalog is source of truth")
+
+    # Convert sales_patterns to style_patterns (tagged with [Sales])
+    sales_patterns = updates.pop("sales_patterns", [])
+    if sales_patterns and isinstance(sales_patterns, list):
+        sales_style = [
+            f"[Sales] {sp['pattern']}" for sp in sales_patterns
+            if isinstance(sp, dict) and sp.get("pattern")
+        ]
+        if sales_style:
+            existing = updates.get("style_patterns", [])
+            if isinstance(existing, list):
+                updates["style_patterns"] = existing + sales_style
+            else:
+                updates["style_patterns"] = sales_style
+            logger.info(f"[apply] Converted {len(sales_style)} sales patterns to style patterns")
 
     # Update FAQ
     if updates.get("new_faqs"):

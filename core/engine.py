@@ -731,6 +731,19 @@ def generate_reply(
     if customer_name:
         system_blocks[-1]["text"] += f"\nCustomer: {customer_name}"
 
+    # Language matching — detect and enforce customer's language
+    if customer_phone:
+        profile = get_profile(customer_phone)
+        detected_lang = profile.get("language", "")
+        if detected_lang == "english":
+            system_blocks[-1]["text"] += "\n>> LANGUAGE: Reply in ENGLISH only. Customer speaks English."
+        elif detected_lang == "hindi":
+            system_blocks[-1]["text"] += "\n>> LANGUAGE: Reply in HINDI/Hinglish. Customer speaks Hindi."
+        elif detected_lang in ("tamil", "telugu", "bengali"):
+            system_blocks[-1]["text"] += f"\n>> LANGUAGE: Customer speaks {detected_lang.upper()}. Reply in simple English."
+        elif detected_lang == "gujarati":
+            system_blocks[-1]["text"] += "\n>> LANGUAGE: Customer speaks GUJARATI. Reply in simple Hindi/English."
+
     # Tell AI if this is the first message
     user_msg_count = sum(1 for m in messages if m.get("role") == "user")
     if user_msg_count == 1:
