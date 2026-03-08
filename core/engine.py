@@ -656,8 +656,8 @@ def generate_reply(
             if msg_clean in enders:
                 is_ender = True
                 logger.info(f"[Ender] Pure ender detected without history: '{message[:50]}'")
-            elif len(msg_clean.split()) <= 3:
-                # Also catch compound enders like "thike, dhanyawad" without history
+            elif len(msg_clean.split()) <= 6:
+                # Also catch compound enders like "thike, dhanyawad", "haan fir theek hai bhaiyaa" without history
                 clean_words = [w.strip(",.!;:") for w in msg_clean.split()]
                 question_words = {"kya", "kab", "kaise", "kitna", "kitne", "kaha", "kahan",
                                   "what", "when", "how", "which", "where", "why", "price",
@@ -743,6 +743,16 @@ def generate_reply(
         faq_data=faq_data,
         ketu_only_config=ketu_only_cfg,
     )
+
+    # Ender guard — don't defer simple acknowledgments like "Hanji", "Theek hai"
+    # This catches enders that slipped past the main check (e.g. no history after restart)
+    if _is_conversation_ender(message, last_ai_msg):
+        logger.info(f"[Guard] Message is ender before deferral, skipping: '{message[:50]}'")
+        activate_shutup(customer_phone, reason="ender_detected")
+        if customer_phone:
+            _conversations[customer_phone] = messages + [{"role": "user", "content": message}]
+            _conversation_timestamps[customer_phone] = time.time()
+        return ""
 
     if confidence["should_defer"]:
         defer_reply = _get_leave_aware_defer_reply("Bhai, ye Ketu sir khud batayenge — thodi der mein reply aayega.")

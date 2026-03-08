@@ -456,10 +456,11 @@ def _pick_relevant_faqs(faqs: list, classification: dict) -> list:
 
 
 def _pick_relevant_patterns(patterns: list, classification: dict) -> list:
-    """Pick learned patterns relevant to the customer's message. Max 3.
+    """Pick learned patterns relevant to the customer's message. Max 4.
 
-    Patterns are strings like "[Correction] Hoodie pricing should include..."
-    We keyword-match against the classification to find relevant ones.
+    [Correction]-tagged patterns (from Ketu's direct edits) are ALWAYS included
+    because they represent the strongest learning signal.
+    Other patterns are keyword-matched against the classification.
     """
     if not patterns:
         return []
@@ -467,28 +468,37 @@ def _pick_relevant_patterns(patterns: list, classification: dict) -> list:
     intents = set(classification.get("intents", []))
     product_ids = classification.get("product_ids", [])
 
-    # Build search terms
+    # Separate [Correction] patterns (always include) from others (keyword-match)
+    correction_patterns = []
+    other_patterns = []
+    for p in patterns:
+        text = p if isinstance(p, str) else str(p)
+        if "[Correction]" in text:
+            correction_patterns.append(text[:150])
+        else:
+            other_patterns.append(text)
+
+    # Always include latest 2 correction patterns — most recent = most relevant
+    result = correction_patterns[-2:]
+
+    # Keyword-match remaining patterns
     search_terms = set()
     for pid in product_ids:
         search_terms.update(pid.replace("-", " ").split())
     for intent in intents:
         search_terms.update(intent.replace("_", " ").split())
 
-    if not search_terms:
-        return []
+    if search_terms:
+        scored = []
+        for text in other_patterns:
+            text_lower = text.lower()
+            score = sum(1 for term in search_terms if term in text_lower)
+            if score > 0:
+                scored.append((score, text[:150]))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        result += [text for _, text in scored[:2]]  # Add 2 keyword-matched
 
-    # Score patterns by keyword presence
-    scored = []
-    for pattern in patterns:
-        text = pattern if isinstance(pattern, str) else str(pattern)
-        text_lower = text.lower()
-        score = sum(1 for term in search_terms if term in text_lower)
-        if score > 0:
-            # Compact: take first 80 chars
-            scored.append((score, text[:80]))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [text for _, text in scored[:3]]  # Max 3 patterns
+    return result[:4]  # Max 4 total
 
 
 # Keep for backwards compatibility but should not be used in normal flow
