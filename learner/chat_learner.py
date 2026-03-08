@@ -184,6 +184,8 @@ def has_business_intent(text: str) -> bool:
         r'(?:confirm|payment\s*done|paid|sent|bhej\s*diya|kar\s*diya|ho\s*gaya|tracking)',
         # Questions (generic business questions)
         r'(?:kaise|how|kya|what|which|konsa|kaun)',
+        # Shop / godown availability
+        r'(?:open|band|close|closed|chutti|holiday|timing|visit|godown|shop|dukan|warehouse)',
     ]
 
     for pattern in _BUSINESS_SIGNALS:
