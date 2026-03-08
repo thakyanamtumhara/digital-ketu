@@ -509,13 +509,22 @@ def extract_knowledge_from_wwbun_messages(
             "quality_messages": [],
         }
 
-    # Include customer messages for context (to understand what Ketu was replying to)
-    # but only learn FROM Ketu's messages
+    # Extract only quality PAIRS (customer question + Ketu reply) to send to Claude
+    # This avoids sending 100+ messages when only ~20 pairs matter (~70% token savings)
+    quality_ketu_set = set(id(m) for m in quality_ketu_msgs)
+    pair_messages = []
+    for i, m in enumerate(filtered):
+        if id(m) in quality_ketu_set:
+            # Include preceding customer message for context (if exists)
+            if i > 0 and id(filtered[i - 1]) not in quality_ketu_set:
+                pair_messages.append(filtered[i - 1])
+            pair_messages.append(m)
+
     # Tag conversations from buyers ([BUYER]) for sales-prioritized learning
     buyer_phones = set()
     try:
         from core.customer_memory import get_profile, STAGE_BOUGHT, STAGE_REPEAT
-        for m in filtered:
+        for m in pair_messages:
             phone = m.get("contact_phone", "") or m.get("phone", "")
             if phone and phone not in buyer_phones:
                 profile = get_profile(phone)
@@ -525,22 +534,21 @@ def extract_knowledge_from_wwbun_messages(
         pass
 
     chat_context = []
-    for m in filtered[:200]:
+    for m in pair_messages:
         text = m.get("content", "") or m.get("text", "") or m.get("body", "")
         if broken_sids and not is_owner_reliable:
-            # Last resort heuristic: short messages = customer, longer = Ketu
             role = "KETU" if len(text.split()) >= 5 else "CUSTOMER"
         elif broken_sids and is_owner_reliable:
             role = "KETU" if _is_owner_by_flag(m) else "CUSTOMER"
         else:
             role = "KETU" if _is_owner_msg(m) else "CUSTOMER"
         is_ai = " [AI]" if m.get("is_ai_generated") else ""
-        # Tag buyer conversations for prioritized learning
         phone = m.get("contact_phone", "") or m.get("phone", "")
         buyer_tag = " [BUYER]" if phone in buyer_phones else ""
         chat_context.append(f"{role}{is_ai}{buyer_tag}: {text}")
 
     chat_text = "\n".join(chat_context)
+    logger.info(f"[wwbun-learn] Sending {len(pair_messages)} pair messages to Claude (from {len(filtered)} filtered)")
     buyer_count = len(buyer_phones)
 
     # Load current prompt config for context
