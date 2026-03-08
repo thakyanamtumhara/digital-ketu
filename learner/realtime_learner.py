@@ -508,24 +508,9 @@ def learn_from_correction(
     """
     client = get_anthropic_client()
 
-    # Load current prompt context — DB first (survives deploys), file fallback
-    prompt_data = None
-    try:
-        from core.database import is_db_available, load_knowledge_from_db
-        if is_db_available():
-            prompt_data = load_knowledge_from_db("prompt")
-    except Exception:
-        pass
-    if not prompt_data:
-        prompt_path = KNOWLEDGE_DIR / "prompt.json"
-        try:
-            with open(prompt_path, "r", encoding="utf-8") as f:
-                prompt_data = json.load(f)
-        except Exception:
-            prompt_data = {}
-
-    current_traits = prompt_data.get("personality_traits", []) + prompt_data.get("evolved_traits", [])
-    current_rules = prompt_data.get("reply_rules", []) + prompt_data.get("evolved_rules", [])
+    # NOTE: We do NOT send current traits/rules/phrases to Claude anymore.
+    # The 194KB prompt.json was adding ~8000+ tokens per call for dedup that
+    # already happens in apply_knowledge_updates() AFTER Claude returns.
 
     prompt = f"""Ketu (business owner) CORRECTED an AI-generated reply. This is a critical learning moment.
 
@@ -534,9 +519,6 @@ Customer asked: "{customer_message}"
 AI (Digital Ketu) replied: "{ai_reply}"
 
 Ketu CORRECTED it to: "{ketu_correction}"
-
-CURRENT personality traits: {json.dumps(current_traits, ensure_ascii=False)}
-CURRENT reply rules: {json.dumps(current_rules, ensure_ascii=False)}
 
 Analyze the correction and extract (JSON):
 1. "new_faq": If this Q&A pair is worth saving as a FAQ
@@ -862,23 +844,9 @@ async def learn_from_voice_note(
 
     context_line = f"\nContext: {context}" if context else ""
 
-    # Load current knowledge for dedup — DB first, file fallback
-    prompt_data = None
-    try:
-        from core.database import is_db_available, load_knowledge_from_db
-        if is_db_available():
-            prompt_data = load_knowledge_from_db("prompt")
-    except Exception:
-        pass
-    if not prompt_data:
-        prompt_path = KNOWLEDGE_DIR / "prompt.json"
-        try:
-            with open(prompt_path, "r", encoding="utf-8") as f:
-                prompt_data = json.load(f)
-        except Exception:
-            prompt_data = {}
-
-    current_phrases = prompt_data.get("signature_phrases", []) + prompt_data.get("evolved_phrases", [])
+    # NOTE: We do NOT send current phrases/traits to Claude anymore.
+    # The 194KB prompt.json was adding ~8000+ tokens per call for dedup that
+    # already happens in apply_knowledge_updates() AFTER Claude returns.
 
     prompt = f"""This is a transcript of Ketu's VOICE NOTE (he's a t-shirt manufacturer, owner of Sale91.com).
 Ketu speaks naturally in voice — this reveals his real speaking style.
@@ -886,8 +854,6 @@ Ketu speaks naturally in voice — this reveals his real speaking style.
 
 Voice note transcript:
 "{transcript}"
-
-CURRENT known signature phrases: {json.dumps(current_phrases, ensure_ascii=False)}
 
 Extract from this voice note (JSON):
 1. "product_info": Any product details, prices, features mentioned
