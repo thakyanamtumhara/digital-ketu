@@ -26,6 +26,28 @@ logger = logging.getLogger(__name__)
 
 PROMPT_FILE = KNOWLEDGE_DIR / "prompt.json"
 
+
+def _get_leave_aware_defer_reply(default_reply: str) -> str:
+    """If Ketu is on leave/busy, replace the default deferral reply with leave info.
+
+    AI keeps answering normal questions. This is ONLY called when AI would
+    normally defer to Ketu (ketu-only questions, low confidence, peak hours).
+    Instead of "Ketu sir thodi der mein reply karenge", tells the customer
+    about Ketu's leave/busy status.
+    """
+    try:
+        from core.leave_manager import check_leave_status, get_leave_auto_reply
+        leave_status = check_leave_status()
+        if leave_status and leave_status.get("active"):
+            leave_reply = get_leave_auto_reply(leave_status)
+            if leave_reply:
+                logger.info(f"[Leave] Ketu on {leave_status['type']} — using leave-aware defer reply")
+                return leave_reply
+    except Exception:
+        pass
+    return default_reply
+
+
 # In-memory conversation history per customer (phone -> messages)
 _conversations: dict[str, list] = {}
 _conversation_timestamps: dict[str, float] = {}
@@ -573,28 +595,6 @@ def generate_reply(
             _customer_names[key] = customer_name
     _save_customer_insights_to_db()
 
-    # --- LEAVE CHECK ---
-    # If Ketu is on leave or busy, send a leave-aware auto-reply instead of normal AI reply
-    try:
-        from core.leave_manager import check_leave_status, get_leave_auto_reply
-        leave_status = check_leave_status()
-        if leave_status and leave_status.get("active"):
-            leave_reply = get_leave_auto_reply(leave_status)
-            if leave_reply:
-                logger.info(
-                    f"[Leave] Ketu on {leave_status['type']} — auto-reply to "
-                    f"{customer_phone[-4:] if customer_phone else '?'}: '{leave_reply[:50]}'"
-                )
-                if customer_phone:
-                    _conversations[customer_phone] = messages + [
-                        {"role": "user", "content": message},
-                        {"role": "assistant", "content": leave_reply},
-                    ]
-                    _conversation_timestamps[customer_phone] = time.time()
-                return leave_reply
-    except Exception as e:
-        logger.warning(f"[Leave] Check failed (non-fatal): {e}")
-
     # --- SHUT UP CHECK ---
     # If AI is in cooldown for this customer (ender detected earlier or Ketu replied),
     # don't reply at all. This prevents the AI from jumping back into finished conversations.
@@ -694,7 +694,8 @@ def generate_reply(
             defer_reply=ketu_check["defer_reply"],
         )
         # Store in conversation history so context is maintained
-        defer_reply = ketu_check["defer_reply"]
+        # If Ketu is on leave, replace deferral with leave-aware message
+        defer_reply = _get_leave_aware_defer_reply(ketu_check["defer_reply"])
         if customer_phone:
             _conversations[customer_phone] = messages + [
                 {"role": "user", "content": message},
@@ -731,7 +732,7 @@ def generate_reply(
     )
 
     if confidence["should_defer"]:
-        defer_reply = "Bhai, ye Ketu sir khud batayenge — thodi der mein reply aayega."
+        defer_reply = _get_leave_aware_defer_reply("Bhai, ye Ketu sir khud batayenge — thodi der mein reply aayega.")
         logger.info(
             f"[Confidence] LOW score={confidence['score']} — deferring to Ketu. "
             f"Reason: {confidence['reason']}. Message: '{message[:50]}'"
@@ -758,7 +759,7 @@ def generate_reply(
     # Check if borderline confidence should defer during Ketu's active hours
     peak_defer = should_defer_borderline(confidence["score"])
     if peak_defer:
-        defer_reply = peak_defer["defer_reply"]
+        defer_reply = _get_leave_aware_defer_reply(peak_defer["defer_reply"])
         logger.info(
             f"[PeakHours] Deferring borderline (score={confidence['score']}) — "
             f"reason: {peak_defer['reason']}. Message: '{message[:50]}'"
