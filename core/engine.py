@@ -693,6 +693,20 @@ def generate_reply(
             reason=ketu_check["reason"],
             defer_reply=ketu_check["defer_reply"],
         )
+        # Send to cloud for learning (background thread)
+        import threading
+        def _cloud_learn_detection():
+            try:
+                from learner.realtime_learner import learn_ketu_defer_patterns
+                learn_ketu_defer_patterns(
+                    customer_message=message,
+                    customer_phone=customer_phone,
+                    source="ketu-detection",
+                    category_name=ketu_check["category_name"],
+                )
+            except Exception as e:
+                logger.warning(f"[KetuOnly] Cloud learning failed (non-fatal): {e}")
+        threading.Thread(target=_cloud_learn_detection, daemon=True).start()
         # Store in conversation history so context is maintained
         # If Ketu is on leave, replace deferral with leave-aware message
         defer_reply = _get_leave_aware_defer_reply(ketu_check["defer_reply"])

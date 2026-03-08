@@ -2376,6 +2376,33 @@ async def api_ketu_replied(req: KetuRepliedRequest):
             ketu_reply=req.ketu_message or "",
         )
 
+        # Send to cloud for deep learning (background thread)
+        if req.ketu_message:
+            import threading
+            def _cloud_learn_takeover():
+                from learner.realtime_learner import learn_ketu_defer_patterns
+                result = learn_ketu_defer_patterns(
+                    customer_message=customer_last_msg,
+                    ketu_reply=req.ketu_message,
+                    customer_phone=req.customer_phone,
+                    source="ketu-takeover",
+                )
+                # Track in correction history ring buffer for dashboard
+                _add_correction_history({
+                    "source": "ketu-takeover",
+                    "customer_phone": req.customer_phone[-4:] if req.customer_phone else "?",
+                    "customer_message": customer_last_msg[:120],
+                    "ketu_reply": req.ketu_message[:120],
+                    "category": result.get("category", ""),
+                    "question_pattern": result.get("question_pattern", ""),
+                    "why_ketu_only": result.get("why_ketu_only", ""),
+                    "should_learn": result.get("should_learn", False),
+                    "status": result.get("status", "unknown"),
+                    "input_tokens": result.get("input_tokens", 0),
+                    "output_tokens": result.get("output_tokens", 0),
+                })
+            threading.Thread(target=_cloud_learn_takeover, daemon=True).start()
+
     log_activity(
         source="ketu-replied",
         action="shutup-activated",

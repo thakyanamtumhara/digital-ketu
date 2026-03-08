@@ -2720,6 +2720,8 @@ async function loadCorrectionHistory() {
 
   const corrections = data.corrections || [];
   const cloudCalls = data.cloud_calls || [];
+  const correctionEntries = corrections.filter(c => c.source !== 'ketu-takeover');
+  const takeoverEntries = corrections.filter(c => c.source === 'ketu-takeover');
   const learned = corrections.filter(c => c.status === 'learned').length;
 
   document.getElementById('chTotal').textContent = data.total || 0;
@@ -2728,25 +2730,41 @@ async function loadCorrectionHistory() {
 
   if (corrections.length === 0) {
     document.getElementById('correctionHistoryList').innerHTML =
-      '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">No corrections yet. Edit an AI reply to see correction history here.</div>';
+      '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">No corrections or takeovers yet. Edit an AI reply or take over a chat to see history here.</div>';
     return;
   }
 
   let html = '';
+
+  // Takeover summary badge
+  if (takeoverEntries.length > 0) {
+    const takeoverTokens = takeoverEntries.reduce((sum, t) => sum + (t.input_tokens || 0) + (t.output_tokens || 0), 0);
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">';
+    html += '<span style="background:rgba(0,206,201,0.1);color:var(--accent2);font-size:11px;padding:4px 10px;border-radius:10px;">Ketu Takeovers sent to cloud: ' + takeoverEntries.length + '</span>';
+    html += '<span style="background:rgba(253,203,110,0.1);color:var(--orange);font-size:11px;padding:4px 10px;border-radius:10px;">Takeover tokens: ' + takeoverTokens + '</span>';
+    html += '</div>';
+  }
+
   corrections.forEach((c, i) => {
     const time = new Date(c.timestamp * 1000).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit'});
     const statusColor = c.status === 'learned' ? 'var(--green)' : c.status === 'error' ? 'var(--red)' : 'var(--orange)';
-    const srcLabel = c.source === 'whatsapp-edit' ? 'Edit' : 'API';
+    const isTakeover = c.source === 'ketu-takeover';
+    const srcLabel = isTakeover ? 'Takeover' : (c.source === 'whatsapp-edit' ? 'Edit' : 'API');
+    const srcColor = isTakeover ? 'rgba(0,206,201,0.15)' : 'rgba(253,121,168,0.15)';
+    const srcTextColor = isTakeover ? 'var(--accent2)' : '#fd79a8';
 
-    html += '<div style="border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:8px;padding:12px 14px;">';
+    html += '<div style="border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:8px;padding:12px 14px;' + (isTakeover ? 'border-left:3px solid var(--accent2);' : '') + '">';
 
     // Header
     html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
     html += '<div style="display:flex;align-items:center;gap:8px;">';
-    html += '<span style="background:rgba(253,121,168,0.15);border-radius:4px;padding:2px 8px;font-size:11px;color:#fd79a8;">' + srcLabel + '</span>';
+    html += '<span style="background:' + srcColor + ';border-radius:4px;padding:2px 8px;font-size:11px;color:' + srcTextColor + ';">' + srcLabel + '</span>';
     html += '<span style="font-size:12px;color:var(--text-dim);">' + time + '</span>';
     if (c.customer_phone) html += '<span style="font-size:12px;color:var(--text-dim);">...' + escapeHtml(c.customer_phone) + '</span>';
     if (c.customer_name) html += '<span style="font-size:12px;color:var(--accent2);">' + escapeHtml(c.customer_name.slice(0, 20)) + '</span>';
+    if (isTakeover && (c.input_tokens || c.output_tokens)) {
+      html += '<span style="font-size:10px;color:var(--orange);">' + (c.input_tokens + c.output_tokens) + ' tokens</span>';
+    }
     html += '</div>';
     html += '<span style="font-size:11px;font-weight:600;color:' + statusColor + ';">' + (c.status || '?') + '</span>';
     html += '</div>';
@@ -2755,26 +2773,42 @@ async function loadCorrectionHistory() {
     html += '<div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">Customer asked:</div>';
     html += '<div style="font-size:13px;color:var(--text);background:rgba(255,255,255,0.03);border-radius:6px;padding:8px;margin-bottom:8px;">' + escapeHtml(c.customer_message || '') + '</div>';
 
-    // Before/After
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">';
-    // AI reply (wrong)
-    html += '<div>';
-    html += '<div style="font-size:11px;color:var(--red);margin-bottom:3px;">AI replied (wrong):</div>';
-    html += '<div style="font-size:12px;color:var(--text);background:rgba(214,48,49,0.08);border:1px solid rgba(214,48,49,0.15);border-radius:6px;padding:8px;">' + escapeHtml(c.ai_reply || '') + '</div>';
-    html += '</div>';
-    // Ketu correction (right)
-    html += '<div>';
-    html += '<div style="font-size:11px;color:var(--green);margin-bottom:3px;">Ketu corrected to:</div>';
-    html += '<div style="font-size:12px;color:var(--text);background:rgba(0,206,201,0.08);border:1px solid rgba(0,206,201,0.15);border-radius:6px;padding:8px;">' + escapeHtml(c.ketu_correction || '') + '</div>';
-    html += '</div>';
-    html += '</div>';
-
-    // What went wrong + updates
-    if (c.what_went_wrong) {
-      html += '<div style="font-size:12px;color:var(--orange);margin-bottom:4px;">What went wrong: ' + escapeHtml(c.what_went_wrong) + '</div>';
-    }
-    if (c.updates_applied && c.updates_applied.length > 0) {
-      html += '<div style="font-size:11px;color:var(--accent);">Learned: ' + escapeHtml(c.updates_applied.join(', ')) + ' (' + c.updates_count + ' updates)</div>';
+    if (isTakeover) {
+      // Takeover-specific: Ketu's reply + what cloud learned
+      if (c.ketu_reply) {
+        html += '<div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">Ketu replied:</div>';
+        html += '<div style="font-size:12px;color:var(--text);background:rgba(0,206,201,0.08);border:1px solid rgba(0,206,201,0.15);border-radius:6px;padding:8px;margin-bottom:8px;">' + escapeHtml(c.ketu_reply) + '</div>';
+      }
+      if (c.category) {
+        html += '<div style="font-size:11px;color:var(--accent);margin-bottom:3px;">Category: ' + escapeHtml(c.category) + '</div>';
+      }
+      if (c.question_pattern) {
+        html += '<div style="font-size:11px;color:var(--accent2);margin-bottom:3px;">Pattern learned: "' + escapeHtml(c.question_pattern) + '"</div>';
+      }
+      if (c.why_ketu_only) {
+        html += '<div style="font-size:11px;color:var(--orange);margin-bottom:3px;">Why Ketu only: ' + escapeHtml(c.why_ketu_only) + '</div>';
+      }
+      if (c.should_learn) {
+        html += '<div style="font-size:10px;color:var(--green);">New pattern saved — AI will defer similar questions</div>';
+      }
+    } else {
+      // Correction-specific: Before/After
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">';
+      html += '<div>';
+      html += '<div style="font-size:11px;color:var(--red);margin-bottom:3px;">AI replied (wrong):</div>';
+      html += '<div style="font-size:12px;color:var(--text);background:rgba(214,48,49,0.08);border:1px solid rgba(214,48,49,0.15);border-radius:6px;padding:8px;">' + escapeHtml(c.ai_reply || '') + '</div>';
+      html += '</div>';
+      html += '<div>';
+      html += '<div style="font-size:11px;color:var(--green);margin-bottom:3px;">Ketu corrected to:</div>';
+      html += '<div style="font-size:12px;color:var(--text);background:rgba(0,206,201,0.08);border:1px solid rgba(0,206,201,0.15);border-radius:6px;padding:8px;">' + escapeHtml(c.ketu_correction || '') + '</div>';
+      html += '</div>';
+      html += '</div>';
+      if (c.what_went_wrong) {
+        html += '<div style="font-size:12px;color:var(--orange);margin-bottom:4px;">What went wrong: ' + escapeHtml(c.what_went_wrong) + '</div>';
+      }
+      if (c.updates_applied && c.updates_applied.length > 0) {
+        html += '<div style="font-size:11px;color:var(--accent);">Learned: ' + escapeHtml(c.updates_applied.join(', ')) + ' (' + c.updates_count + ' updates)</div>';
+      }
     }
 
     html += '</div>';

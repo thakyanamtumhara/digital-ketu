@@ -809,6 +809,119 @@ def learn_ketu_only_from_manual_chat(
         logger.warning(f"[KetuOnly] Learning from chat failed (non-fatal): {e}")
 
 
+def learn_ketu_defer_patterns(
+    customer_message: str,
+    ketu_reply: str = "",
+    customer_phone: str = "",
+    source: str = "ketu-takeover",
+    category_name: str = "",
+) -> dict:
+    """Send ketu takeover / ketu-only detection data to cloud for deep learning.
+
+    Called when:
+    1. Ketu manually takes over a conversation (source="ketu-takeover")
+    2. AI detects a question only Ketu can answer (source="ketu-detection")
+
+    Cloud analyzes the customer message and learns which types of questions
+    need Ketu's personal reply — so AI can auto-defer similar questions next time.
+    """
+    client = get_anthropic_client()
+
+    context_parts = [f'Customer message: "{customer_message}"']
+    if ketu_reply:
+        context_parts.append(f'Ketu\'s reply: "{ketu_reply}"')
+    if category_name:
+        context_parts.append(f'Detected category: "{category_name}"')
+
+    context_text = "\n".join(context_parts)
+
+    prompt = f"""You are analyzing a WhatsApp business conversation where the AI assistant could NOT handle the customer's question — the business owner (Ketu) had to reply personally.
+
+{context_text}
+
+Source: {"Ketu manually took over and replied himself" if source == "ketu-takeover" else "AI detected this needs Ketu's personal reply"}
+
+Analyze this and extract (JSON):
+1. "category": Which category does this question fall into? One of: "stock_restock", "order_status", "custom_pricing", "delivery_specific", "payment_issues", or a new category name if none fit
+2. "question_pattern": Extract 2-5 key Hindi/English words from the customer's question that form a reusable pattern (remove filler words like bhai, sir, ji, kya, hai). This pattern will be used to match similar future questions.
+3. "why_ketu_only": Brief explanation of why only Ketu can answer this (1 line)
+4. "defer_reply_template": A natural Hindi/English reply to tell the customer "Ketu will reply shortly" — casual, friendly, specific to the question type
+5. "should_learn": true if this is a genuinely new pattern the AI should remember, false if it's already a common/obvious pattern
+
+Return ONLY valid JSON."""
+
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        result_text = response.content[0].text
+
+        # Track API cost
+        from core.cost_tracker import track_api_cost
+        track_api_cost(
+            model=response.model,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            source="ketu-takeover-learning",
+        )
+
+        json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
+        if not json_match:
+            return {"status": "parse_error", "raw": result_text[:200]}
+
+        analysis = json.loads(json_match.group())
+
+        # Learn the pattern if cloud says it's new
+        if analysis.get("should_learn") and analysis.get("question_pattern"):
+            from core.ketu_only import detect_ketu_only, add_learned_pattern
+            # Only add if not already detected by existing patterns
+            existing = detect_ketu_only(customer_message)
+            if not existing:
+                cat_id = analysis.get("category", "learned")
+                cat_name_learned = analysis.get("category", "Learned Pattern")
+                add_learned_pattern(analysis["question_pattern"], cat_id, cat_name_learned)
+
+        result = {
+            "status": "learned",
+            "source": source,
+            "category": analysis.get("category", ""),
+            "question_pattern": analysis.get("question_pattern", ""),
+            "why_ketu_only": analysis.get("why_ketu_only", ""),
+            "defer_reply_template": analysis.get("defer_reply_template", ""),
+            "should_learn": analysis.get("should_learn", False),
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+            "customer_message": customer_message[:120],
+            "ketu_reply": ketu_reply[:120] if ketu_reply else "",
+        }
+
+        from core.activity_log import log_activity
+        log_activity(
+            source="ketu-only",
+            action="cloud-learning",
+            details={
+                "learning_source": source,
+                "category": analysis.get("category", ""),
+                "pattern": analysis.get("question_pattern", ""),
+                "phone_last4": customer_phone[-4:] if customer_phone else "",
+                "tokens": response.usage.input_tokens + response.usage.output_tokens,
+            },
+            items_count=1,
+        )
+        logger.info(f"[KetuDefer] Cloud learned: {analysis.get('category', '?')} | pattern: {analysis.get('question_pattern', '?')}")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"[KetuDefer] Cloud learning error: {e}")
+        from core.error_tracker import track_error
+        track_error("ketu-defer-learner", str(e))
+        return {"status": "error", "detail": str(e)}
+
+
 # --- Voice Note Learning ---
 
 async def learn_from_voice_note(
