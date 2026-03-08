@@ -2,8 +2,7 @@ import json
 import logging
 import re
 
-from anthropic import Anthropic
-
+from core.cloud_payload_log import get_anthropic_client
 from core.config import settings, KNOWLEDGE_DIR
 
 logger = logging.getLogger(__name__)
@@ -332,7 +331,7 @@ def parse_whatsapp_export(chat_text: str) -> list[dict]:
 
 def extract_knowledge_from_messages(messages: list[dict], ketu_name: str = "Ketu") -> dict:
     """Use Claude to extract knowledge from Ketu's manual messages."""
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = get_anthropic_client()
 
     # Smart filter: remove junk messages BEFORE sending to Claude
     filtered, filter_stats = filter_messages(messages, owner_key="sender", owner_value=ketu_name)
@@ -387,18 +386,6 @@ Return ONLY valid JSON. If nothing new, return empty arrays."""
             source="whatsapp-learning",
         )
 
-        # Log payload for dashboard debug
-        from core.cloud_payload_log import log_cloud_payload
-        log_cloud_payload(
-            source="whatsapp-learning",
-            prompt_text=prompt,
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1200,
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
-            message_count=len(filtered),
-        )
-
         # Try to parse JSON from response
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
         if json_match:
@@ -423,7 +410,7 @@ def extract_knowledge_from_wwbun_messages(
         messages: List of message dicts from wwbun database
         owner_user_id: The user ID of Ketu (to identify his manual messages)
     """
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = get_anthropic_client()
 
     # Helper: safely parse boolean (wwbun may send string "true"/"false")
     def _safe_bool(val) -> bool:
@@ -592,19 +579,6 @@ Return ONLY valid JSON."""
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
             source="wwbun-learning",
-        )
-
-        # Log payload for dashboard debug
-        from core.cloud_payload_log import log_cloud_payload
-        log_cloud_payload(
-            source="wwbun-learning",
-            prompt_text=prompt,
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1200,
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
-            pair_count=len(pair_messages),
-            message_count=len(filtered),
         )
 
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)

@@ -3,8 +3,7 @@ import logging
 import re
 
 import httpx
-from anthropic import Anthropic
-
+from core.cloud_payload_log import get_anthropic_client
 from core.config import settings, KNOWLEDGE_DIR
 
 logger = logging.getLogger(__name__)
@@ -173,7 +172,7 @@ def get_transcript(video_url: str) -> str | None:
 
 def extract_knowledge_from_transcript(transcript: str, video_title: str = "") -> dict:
     """Use Claude to extract business knowledge from a YouTube video transcript."""
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = get_anthropic_client()
 
     prompt = f"""Analyze this YouTube video transcript from Ketu (owner of Sale91.com / Own Knitted Blank Wears — a B2B plain t-shirt manufacturer).
 

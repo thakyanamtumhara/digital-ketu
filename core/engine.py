@@ -2,7 +2,7 @@ import json
 import time
 import logging
 
-from anthropic import Anthropic
+from core.cloud_payload_log import get_anthropic_client
 import httpx
 
 from core.config import settings, KNOWLEDGE_DIR
@@ -559,7 +559,7 @@ def generate_reply(
     customer_name: str = "",
     conversation_history: list | None = None,
 ) -> str:
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = get_anthropic_client()
 
     # Use provided history or fetch from in-memory store
     if conversation_history:

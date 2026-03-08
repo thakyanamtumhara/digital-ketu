@@ -15,7 +15,7 @@ import threading
 from collections import deque
 from datetime import datetime, timezone, timedelta
 
-from anthropic import Anthropic
+from core.cloud_payload_log import get_anthropic_client
 
 from core.config import settings, KNOWLEDGE_DIR
 
@@ -156,7 +156,7 @@ def _batch_learn_from_conversations():
         if len(conversations) < 5:
             return
 
-        client = Anthropic(api_key=settings.anthropic_api_key)
+        client = get_anthropic_client()
 
         # Prioritize conversations from buyers — these are the most valuable
         # because they show what messaging style converts customers to sales
@@ -216,18 +216,6 @@ Return ONLY valid JSON. If nothing notable, return empty arrays."""
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
             source="realtime-analysis",
-        )
-
-        # Log payload for dashboard debug
-        from core.cloud_payload_log import log_cloud_payload
-        log_cloud_payload(
-            source="realtime-analysis",
-            prompt_text=prompt,
-            model="claude-haiku-4-5-20251001",
-            max_tokens=800,
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
-            pair_count=len(selected),
         )
 
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
@@ -518,7 +506,7 @@ def learn_from_correction(
     3. The customer<>Ketu exchange → new example conversation
     4. Track correction patterns → auto-generate rules when same mistake repeats 3+ times
     """
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = get_anthropic_client()
 
     # Load current prompt context — DB first (survives deploys), file fallback
     prompt_data = None
@@ -870,7 +858,7 @@ async def learn_from_voice_note(
     logger.info(f"Voice note transcribed ({len(transcript)} chars): {transcript[:100]}...")
 
     # Step 2: Extract knowledge from transcript
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = get_anthropic_client()
 
     context_line = f"\nContext: {context}" if context else ""
 
