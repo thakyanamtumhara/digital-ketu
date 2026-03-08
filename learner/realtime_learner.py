@@ -916,10 +916,12 @@ Return ONLY valid JSON."""
         return result
 
     except Exception as e:
-        logger.error(f"[KetuDefer] Cloud learning error: {e}")
+        import traceback
+        err_detail = f"{type(e).__name__}: {e}"
+        logger.error(f"[KetuDefer] Cloud learning error: {err_detail}\n{traceback.format_exc()}")
         from core.error_tracker import track_error
-        track_error("ketu-defer-learner", str(e))
-        return {"status": "error", "detail": str(e)}
+        track_error("ketu-defer-learner", err_detail)
+        return {"status": "error", "detail": err_detail}
 
 
 # --- Voice Note Learning ---
