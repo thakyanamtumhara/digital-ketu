@@ -1374,13 +1374,21 @@ def _flush_learning_buffer(owner_user_id: str) -> dict:
         f"Status: {knowledge.get('status', 'unknown')}"
     )
 
+    # Calculate: messages used in pairs vs skipped
+    msgs_in_pairs = len(quality_pairs) * 2  # each pair = customer + owner message
+    total_skipped = len(buffer) - msgs_in_pairs
+    unpaired_skipped = total_skipped - filter_stats.get("junk", 0) - filter_stats.get("too_short", 0)
+    if unpaired_skipped < 0:
+        unpaired_skipped = 0
+
     log_activity(
         source="wwbun-sync",
         action="batch-learned",
         details={
             "total_buffered": len(buffer),
             "quality_pairs_count": len(quality_pairs),
-            "quality_messages_count": filter_stats.get("kept", 0),
+            "msgs_used": msgs_in_pairs,
+            "unpaired_skipped": unpaired_skipped,
             "junk_skipped": filter_stats.get("junk", 0),
             "too_short_skipped": filter_stats.get("too_short", 0),
             "quality_messages_preview": quality_messages[:5],
@@ -1577,9 +1585,11 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         invalidate_cache()
 
         # Track wwbun sync stats for dashboard (use new_count to avoid counting duplicates)
+        # quality_count = number of pairs (NOT filter_stats "kept" which counts loose individual msgs)
+        _flush_pairs_count = len(quality_pairs_preview) if quality_pairs_preview else 0
         _track_wwbun_sync(
             total_messages=learn_result.get("buffer_flushed", new_count),
-            quality_count=filter_stats.get("kept", 0),
+            quality_count=_flush_pairs_count,
             junk_count=filter_stats.get("junk", 0),
             short_count=filter_stats.get("too_short", 0),
             knowledge_count=learn_result.get("updates_applied", {}).get("count", 0),
