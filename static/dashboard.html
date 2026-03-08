@@ -786,6 +786,43 @@
     </div>
   </div>
 
+  <!-- Correction History: Edit tracking + cloud calls -->
+  <div style="margin-bottom:25px;">
+    <h3 style="font-size:15px;color:var(--text-bright);margin-bottom:12px;">
+      Corrections & Edits
+      <span style="font-weight:400;color:var(--text-dim);font-size:13px;">(AI replies you corrected — each one triggers instant learning)</span>
+    </h3>
+    <div id="correctionHistoryContainer" style="background:var(--card);border:1px solid var(--card-border);border-radius:12px;padding:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-size:13px;color:var(--text-dim);">
+          Before/after of each correction + what was sent to Claude for learning
+        </div>
+        <button onclick="loadCorrectionHistory()" style="background:rgba(253,121,168,0.15);color:#fd79a8;border:1px solid rgba(253,121,168,0.3);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;">Refresh</button>
+      </div>
+
+      <!-- Summary stats -->
+      <div id="correctionStats" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;">
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Total Corrections</div>
+          <div id="chTotal" style="font-size:20px;font-weight:600;color:#fd79a8;">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Cloud API Calls</div>
+          <div id="chCloudCalls" style="font-size:20px;font-weight:600;color:var(--orange);">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Successfully Learned</div>
+          <div id="chLearned" style="font-size:20px;font-weight:600;color:var(--green);">--</div>
+        </div>
+      </div>
+
+      <!-- Correction list -->
+      <div id="correctionHistoryList" style="max-height:500px;overflow-y:auto;">
+        <div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">Loading... (corrections appear after you edit an AI reply)</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Cloud Debug: What's Being Sent to Claude API -->
   <div style="margin-bottom:25px;">
     <h3 style="font-size:15px;color:var(--text-bright);margin-bottom:12px;">
@@ -2677,6 +2714,75 @@ async function loadAudioStats() {
 
 // ---- CLOUD PAYLOAD DEBUG ----
 
+async function loadCorrectionHistory() {
+  const data = await fetchJSON('/api/learn/correction-history');
+  if (!data) return;
+
+  const corrections = data.corrections || [];
+  const cloudCalls = data.cloud_calls || [];
+  const learned = corrections.filter(c => c.status === 'learned').length;
+
+  document.getElementById('chTotal').textContent = data.total || 0;
+  document.getElementById('chCloudCalls').textContent = data.cloud_call_count || 0;
+  document.getElementById('chLearned').textContent = learned;
+
+  if (corrections.length === 0) {
+    document.getElementById('correctionHistoryList').innerHTML =
+      '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">No corrections yet. Edit an AI reply to see correction history here.</div>';
+    return;
+  }
+
+  let html = '';
+  corrections.forEach((c, i) => {
+    const time = new Date(c.timestamp * 1000).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit'});
+    const statusColor = c.status === 'learned' ? 'var(--green)' : c.status === 'error' ? 'var(--red)' : 'var(--orange)';
+    const srcLabel = c.source === 'whatsapp-edit' ? 'Edit' : 'API';
+
+    html += '<div style="border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:8px;padding:12px 14px;">';
+
+    // Header
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+    html += '<div style="display:flex;align-items:center;gap:8px;">';
+    html += '<span style="background:rgba(253,121,168,0.15);border-radius:4px;padding:2px 8px;font-size:11px;color:#fd79a8;">' + srcLabel + '</span>';
+    html += '<span style="font-size:12px;color:var(--text-dim);">' + time + '</span>';
+    if (c.customer_phone) html += '<span style="font-size:12px;color:var(--text-dim);">...' + escapeHtml(c.customer_phone) + '</span>';
+    if (c.customer_name) html += '<span style="font-size:12px;color:var(--accent2);">' + escapeHtml(c.customer_name.slice(0, 20)) + '</span>';
+    html += '</div>';
+    html += '<span style="font-size:11px;font-weight:600;color:' + statusColor + ';">' + (c.status || '?') + '</span>';
+    html += '</div>';
+
+    // Customer message
+    html += '<div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">Customer asked:</div>';
+    html += '<div style="font-size:13px;color:var(--text);background:rgba(255,255,255,0.03);border-radius:6px;padding:8px;margin-bottom:8px;">' + escapeHtml(c.customer_message || '') + '</div>';
+
+    // Before/After
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">';
+    // AI reply (wrong)
+    html += '<div>';
+    html += '<div style="font-size:11px;color:var(--red);margin-bottom:3px;">AI replied (wrong):</div>';
+    html += '<div style="font-size:12px;color:var(--text);background:rgba(214,48,49,0.08);border:1px solid rgba(214,48,49,0.15);border-radius:6px;padding:8px;">' + escapeHtml(c.ai_reply || '') + '</div>';
+    html += '</div>';
+    // Ketu correction (right)
+    html += '<div>';
+    html += '<div style="font-size:11px;color:var(--green);margin-bottom:3px;">Ketu corrected to:</div>';
+    html += '<div style="font-size:12px;color:var(--text);background:rgba(0,206,201,0.08);border:1px solid rgba(0,206,201,0.15);border-radius:6px;padding:8px;">' + escapeHtml(c.ketu_correction || '') + '</div>';
+    html += '</div>';
+    html += '</div>';
+
+    // What went wrong + updates
+    if (c.what_went_wrong) {
+      html += '<div style="font-size:12px;color:var(--orange);margin-bottom:4px;">What went wrong: ' + escapeHtml(c.what_went_wrong) + '</div>';
+    }
+    if (c.updates_applied && c.updates_applied.length > 0) {
+      html += '<div style="font-size:11px;color:var(--accent);">Learned: ' + escapeHtml(c.updates_applied.join(', ')) + ' (' + c.updates_count + ' updates)</div>';
+    }
+
+    html += '</div>';
+  });
+
+  document.getElementById('correctionHistoryList').innerHTML = html;
+}
+
 async function loadCloudPayloads() {
   const data = await fetchJSON('/api/cloud-payloads');
   if (!data || !data.payloads) {
@@ -2792,6 +2898,7 @@ async function init() {
     safe(loadKetuOnly),
     safe(loadLeaves),
     safe(loadCloudPayloads),
+    safe(loadCorrectionHistory),
   ]);
 
   // Countdown ticks every second (local, no API call)
@@ -2813,6 +2920,7 @@ async function init() {
       safe(loadKetuOnly),
       safe(loadLeaves),
       safe(loadCloudPayloads),
+      safe(loadCorrectionHistory),
     ]);
   }, 30000);
 }

@@ -2147,6 +2147,19 @@ async def sync_catalog_endpoint():
     return result
 
 
+# --- Correction History (ring buffer for dashboard) ---
+
+_correction_history: list[dict] = []
+_CORRECTION_HISTORY_MAX = 50
+
+
+def _add_correction_history(entry: dict):
+    """Add a correction to the in-memory ring buffer for dashboard display."""
+    _correction_history.append({**entry, "timestamp": time.time()})
+    if len(_correction_history) > _CORRECTION_HISTORY_MAX:
+        _correction_history.pop(0)
+
+
 # --- Correction Learning ---
 
 
@@ -2179,6 +2192,20 @@ async def learn_correction(req: CorrectionRequest):
         customer_phone=req.customer_phone,
         customer_name=req.customer_name,
     )
+
+    # Track in correction history ring buffer
+    _add_correction_history({
+        "source": "api",
+        "customer_phone": req.customer_phone[-4:] if req.customer_phone else "?",
+        "customer_name": req.customer_name or "",
+        "customer_message": req.customer_message[:120],
+        "ai_reply": req.ai_reply[:120],
+        "ketu_correction": req.ketu_correction[:120],
+        "what_went_wrong": result.get("what_went_wrong", ""),
+        "status": result.get("status", "unknown"),
+        "updates_applied": result.get("updates_applied", []),
+        "updates_count": result.get("count", 0),
+    })
 
     if result.get("status") == "learned":
         log_activity(
@@ -2355,6 +2382,34 @@ async def api_ketu_replied(req: KetuRepliedRequest):
 async def realtime_learner_stats():
     """Get realtime learner statistics — buffer size, learning progress."""
     return get_realtime_stats()
+
+
+@app.get("/api/learn/correction-history")
+async def correction_history():
+    """Recent corrections with before/after and cloud analysis results."""
+    from core.cloud_payload_log import get_recent_payloads
+
+    # Get correction-specific cloud payloads
+    all_payloads = get_recent_payloads(50)
+    correction_payloads = [
+        {
+            "timestamp": p["timestamp"],
+            "source": p["source"],
+            "actual_input_tokens": p.get("actual_input_tokens"),
+            "actual_output_tokens": p.get("actual_output_tokens"),
+            "model": p.get("model", ""),
+            "prompt_word_count": p.get("prompt_word_count", 0),
+        }
+        for p in all_payloads
+        if p.get("source") in ("correction-learning", "correction-analysis")
+    ]
+
+    return {
+        "corrections": list(reversed(_correction_history)),  # newest first
+        "total": len(_correction_history),
+        "cloud_calls": correction_payloads,
+        "cloud_call_count": len(correction_payloads),
+    }
 
 
 @app.get("/api/learn/correction-stats")
@@ -2736,6 +2791,19 @@ async def edit_whatsapp_message(req: EditMessageRequest):
                         customer_phone=req.phone,
                         customer_name=customer_name,
                     )
+                    # Track in correction history ring buffer
+                    _add_correction_history({
+                        "source": "whatsapp-edit",
+                        "customer_phone": req.phone[-4:] if req.phone else "?",
+                        "customer_name": customer_name or "",
+                        "customer_message": customer_message[:120],
+                        "ai_reply": ai_reply[:120],
+                        "ketu_correction": req.new_text[:120],
+                        "what_went_wrong": learn_result.get("what_went_wrong", ""),
+                        "status": learn_result.get("status", "unknown"),
+                        "updates_applied": learn_result.get("updates_applied", []),
+                        "updates_count": learn_result.get("count", 0),
+                    })
                     if learn_result.get("status") == "learned":
                         log_activity(
                             source="correction-learner",
