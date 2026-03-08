@@ -264,6 +264,13 @@ async def api_reply(req: ReplyRequest):
                     )
                     if not reply:
                         return ReplyResponse(reply="", status="skipped", should_reply=False)
+                    from core.conversation_log import log_conversation
+                    log_conversation(
+                        customer_phone=req.customer_phone or "",
+                        customer_name=req.customer_name or "",
+                        customer_message=transcribed,
+                        ai_reply=reply,
+                    )
                     escalation = get_last_escalation(req.customer_phone) if req.customer_phone else {}
                     return ReplyResponse(
                         reply=reply,
@@ -317,6 +324,15 @@ async def api_reply(req: ReplyRequest):
     escalation = get_last_escalation(req.customer_phone) if req.customer_phone else {}
     esc_level = escalation.get("level", "none")
     esc_reason = escalation.get("reason", "")
+
+    # Log conversation so corrections can find the original AI reply
+    from core.conversation_log import log_conversation
+    log_conversation(
+        customer_phone=req.customer_phone or "",
+        customer_name=req.customer_name or "",
+        customer_message=req.message,
+        ai_reply=reply,
+    )
 
     log_activity(
         source="api-reply",
