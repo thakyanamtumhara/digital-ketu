@@ -687,7 +687,7 @@ def _track_wwbun_sync(
         key = (existing.get("customer", ""), existing.get("ketu", ""))
         existing_keys.add(key)
 
-    for msg in quality_previews[-5:]:
+    for msg in quality_previews:
         if isinstance(msg, dict) and msg.get("customer") and msg.get("ketu"):
             # Skip old messages — only show today's conversations in live feed
             # Convert to IST before comparing dates (wwbun may send UTC)
