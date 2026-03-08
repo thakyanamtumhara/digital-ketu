@@ -498,7 +498,7 @@ def extract_knowledge_from_wwbun_messages(
     # Check if we have any quality Ketu messages BEFORE calling Claude API
     quality_ketu_msgs = [
         m for m in filtered
-        if _is_owner_msg(m) and not m.get("is_ai_generated", False)
+        if _is_owner_msg(m) and not _safe_bool(m.get("is_ai_generated", False))
     ]
     if not quality_ketu_msgs:
         logger.info(f"[wwbun-learn] 0 quality Ketu messages after filtering — skipping API call (saved money)")
@@ -508,6 +508,12 @@ def extract_knowledge_from_wwbun_messages(
             "filter_stats": filter_stats,
             "quality_messages": [],
         }
+
+    # Cap at 20 Ketu messages max — sending more wastes tokens with minimal learning gain
+    # The threshold is 20 pairs, so we should never need more than 20 Ketu messages
+    if len(quality_ketu_msgs) > 20:
+        logger.info(f"[wwbun-learn] Capping quality Ketu msgs from {len(quality_ketu_msgs)} to 20")
+        quality_ketu_msgs = quality_ketu_msgs[-20:]  # Keep newest 20
 
     # Extract only quality PAIRS (customer question + Ketu reply) to send to Claude
     # This avoids sending 100+ messages when only ~20 pairs matter (~70% token savings)
@@ -542,13 +548,20 @@ def extract_knowledge_from_wwbun_messages(
             role = "KETU" if _is_owner_by_flag(m) else "CUSTOMER"
         else:
             role = "KETU" if _is_owner_msg(m) else "CUSTOMER"
-        is_ai = " [AI]" if m.get("is_ai_generated") else ""
+        is_ai = " [AI]" if _safe_bool(m.get("is_ai_generated", False)) else ""
         phone = m.get("contact_phone", "") or m.get("phone", "")
         buyer_tag = " [BUYER]" if phone in buyer_phones else ""
         chat_context.append(f"{role}{is_ai}{buyer_tag}: {text}")
 
     chat_text = "\n".join(chat_context)
-    logger.info(f"[wwbun-learn] Sending {len(pair_messages)} pair messages to Claude (from {len(filtered)} filtered)")
+    # Estimate token usage: ~1.3 tokens per word for Hinglish text
+    chat_words = len(chat_text.split())
+    est_chat_tokens = int(chat_words * 1.3)
+    logger.info(
+        f"[wwbun-learn] Sending {len(pair_messages)} pair messages to Claude "
+        f"(from {len(filtered)} filtered, {len(messages)} total buffer). "
+        f"Chat text: {chat_words} words ≈ {est_chat_tokens} tokens, {len(chat_text)} chars"
+    )
     buyer_count = len(buyer_phones)
 
     # Load current prompt config for context
