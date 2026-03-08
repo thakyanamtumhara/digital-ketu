@@ -386,6 +386,55 @@ async def get_followup_toggle_status():
     return {"followup_enabled": settings.followup_enabled}
 
 
+# --- Leave Management ---
+
+
+class LeaveRequest(BaseModel):
+    leave_type: str  # "full_day" or "busy_hours"
+    start_date: str  # "2026-09-04"
+    end_date: str | None = None  # "2026-09-05" for multi-day
+    start_time: str | None = None  # "14:00" for busy_hours
+    end_time: str | None = None  # "16:00" for busy_hours
+    reason: str = ""
+    contact_info: str = ""  # Godown number, website, alternate contact
+
+
+@app.get("/api/leaves")
+async def get_leaves():
+    """Get all active and upcoming leaves."""
+    from core.leave_manager import get_active_leaves, check_leave_status
+    return {
+        "leaves": get_active_leaves(),
+        "current_status": check_leave_status(),
+    }
+
+
+@app.post("/api/leaves")
+async def add_leave(req: LeaveRequest):
+    """Add a new leave/busy period."""
+    from core.leave_manager import add_leave as _add_leave
+    leave = _add_leave(
+        leave_type=req.leave_type,
+        start_date=req.start_date,
+        end_date=req.end_date,
+        start_time=req.start_time,
+        end_time=req.end_time,
+        reason=req.reason,
+        contact_info=req.contact_info,
+    )
+    return {"status": "added", "leave": leave}
+
+
+@app.delete("/api/leaves/{leave_id}")
+async def delete_leave(leave_id: int):
+    """Remove a leave entry."""
+    from core.leave_manager import remove_leave
+    removed = remove_leave(leave_id)
+    if removed:
+        return {"status": "removed"}
+    return {"status": "not_found"}
+
+
 # --- Knowledge Management ---
 
 
@@ -1489,9 +1538,9 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         quality_pairs_preview = learn_result.get("quality_pairs", [])
         invalidate_cache()
 
-        # Track wwbun sync stats for dashboard
+        # Track wwbun sync stats for dashboard (use new_count to avoid counting duplicates)
         _track_wwbun_sync(
-            total_messages=learn_result.get("buffer_flushed", len(req.messages)),
+            total_messages=learn_result.get("buffer_flushed", new_count),
             quality_count=filter_stats.get("kept", 0),
             junk_count=filter_stats.get("junk", 0),
             short_count=filter_stats.get("too_short", 0),
@@ -1528,10 +1577,10 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
             items_count=0,
         )
 
-        # Still track sync stats even when buffering
+        # Still track sync stats even when buffering (use new_count to avoid counting duplicates)
         # Use buffer_pairs directly — same pairs that were counted = same pairs shown
         _track_wwbun_sync(
-            total_messages=len(req.messages),
+            total_messages=new_count,
             quality_count=quality_count,
             junk_count=0,
             short_count=0,

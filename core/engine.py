@@ -573,6 +573,28 @@ def generate_reply(
             _customer_names[key] = customer_name
     _save_customer_insights_to_db()
 
+    # --- LEAVE CHECK ---
+    # If Ketu is on leave or busy, send a leave-aware auto-reply instead of normal AI reply
+    try:
+        from core.leave_manager import check_leave_status, get_leave_auto_reply
+        leave_status = check_leave_status()
+        if leave_status and leave_status.get("active"):
+            leave_reply = get_leave_auto_reply(leave_status)
+            if leave_reply:
+                logger.info(
+                    f"[Leave] Ketu on {leave_status['type']} — auto-reply to "
+                    f"{customer_phone[-4:] if customer_phone else '?'}: '{leave_reply[:50]}'"
+                )
+                if customer_phone:
+                    _conversations[customer_phone] = messages + [
+                        {"role": "user", "content": message},
+                        {"role": "assistant", "content": leave_reply},
+                    ]
+                    _conversation_timestamps[customer_phone] = time.time()
+                return leave_reply
+    except Exception as e:
+        logger.warning(f"[Leave] Check failed (non-fatal): {e}")
+
     # --- SHUT UP CHECK ---
     # If AI is in cooldown for this customer (ender detected earlier or Ketu replied),
     # don't reply at all. This prevents the AI from jumping back into finished conversations.

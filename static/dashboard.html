@@ -1052,6 +1052,80 @@
       </div>
     </div>
 
+    <!-- Leave Management -->
+    <div class="card full-width">
+      <div class="card-header">
+        <h3>Leave / Busy Schedule</h3>
+        <span class="badge" id="leaveBadge" style="background:rgba(253,203,110,0.15);color:var(--orange);">No Leave</span>
+      </div>
+      <div class="card-body">
+        <!-- Current status banner -->
+        <div id="leaveStatusBanner" style="display:none;background:rgba(214,48,49,0.1);border:1px solid rgba(214,48,49,0.25);border-radius:8px;padding:12px 16px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:16px;">OFF</span>
+            <span style="font-size:13px;font-weight:600;color:var(--red);" id="leaveStatusText">-</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:4px;" id="leaveStatusDetail">AI auto-replying with leave message</div>
+        </div>
+
+        <!-- Add new leave form -->
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:13px;font-weight:600;color:var(--text-bright);margin-bottom:12px;">Add Leave / Busy Time</div>
+          <div style="display:flex;gap:8px;margin-bottom:10px;">
+            <label style="flex:1;cursor:pointer;">
+              <input type="radio" name="leaveType" value="full_day" checked onchange="toggleLeaveForm()">
+              <span style="font-size:12px;color:var(--text);">Full Day Leave</span>
+            </label>
+            <label style="flex:1;cursor:pointer;">
+              <input type="radio" name="leaveType" value="busy_hours" onchange="toggleLeaveForm()">
+              <span style="font-size:12px;color:var(--text);">Busy Hours</span>
+            </label>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:3px;">Start Date</label>
+              <input type="date" id="leaveStartDate" style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:12px;">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:3px;">End Date</label>
+              <input type="date" id="leaveEndDate" style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:12px;">
+            </div>
+          </div>
+
+          <div id="busyHoursFields" style="display:none;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:3px;">From Time</label>
+              <input type="time" id="leaveStartTime" style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:12px;">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:3px;">To Time</label>
+              <input type="time" id="leaveEndTime" style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:12px;">
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:3px;">Reason (optional)</label>
+              <input type="text" id="leaveReason" placeholder="e.g., Family function" style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:12px;">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:3px;">Urgent Contact (optional)</label>
+              <input type="text" id="leaveContact" placeholder="e.g., Godown: 9876543210" style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:12px;">
+            </div>
+          </div>
+
+          <button onclick="addLeave()" style="width:100%;padding:10px;background:var(--accent);color:white;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">Add Leave</button>
+        </div>
+
+        <!-- Existing leaves list -->
+        <div style="font-size:12px;color:var(--text-dim);font-weight:600;margin-bottom:8px;">Scheduled Leaves:</div>
+        <div id="leaveList" style="max-height:250px;overflow-y:auto;">
+          <div class="empty-state" style="font-size:12px;">No leaves scheduled</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Backup -->
     <div class="card">
       <div class="card-header">
@@ -2584,6 +2658,7 @@ async function init() {
     safe(loadAudioStats),
     safe(loadWwbunStats),
     safe(loadKetuOnly),
+    safe(loadLeaves),
   ]);
 
   // Countdown ticks every second (local, no API call)
@@ -2603,8 +2678,140 @@ async function init() {
       safe(loadAudioStats),
       safe(loadWwbunStats),
       safe(loadKetuOnly),
+      safe(loadLeaves),
     ]);
   }, 30000);
+}
+
+// ---- LEAVE MANAGEMENT ----
+
+function toggleLeaveForm() {
+  const isFullDay = document.querySelector('input[name="leaveType"]:checked').value === 'full_day';
+  document.getElementById('busyHoursFields').style.display = isFullDay ? 'none' : 'grid';
+}
+
+async function addLeave() {
+  const leaveType = document.querySelector('input[name="leaveType"]:checked').value;
+  const body = {
+    leave_type: leaveType,
+    start_date: document.getElementById('leaveStartDate').value,
+    end_date: document.getElementById('leaveEndDate').value || null,
+    reason: document.getElementById('leaveReason').value,
+    contact_info: document.getElementById('leaveContact').value,
+  };
+
+  if (!body.start_date) {
+    alert('Please select a start date');
+    return;
+  }
+
+  if (leaveType === 'busy_hours') {
+    body.start_time = document.getElementById('leaveStartTime').value || null;
+    body.end_time = document.getElementById('leaveEndTime').value || null;
+    if (!body.start_time || !body.end_time) {
+      alert('Please select start and end times for busy hours');
+      return;
+    }
+  }
+
+  try {
+    const resp = await fetch(BASE + '/api/leaves', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (resp.ok) {
+      // Clear form
+      document.getElementById('leaveStartDate').value = '';
+      document.getElementById('leaveEndDate').value = '';
+      document.getElementById('leaveStartTime').value = '';
+      document.getElementById('leaveEndTime').value = '';
+      document.getElementById('leaveReason').value = '';
+      document.getElementById('leaveContact').value = '';
+      loadLeaves();
+    }
+  } catch(e) { console.error('Add leave failed:', e); }
+}
+
+async function removeLeave(leaveId) {
+  if (!confirm('Remove this leave?')) return;
+  try {
+    await fetch(BASE + '/api/leaves/' + leaveId, {method: 'DELETE'});
+    loadLeaves();
+  } catch(e) { console.error('Remove leave failed:', e); }
+}
+
+async function loadLeaves() {
+  const data = await fetchJSON('/api/leaves');
+  if (!data) return;
+
+  const badge = document.getElementById('leaveBadge');
+  const banner = document.getElementById('leaveStatusBanner');
+  const statusText = document.getElementById('leaveStatusText');
+  const statusDetail = document.getElementById('leaveStatusDetail');
+  const list = document.getElementById('leaveList');
+
+  // Current status
+  const status = data.current_status;
+  if (status && status.active) {
+    banner.style.display = 'block';
+    if (status.type === 'full_day') {
+      statusText.textContent = 'ON LEAVE' + (status.days_left > 1 ? ` (${status.days_left} days left)` : ' (today)');
+      statusDetail.textContent = status.reason ? `Reason: ${status.reason}. ` : '';
+      statusDetail.textContent += 'AI auto-replying with leave message to all customers';
+    } else {
+      statusText.textContent = `BUSY (until ${status.end_time})`;
+      statusDetail.textContent = status.reason ? `Reason: ${status.reason}. ` : '';
+      statusDetail.textContent += 'AI telling customers Ketu will reply soon';
+    }
+    badge.textContent = status.type === 'full_day' ? 'ON LEAVE' : 'BUSY';
+    badge.style.background = 'rgba(214,48,49,0.15)';
+    badge.style.color = 'var(--red)';
+  } else {
+    banner.style.display = 'none';
+    badge.textContent = 'Available';
+    badge.style.background = 'rgba(0,184,148,0.15)';
+    badge.style.color = 'var(--green)';
+  }
+
+  // Leave list
+  const leaves = data.leaves || [];
+  if (leaves.length === 0) {
+    list.innerHTML = '<div class="empty-state" style="font-size:12px;">No leaves scheduled</div>';
+    return;
+  }
+
+  let html = '';
+  for (const l of leaves) {
+    const isActive = status && status.active &&
+      ((status.type === 'full_day' && l.start_date === status.start_date) ||
+       (status.type === 'busy_hours' && l.start_time === status.start_time));
+
+    const activeDot = isActive ? '<span style="color:var(--red);font-weight:700;"> ACTIVE</span>' : '';
+
+    let dateStr = l.start_date;
+    if (l.end_date && l.end_date !== l.start_date) {
+      dateStr += ' to ' + l.end_date;
+    }
+    if (l.type === 'busy_hours' && l.start_time) {
+      dateStr += ` (${l.start_time} - ${l.end_time})`;
+    }
+
+    const typeLabel = l.type === 'full_day' ? 'LEAVE' : 'BUSY';
+    const typeColor = l.type === 'full_day' ? 'var(--red)' : 'var(--orange)';
+    const reason = l.reason ? ` — ${l.reason}` : '';
+    const contact = l.contact_info ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px;">Contact: ${l.contact_info}</div>` : '';
+
+    html += `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:6px;margin-bottom:6px;border-left:3px solid ${typeColor};">
+      <div>
+        <span style="font-size:10px;font-weight:700;color:${typeColor};text-transform:uppercase;">${typeLabel}</span>${activeDot}
+        <span style="font-size:12px;color:var(--text);margin-left:8px;">${dateStr}${reason}</span>
+        ${contact}
+      </div>
+      <button onclick="removeLeave(${l.id})" style="background:rgba(214,48,49,0.15);color:var(--red);border:none;border-radius:4px;padding:4px 8px;font-size:10px;cursor:pointer;">Remove</button>
+    </div>`;
+  }
+  list.innerHTML = html;
 }
 
 init();
