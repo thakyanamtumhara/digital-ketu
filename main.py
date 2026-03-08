@@ -645,6 +645,9 @@ def _track_wwbun_sync(
                 "ketu": msg["ketu"][:120],
                 "ai": msg.get("ai", False),
                 "time": now.strftime("%I:%M %p"),
+                "phone": msg.get("phone_hint", ""),
+                "chat_id": msg.get("chat_id", ""),
+                "name": msg.get("contact_name", ""),
             })
             existing_keys.add(key)
         elif isinstance(msg, str):
@@ -827,6 +830,8 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
 
             for owner_msg in owner_msgs:
                 owner_ts = owner_msg.get("timestamp", owner_msg.get("created_at", ""))
+                owner_content = (owner_msg.get("content", "") or owner_msg.get("text", "") or owner_msg.get("body", "")).strip()
+                owner_is_low_quality = is_low_quality_owner_reply(owner_content)
 
                 # Find threads with unanswered customer messages:
                 # A thread is "unanswered" if it has customer messages with
@@ -865,7 +870,12 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
                     )[0]
 
                 cust_threads[target_sid].append(owner_msg)
-                last_reply_ts[target_sid] = owner_ts
+                # FIX: Low-quality owner replies (e.g. "Ok", "Done", "Hmm") should NOT
+                # mark a thread as "answered". They won't create learning pairs anyway,
+                # and marking them as answered causes wrong assignment when Ketu replies
+                # out of order (newer buyer first, older buyer second).
+                if not owner_is_low_quality:
+                    last_reply_ts[target_sid] = owner_ts
 
             # Rebuild by_chat with proper thread groups
             rebuilt = {}
@@ -896,6 +906,13 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
 
     for chat_id, chat_msgs in by_chat.items():
         chat_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
+        # Extract contact_name from any message in this chat (for debug display)
+        _chat_contact_name = ""
+        for _cm in chat_msgs:
+            _cn = _cm.get("contact_name", "")
+            if _cn:
+                _chat_contact_name = _cn
+                break
         # Multi-message combining: accumulate consecutive customer messages
         customer_msgs_buffer: list[str] = []
         last_customer_ts = None  # track timestamp of last buffered customer msg
@@ -927,11 +944,24 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
                 combined_customer = " | ".join(customer_msgs_buffer)
                 if not has_business_intent(combined_customer):
                     return "no_intent"
+                # Extract phone hint from chat_id for debug display
+                _phone_hint = ""
+                _cid = chat_id or ""
+                if _cid.startswith("_thread_"):
+                    _phone_hint = _cid[len("_thread_"):][-4:]  # last 4 digits
+                elif "@" in _cid:
+                    _phone_hint = _cid.split("@")[0][-4:]
+                elif _cid.startswith("_cust_"):
+                    _phone_hint = _cid[len("_cust_"):][-4:]
+                else:
+                    _phone_hint = _cid[-4:] if _cid else ""
                 all_pairs.append({
                     "customer": combined_customer[:200],
                     "ketu": owner_content[:120],
                     "ai": is_ai_flag,
                     "chat_id": chat_id,
+                    "phone_hint": _phone_hint,  # last 4 digits for debug
+                    "contact_name": _chat_contact_name,
                 })
                 return "ok"
 
@@ -948,10 +978,14 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
                     result = _try_create_pair(content, is_ai)
                     if result == "low_quality":
                         skipped_low_quality += 1
+                        # Don't clear buffer — same fix as sender_id path
                     elif result == "no_intent":
                         skipped_no_intent += 1
-                    customer_msgs_buffer.clear()
-                    last_customer_ts = None
+                        customer_msgs_buffer.clear()
+                        last_customer_ts = None
+                    else:
+                        customer_msgs_buffer.clear()
+                        last_customer_ts = None
             else:
                 is_owner = _is_owner_by_flag(msg) if use_flag else _is_owner_message(msg, owner_user_id)
                 if not is_owner:
@@ -960,10 +994,17 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
                     result = _try_create_pair(content, is_ai)
                     if result == "low_quality":
                         skipped_low_quality += 1
+                        # FIX: Don't clear customer buffer on low-quality reply.
+                        # Low-quality replies like "Ok", "Done" may be mis-assigned
+                        # to the wrong thread (out-of-order reply bug). Keeping the
+                        # buffer lets the NEXT real owner reply pair correctly.
                     elif result == "no_intent":
                         skipped_no_intent += 1
-                    customer_msgs_buffer.clear()
-                    last_customer_ts = None
+                        customer_msgs_buffer.clear()
+                        last_customer_ts = None
+                    else:
+                        customer_msgs_buffer.clear()
+                        last_customer_ts = None
                 elif is_owner and is_ai:
                     # AI-generated owner reply — clear customer buffer to prevent
                     # customer messages from leaking past AI replies into the next

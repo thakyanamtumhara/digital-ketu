@@ -2462,11 +2462,14 @@ async function loadWwbunStats() {
       // Pair format: Customer Q → Ketu Reply
       const replyLabel = m.ai ? 'AI ↩' : 'KETU ↩';
       const replyColor = m.ai ? 'var(--accent)' : 'var(--green)';
+      const nameOrPhone = m.name ? m.name.substring(0, 15) : (m.phone ? '...' + m.phone : '');
+      const phoneTag = nameOrPhone ? '<span style="color:var(--accent);font-size:9px;font-weight:600;background:rgba(139,92,246,0.15);padding:1px 5px;border-radius:3px;margin-left:4px;">' + nameOrPhone + '</span>' : '';
       html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px 12px;margin-bottom:6px;font-size:12px;">' +
         '<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;">' +
           '<span style="color:var(--text-dim);font-size:11px;min-width:52px;">' + (m.time || '') + '</span>' +
           '<span style="color:var(--orange);font-size:10px;font-weight:600;min-width:50px;">BUYER</span>' +
-          '<span style="color:var(--text-dim);">' + m.customer.substring(0, 90) + '</span>' +
+          phoneTag +
+          '<span style="color:var(--text-dim);margin-left:2px;">' + m.customer.substring(0, 85) + '</span>' +
         '</div>' +
         '<div style="display:flex;align-items:flex-start;gap:6px;">' +
           '<span style="min-width:52px;"></span>' +
