@@ -668,8 +668,8 @@ async def check_youtube_channel():
 def _map_youtube_knowledge(knowledge: dict) -> dict:
     """Map YouTube learner output format to apply_knowledge_updates format.
 
-    YouTube learner extracts: product_info, pricing, business_knowledge, faqs_covered, key_points
-    apply_knowledge_updates expects: new_faqs, style_patterns, price_updates, etc.
+    YouTube learner extracts: business_knowledge, faqs_covered
+    apply_knowledge_updates expects: new_faqs, etc.
     """
     mapped = {}
 
@@ -693,11 +693,6 @@ def _map_youtube_knowledge(knowledge: dict) -> dict:
                 })
         if new_faqs:
             mapped["new_faqs"] = new_faqs
-
-    # Map key_points as style/business patterns
-    key_points = knowledge.get("key_points", [])
-    if key_points:
-        mapped["style_patterns"] = key_points
 
     return mapped
 

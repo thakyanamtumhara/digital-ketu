@@ -1953,12 +1953,12 @@ def _get_oauth_redirect_uri() -> str:
 
 @app.get("/api/learned-files")
 async def list_learned_files_endpoint():
-    """List all learned files with rich details (title, key_points for YT videos)."""
+    """List all learned files with rich details (title, FAQs for YT videos)."""
     import json as _json
     from core.database import is_db_available, load_learned_file
 
     def _parse_yt_details(filename: str, content: str | None) -> dict:
-        """Extract title and key_points from a YouTube learned file."""
+        """Extract title and FAQ status from a YouTube learned file."""
         info = {"file": filename}
         if not content:
             return info
@@ -1967,9 +1967,6 @@ async def list_learned_files_endpoint():
             info["title"] = data.get("title", "")
             info["video_url"] = data.get("video_url", "")
             knowledge = data.get("knowledge", {})
-            info["key_points"] = knowledge.get("key_points", [])
-            info["has_product_info"] = bool(knowledge.get("product_info"))
-            info["has_pricing"] = bool(knowledge.get("pricing"))
             info["has_faqs"] = bool(knowledge.get("faqs_covered"))
         except Exception:
             pass
