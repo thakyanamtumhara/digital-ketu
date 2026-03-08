@@ -690,12 +690,15 @@ def _track_wwbun_sync(
     for msg in quality_previews[-5:]:
         if isinstance(msg, dict) and msg.get("customer") and msg.get("ketu"):
             # Skip old messages — only show today's conversations in live feed
+            # Convert to IST before comparing dates (wwbun may send UTC)
             msg_ts = msg.get("msg_timestamp", "")
             if msg_ts:
                 try:
-                    msg_date = msg_ts[:10]  # "2026-03-08" from ISO string
+                    from datetime import datetime as _dt
+                    parsed_msg = _dt.fromisoformat(msg_ts)
+                    msg_date_ist = parsed_msg.astimezone(ist).strftime("%Y-%m-%d")
                     today_str = now.strftime("%Y-%m-%d")
-                    if msg_date < today_str:
+                    if msg_date_ist < today_str:
                         continue  # Old message, skip from live feed
                 except Exception:
                     pass
@@ -705,12 +708,15 @@ def _track_wwbun_sync(
                 continue  # Skip duplicate pair
 
             # Use original message time if available, else sync time
+            # Convert to IST — wwbun may send UTC timestamps
             display_time = now.strftime("%I:%M %p")
             if msg_ts:
                 try:
                     from datetime import datetime as _dt
                     parsed = _dt.fromisoformat(msg_ts)
-                    display_time = parsed.strftime("%I:%M %p")
+                    # Convert to IST for display
+                    parsed_ist = parsed.astimezone(ist)
+                    display_time = parsed_ist.strftime("%I:%M %p")
                 except Exception:
                     pass
 
