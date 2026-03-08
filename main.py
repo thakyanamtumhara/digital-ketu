@@ -539,6 +539,48 @@ async def get_knowledge():
     return load_knowledge()
 
 
+@app.get("/api/knowledge/learned-summary")
+async def get_learned_summary():
+    """Summary of all learned knowledge — for dashboard 'Active Learned Knowledge' section.
+
+    Returns learned_patterns, evolved_rules, evolved_traits, auto-learned FAQs,
+    and example_conversations so Ketu can verify what the AI has learned.
+    """
+    knowledge = load_knowledge()
+
+    # Learned patterns from style.json
+    style = knowledge.get("style", {})
+    learned_patterns = style.get("learned_patterns", [])
+    example_conversations = style.get("example_conversations", [])
+
+    # Evolved rules/traits from prompt.json
+    prompt_data = knowledge.get("prompt", {})
+    evolved_rules = prompt_data.get("evolved_rules", [])
+    evolved_traits = prompt_data.get("evolved_traits", [])
+    evolved_phrases = prompt_data.get("evolved_phrases", [])
+
+    # Auto-learned FAQs
+    faqs = knowledge.get("faq", {}).get("faqs", [])
+    auto_learned_faqs = [f for f in faqs if f.get("source") == "auto_learned"]
+
+    # Learned files from learned/ directory
+    learned_files = knowledge.get("learned", [])
+
+    total = (len(learned_patterns) + len(evolved_rules) + len(evolved_traits)
+             + len(auto_learned_faqs) + len(learned_files))
+
+    return {
+        "total": total,
+        "learned_patterns": learned_patterns,
+        "evolved_rules": evolved_rules,
+        "evolved_traits": evolved_traits,
+        "evolved_phrases": evolved_phrases,
+        "example_conversations": example_conversations,
+        "auto_learned_faqs": auto_learned_faqs,
+        "learned_files_count": len(learned_files),
+    }
+
+
 # --- Learner APIs ---
 
 
