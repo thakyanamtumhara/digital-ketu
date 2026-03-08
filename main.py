@@ -657,6 +657,7 @@ def _track_wwbun_sync(
         _wwbun_stats["today_messages"] = 0
         _wwbun_stats["today_quality"] = 0
         _wwbun_stats["today_knowledge"] = 0
+        _wwbun_stats["recent_quality_messages"] = []  # Clear old day's messages from live feed
 
     # Update totals
     _wwbun_stats["total_syncs"] += 1
@@ -680,6 +681,7 @@ def _track_wwbun_sync(
     # Recent quality pairs (for live preview — customer Q + Ketu reply)
     # Take the LAST 5 (newest) pairs, not the first 5 (oldest)
     # Deduplicate against existing pairs to avoid re-adding same pairs from full buffer
+    # FILTER: Only show today's messages — skip old conversations from days ago
     existing_keys = set()
     for existing in _wwbun_stats["recent_quality_messages"]:
         key = (existing.get("customer", ""), existing.get("ketu", ""))
@@ -687,14 +689,36 @@ def _track_wwbun_sync(
 
     for msg in quality_previews[-5:]:
         if isinstance(msg, dict) and msg.get("customer") and msg.get("ketu"):
+            # Skip old messages — only show today's conversations in live feed
+            msg_ts = msg.get("msg_timestamp", "")
+            if msg_ts:
+                try:
+                    msg_date = msg_ts[:10]  # "2026-03-08" from ISO string
+                    today_str = now.strftime("%Y-%m-%d")
+                    if msg_date < today_str:
+                        continue  # Old message, skip from live feed
+                except Exception:
+                    pass
+
             key = (msg["customer"][:100], msg["ketu"][:120])
             if key in existing_keys:
                 continue  # Skip duplicate pair
+
+            # Use original message time if available, else sync time
+            display_time = now.strftime("%I:%M %p")
+            if msg_ts:
+                try:
+                    from datetime import datetime as _dt
+                    parsed = _dt.fromisoformat(msg_ts)
+                    display_time = parsed.strftime("%I:%M %p")
+                except Exception:
+                    pass
+
             _wwbun_stats["recent_quality_messages"].append({
                 "customer": msg["customer"][:100],
                 "ketu": msg["ketu"][:120],
                 "ai": msg.get("ai", False),
-                "time": now.strftime("%I:%M %p"),
+                "time": display_time,
                 "phone": msg.get("phone_hint", ""),
                 "chat_id": msg.get("chat_id", ""),
                 "name": msg.get("contact_name", ""),
@@ -1024,6 +1048,7 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
                     "chat_id": chat_id,
                     "phone_hint": _phone_hint,  # last 4 digits for debug
                     "contact_name": _chat_contact_name,
+                    "msg_timestamp": msg_ts.isoformat() if msg_ts else "",
                 })
                 return "ok"
 
