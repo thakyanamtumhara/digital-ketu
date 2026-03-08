@@ -2888,6 +2888,17 @@ async def scheduler_status():
     return get_scheduler_status()
 
 
+# --- Cloud Payload Debug ---
+
+
+@app.get("/api/cloud-payloads")
+async def cloud_payloads():
+    """Show exactly what was sent to Claude API (for debugging token usage)."""
+    from core.cloud_payload_log import get_recent_payloads
+    payloads = get_recent_payloads(limit=20)
+    return {"payloads": payloads, "count": len(payloads)}
+
+
 # --- Dashboard UI ---
 
 _dashboard_html = (Path(__file__).parent / "static" / "dashboard.html").read_text(encoding="utf-8")

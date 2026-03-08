@@ -218,6 +218,18 @@ Return ONLY valid JSON. If nothing notable, return empty arrays."""
             source="realtime-analysis",
         )
 
+        # Log payload for dashboard debug
+        from core.cloud_payload_log import log_cloud_payload
+        log_cloud_payload(
+            source="realtime-analysis",
+            prompt_text=prompt,
+            model="claude-haiku-4-5-20251001",
+            max_tokens=800,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            pair_count=len(selected),
+        )
+
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
 
         if json_match:

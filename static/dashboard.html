@@ -786,6 +786,47 @@
     </div>
   </div>
 
+  <!-- Cloud Debug: What's Being Sent to Claude API -->
+  <div style="margin-bottom:25px;">
+    <h3 style="font-size:15px;color:var(--text-bright);margin-bottom:12px;">
+      What's Being Sent to Cloud
+      <span style="font-weight:400;color:var(--text-dim);font-size:13px;">(exact prompts sent to Claude API for learning)</span>
+    </h3>
+    <div id="cloudPayloadsContainer" style="background:var(--card);border:1px solid var(--card-border);border-radius:12px;padding:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-size:13px;color:var(--text-dim);">
+          Recent API calls — click any to see the full prompt text
+        </div>
+        <button onclick="loadCloudPayloads()" style="background:rgba(108,92,231,0.15);color:var(--accent);border:1px solid rgba(108,92,231,0.3);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;">Refresh</button>
+      </div>
+
+      <!-- Summary stats -->
+      <div id="cloudPayloadStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;">
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Total Calls Logged</div>
+          <div id="cpTotalCalls" style="font-size:20px;font-weight:600;color:var(--accent2);">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Avg Input Tokens</div>
+          <div id="cpAvgTokens" style="font-size:20px;font-weight:600;color:var(--orange);">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Avg Words in Prompt</div>
+          <div id="cpAvgWords" style="font-size:20px;font-weight:600;color:var(--accent);">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Avg Pairs Sent</div>
+          <div id="cpAvgPairs" style="font-size:20px;font-weight:600;color:var(--green);">--</div>
+        </div>
+      </div>
+
+      <!-- Payload list -->
+      <div id="cloudPayloadList" style="max-height:500px;overflow-y:auto;">
+        <div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">Loading... (payloads appear after next learning API call)</div>
+      </div>
+    </div>
+  </div>
+
   <div class="grid">
 
     <!-- Live Activity Feed -->
@@ -2634,6 +2675,99 @@ async function loadAudioStats() {
   listEl.innerHTML = html;
 }
 
+// ---- CLOUD PAYLOAD DEBUG ----
+
+async function loadCloudPayloads() {
+  const data = await fetchJSON('/api/cloud-payloads');
+  if (!data || !data.payloads) {
+    document.getElementById('cloudPayloadList').innerHTML =
+      '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">No payloads logged yet. Payloads appear after the next learning API call.</div>';
+    return;
+  }
+
+  const payloads = data.payloads;
+
+  // Stats
+  document.getElementById('cpTotalCalls').textContent = payloads.length;
+
+  if (payloads.length > 0) {
+    const avgTokens = Math.round(payloads.reduce((s, p) => s + (p.actual_input_tokens || p.estimated_input_tokens || 0), 0) / payloads.length);
+    const avgWords = Math.round(payloads.reduce((s, p) => s + (p.prompt_word_count || 0), 0) / payloads.length);
+    const pairsPayloads = payloads.filter(p => p.pair_count != null);
+    const avgPairs = pairsPayloads.length > 0 ? Math.round(pairsPayloads.reduce((s, p) => s + p.pair_count, 0) / pairsPayloads.length) : '--';
+    document.getElementById('cpAvgTokens').textContent = avgTokens.toLocaleString();
+    document.getElementById('cpAvgWords').textContent = avgWords.toLocaleString();
+    document.getElementById('cpAvgPairs').textContent = avgPairs;
+  }
+
+  // Build payload list
+  let html = '';
+  payloads.forEach((p, i) => {
+    const time = new Date(p.timestamp * 1000).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+    const date = new Date(p.timestamp * 1000).toLocaleDateString('en-IN');
+    const actualTokens = p.actual_input_tokens || 0;
+    const estTokens = p.estimated_input_tokens || 0;
+    const tokenColor = actualTokens > 3000 ? 'var(--red)' : actualTokens > 1500 ? 'var(--orange)' : 'var(--green)';
+    const sourceColors = {
+      'wwbun-learning': 'var(--accent2)',
+      'whatsapp-learning': 'var(--accent)',
+      'realtime-analysis': 'var(--orange)',
+    };
+    const srcColor = sourceColors[p.source] || 'var(--text-dim)';
+
+    html += '<div style="border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:8px;overflow:hidden;">';
+
+    // Header row (clickable)
+    html += '<div onclick="togglePayload(' + i + ')" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;cursor:pointer;background:rgba(255,255,255,0.02);">';
+    html += '<div style="display:flex;align-items:center;gap:10px;">';
+    html += '<span style="background:rgba(255,255,255,0.06);border-radius:4px;padding:2px 8px;font-size:11px;color:' + srcColor + ';">' + (p.source || 'unknown') + '</span>';
+    html += '<span style="font-size:12px;color:var(--text-dim);">' + date + ' ' + time + '</span>';
+    if (p.pair_count != null) {
+      html += '<span style="font-size:12px;color:var(--text-dim);">' + p.pair_count + ' pairs</span>';
+    }
+    html += '</div>';
+    html += '<div style="display:flex;align-items:center;gap:12px;">';
+    html += '<span style="font-size:12px;color:var(--text-dim);">' + (p.prompt_word_count || 0) + ' words</span>';
+    html += '<span style="font-size:14px;font-weight:600;color:' + tokenColor + ';">' + actualTokens.toLocaleString() + ' tokens</span>';
+    html += '<span style="font-size:11px;color:var(--text-dim);">(est: ' + estTokens.toLocaleString() + ')</span>';
+    html += '<span id="cpArrow' + i + '" style="color:var(--text-dim);font-size:10px;">&#9660;</span>';
+    html += '</div></div>';
+
+    // Expandable prompt text (hidden by default)
+    html += '<div id="cpBody' + i + '" style="display:none;padding:12px 14px;border-top:1px solid rgba(255,255,255,0.06);">';
+    html += '<div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">EXACT PROMPT SENT TO CLAUDE (' + p.model + ', max_tokens=' + p.max_tokens + '):</div>';
+    html += '<pre style="white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--text);background:rgba(0,0,0,0.3);border-radius:6px;padding:12px;max-height:400px;overflow-y:auto;line-height:1.5;">';
+    html += escapeHtml(p.prompt_text || '(empty)');
+    html += '</pre>';
+    if (p.actual_output_tokens) {
+      html += '<div style="font-size:11px;color:var(--text-dim);margin-top:8px;">Output tokens used: ' + p.actual_output_tokens + '</div>';
+    }
+    html += '</div></div>';
+  });
+
+  if (!html) {
+    html = '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">No payloads logged yet. Payloads appear after the next learning API call.</div>';
+  }
+
+  document.getElementById('cloudPayloadList').innerHTML = html;
+}
+
+function togglePayload(i) {
+  const body = document.getElementById('cpBody' + i);
+  const arrow = document.getElementById('cpArrow' + i);
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    arrow.innerHTML = '&#9650;';
+  } else {
+    body.style.display = 'none';
+    arrow.innerHTML = '&#9660;';
+  }
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 // ---- INIT & AUTO-REFRESH ----
 
 // Safely run a function — never let one failure break the whole dashboard
@@ -2657,6 +2791,7 @@ async function init() {
     safe(loadWwbunStats),
     safe(loadKetuOnly),
     safe(loadLeaves),
+    safe(loadCloudPayloads),
   ]);
 
   // Countdown ticks every second (local, no API call)
@@ -2677,6 +2812,7 @@ async function init() {
       safe(loadWwbunStats),
       safe(loadKetuOnly),
       safe(loadLeaves),
+      safe(loadCloudPayloads),
     ]);
   }, 30000);
 }
