@@ -1650,11 +1650,12 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         quality_pairs_preview = learn_result.get("quality_pairs", [])
         invalidate_cache()
 
-        # Track wwbun sync stats for dashboard (use new_count to avoid counting duplicates)
-        # quality_count = number of pairs (NOT filter_stats "kept" which counts loose individual msgs)
+        # Track wwbun sync stats for dashboard
+        # IMPORTANT: Use new_count (messages from THIS sync only), NOT buffer_flushed.
+        # Buffer messages were already counted when they were buffered in previous syncs.
         _flush_pairs_count = len(quality_pairs_preview) if quality_pairs_preview else 0
         _track_wwbun_sync(
-            total_messages=learn_result.get("buffer_flushed", new_count),
+            total_messages=new_count,
             quality_count=_flush_pairs_count,
             junk_count=filter_stats.get("junk", 0),
             short_count=filter_stats.get("too_short", 0),

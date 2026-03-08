@@ -349,46 +349,25 @@ def extract_knowledge_from_messages(messages: list[dict], ketu_name: str = "Ketu
         for m in filtered[:200]
     )
 
-    # Load current prompt config for context
-    prompt_config = _load_prompt_config()
-    current_traits = prompt_config.get("personality_traits", []) + prompt_config.get("evolved_traits", [])
-    current_phrases = prompt_config.get("signature_phrases", []) + prompt_config.get("evolved_phrases", [])
+    # NOTE: We do NOT send current traits/phrases to Claude anymore.
+    # The 194KB prompt.json was adding ~8000+ tokens per call for dedup that
+    # already happens in apply_knowledge_updates() AFTER Claude returns.
 
-    prompt = f"""Analyze these WhatsApp chat messages from Ketu (the business owner of Sale91.com / Own Knitted Blank Wears).
-
-IMPORTANT: Analyze BOTH customer questions AND Ketu's replies together — the customer question gives context for WHY Ketu replied that way. But only learn FROM Ketu's messages.
+    prompt = f"""Analyze these WhatsApp chat messages from Ketu (business owner). Learn FROM Ketu's messages only, use customer questions as context.
 Ketu's name in chat: {ketu_name}
 
 Chat messages:
 {chat_sample}
 
-CURRENT personality traits already known:
-{json.dumps(current_traits, ensure_ascii=False)}
+Do NOT extract price info or product details (materials, colors, sizes, GSM) — catalog is the source of truth.
 
-CURRENT signature phrases already known:
-{json.dumps(current_phrases, ensure_ascii=False)}
+Extract JSON:
+1. "style_patterns": Ketu's phrases, greetings, tone, typical replies
+2. "new_faqs": Customer Q + Ketu A pairs (NOT price/product FAQs)
+3. "business_updates": New policies, offers, shipping info
+4. "prompt_evolution": {{"new_traits": [], "new_phrases": [], "new_rules": [], "example_conversations": [{{"customer": "q", "reply": "a"}}]}}
 
-IMPORTANT: Do NOT extract any price information or product details (materials, colors, sizes, GSM, etc.) from these chats.
-The product catalog is the single source of truth for all prices and product info. Only extract conversational knowledge.
-
-Extract the following (in JSON format):
-1. "style_patterns": How Ketu talks — phrases, greetings, closing patterns
-2. "new_faqs": Customer Q + Ketu's A pairs (use customer question for context) — but NOT price/product FAQs, those come from catalog
-3. "business_updates": Any new business info (offers, policies, etc.)
-4. "prompt_evolution": {{
-     "new_traits": ["NEW personality traits you noticed that are NOT already in the list above"],
-     "new_phrases": ["NEW signature phrases/words Ketu uses repeatedly that are NOT already known"],
-     "new_rules": ["NEW reply rules/patterns you noticed — how Ketu handles specific situations"],
-     "example_conversations": [{{"customer": "what customer asked", "reply": "what Ketu replied"}}]
-   }}
-
-CRITICAL for prompt_evolution:
-- Only add traits/phrases/rules that are genuinely NEW (not already in current list)
-- Look for Ketu's UNIQUE way of talking — his catchphrases, his way of convincing, his humor
-- Notice how he handles objections, how he upsells, how he closes deals
-- If you find a pattern Ketu uses 2+ times, that's a signature move — capture it
-
-Return ONLY valid JSON. If nothing new found, return empty arrays/objects."""
+Return ONLY valid JSON. If nothing new, return empty arrays."""
 
     try:
         response = client.messages.create(
@@ -564,45 +543,24 @@ def extract_knowledge_from_wwbun_messages(
     )
     buyer_count = len(buyer_phones)
 
-    # Load current prompt config for context
-    prompt_config = _load_prompt_config()
-    current_traits = prompt_config.get("personality_traits", []) + prompt_config.get("evolved_traits", [])
-    current_phrases = prompt_config.get("signature_phrases", []) + prompt_config.get("evolved_phrases", [])
+    # NOTE: We do NOT send current traits/phrases to Claude anymore.
+    # The 194KB prompt.json was adding ~8000+ tokens per call for dedup that
+    # already happens in apply_knowledge_updates() AFTER Claude returns.
 
     prompt = f"""Analyze these WhatsApp conversations. Learn from KETU's MANUAL messages only (NOT [AI] tagged). Use CUSTOMER messages as CONTEXT to understand why Ketu replied that way.
-
-{f"IMPORTANT: {buyer_count} conversations are from BUYERS (marked [BUYER]) — customers who actually purchased. Pay EXTRA attention to Ketu's messaging style in these chats. Learn what phrases, tone, and approach led to a sale." if buyer_count > 0 else ""}
+{f"IMPORTANT: {buyer_count} conversations are from BUYERS (marked [BUYER]). Pay EXTRA attention to these — learn what led to a sale." if buyer_count > 0 else ""}
 
 Messages:
 {chat_text}
 
-CURRENT personality traits already known:
-{json.dumps(current_traits, ensure_ascii=False)}
+Do NOT extract price info or product details (materials, colors, sizes, GSM) — catalog is the source of truth.
 
-CURRENT signature phrases already known:
-{json.dumps(current_phrases, ensure_ascii=False)}
-
-IMPORTANT: Do NOT extract any price information or product details (materials, colors, sizes, GSM, etc.) from these chats.
-The product catalog is the single source of truth for all prices and product info. Only extract conversational knowledge.
-
-Extract in JSON format:
-1. "style_patterns": How Ketu types — his phrases, greetings, tone, typical replies
-2. "new_faqs": Customer Q + Ketu's A pairs (use customer question for context) — but NOT price/product FAQs, those come from catalog
-3. "business_updates": Any new policies, offers, shipping info
-4. "prompt_evolution": {{
-     "new_traits": ["NEW personality traits NOT already known"],
-     "new_phrases": ["NEW signature phrases/words NOT already known"],
-     "new_rules": ["NEW reply patterns — how Ketu handles specific situations"],
-     "example_conversations": [{{"customer": "question", "reply": "Ketu's reply"}}]
-   }}
-5. "sales_patterns": Patterns from [BUYER] conversations that led to a sale — what Ketu said/did that converted
-   Format: [{{"pattern": "description of what worked", "example": "example message"}}] or []
-
-CRITICAL for prompt_evolution:
-- Only add genuinely NEW traits/phrases/rules (not duplicates)
-- Capture Ketu's unique selling style, humor, objection handling
-- If Ketu uses a phrase 2+ times, it's a signature — add it
-- PRIORITIZE learning from [BUYER] conversations — these show what actually converts
+Extract JSON:
+1. "style_patterns": Ketu's phrases, greetings, tone, typical replies
+2. "new_faqs": Customer Q + Ketu A pairs (NOT price/product FAQs)
+3. "business_updates": New policies, offers, shipping info
+4. "prompt_evolution": {{"new_traits": [], "new_phrases": [], "new_rules": [], "example_conversations": [{{"customer": "q", "reply": "a"}}]}}
+5. "sales_patterns": [{{"pattern": "what worked", "example": "msg"}}] (from [BUYER] chats only, or [])
 
 Return ONLY valid JSON."""
 
