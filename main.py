@@ -1194,9 +1194,16 @@ def _save_learning_buffer(buffer: list[dict]):
 def _message_fingerprint(m: dict) -> str:
     """Create a unique fingerprint for a message to detect duplicates.
 
-    Uses chat_id + sender_id + content + timestamp to identify the same message
-    sent across multiple wwbun syncs.
+    Priority:
+    1. message_id (WhatsApp unique ID) — best, one field, 100% reliable
+    2. chat_id + sender_id + content + timestamp — fallback composite key
     """
+    # Best: use WhatsApp's unique message_id if available
+    msg_id = m.get("message_id", m.get("msg_id", m.get("key_id", "")))
+    if msg_id:
+        return f"mid:{msg_id}"
+
+    # Fallback: composite fingerprint
     chat_id = m.get("chat_id", m.get("remote_jid", ""))
     sender = m.get("sender_id", "")
     content = (m.get("content", "") or m.get("text", "") or m.get("body", "")).strip()
