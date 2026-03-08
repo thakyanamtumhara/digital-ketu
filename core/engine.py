@@ -508,11 +508,10 @@ def _is_conversation_ender(message: str, last_ai_message: str = "") -> bool:
     if msg_clean in enders:
         return True
 
-    # Short messages (1-3 words) that look like acknowledgements
+    # Messages up to 6 words that contain acknowledgement words
+    # "ok bhai", "theek hai ji", "haan fir theek hai bhaiyaa", "accha thike dhanyawad"
     words = msg_clean.split()
-    if len(words) <= 3:
-        # "ok bhai", "thanks sir", "theek hai ji", "accha ok", "thike, dhanyawad"
-        # Strip commas/punctuation from individual words for matching
+    if len(words) <= 6:
         clean_words = [w.strip(",.!;:") for w in words]
         if any(w in enders for w in clean_words):
             # But NOT if they're asking something (contains question mark or question words)

@@ -161,7 +161,7 @@ def should_defer_borderline(confidence_score: int) -> dict | None:
         )
         return {
             "reason": "ketu_active_borderline",
-            "defer_reply": "Bhai, Ketu sir abhi online hain — wo khud reply karenge.",
+            "defer_reply": "Bhai, ye Ketu sir khud batayenge — thodi der mein reply aayega.",
         }
 
     if peak and confidence_score < 40:
