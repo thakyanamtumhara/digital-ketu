@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 
@@ -918,7 +919,19 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
         last_customer_ts = None  # track timestamp of last buffered customer msg
 
         for msg in chat_msgs:
+            # Skip non-text messages (IMAGE, AUDIO, VIDEO, etc.) — no learning value
+            msg_type = (msg.get("message_type") or msg.get("type") or "TEXT").upper()
+            if msg_type not in ("TEXT", ""):
+                continue
+
             content = (msg.get("content", "") or msg.get("text", "") or msg.get("body", "")).strip()
+            if not content:
+                continue
+
+            # Strip [Replying to: "..."] prefix — the quoted message is already
+            # a separate message in the conversation, so the prefix is redundant
+            # and pollutes learning data.
+            content = re.sub(r'^\[Replying to:\s*"?[^]]*"?\]\s*', '', content).strip()
             if not content:
                 continue
 
@@ -1012,11 +1025,15 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
                     customer_msgs_buffer.clear()
                     last_customer_ts = None
 
+    # Count how many chats had real chat_id vs synthetic assignment
+    real_chats = sum(1 for k in by_chat if not k.startswith("_"))
+    synthetic_chats = sum(1 for k in by_chat if k.startswith("_"))
     logger.info(
         f"[extract-pairs] msgs={len(messages)}, chats={len(by_chat)}, "
         f"pairs={len(all_pairs)}, skipped_low_quality={skipped_low_quality}, "
         f"skipped_no_intent={skipped_no_intent}, "
-        f"broken_sids={broken_sids}, use_flag={use_flag}"
+        f"broken_sids={broken_sids}, use_flag={use_flag}, "
+        f"real_chat_ids={real_chats}, synthetic={synthetic_chats}"
     )
     return all_pairs
 
