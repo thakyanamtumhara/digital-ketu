@@ -1197,6 +1197,56 @@ def _save_learning_buffer(buffer: list[dict]):
         logger.warning(f"[Buffer] Save failed: {e}")
 
 
+# --- Processed Fingerprints ---
+# Survives buffer flushes so old messages don't get re-added after flush clears the buffer.
+# Without this, wwbun re-sending old messages would pass dedup (since buffer is empty after flush).
+
+def _get_processed_fingerprints() -> dict:
+    """Load processed message fingerprints from DB. Returns {fingerprint: timestamp}."""
+    try:
+        from core.database import is_db_available, kv_get
+        if is_db_available():
+            data = kv_get("processed_msg_fingerprints")
+            if data and isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+def _save_processed_fingerprints(fps: dict):
+    """Save processed fingerprints to DB."""
+    try:
+        from core.database import is_db_available, kv_set
+        if is_db_available():
+            kv_set("processed_msg_fingerprints", fps)
+    except Exception as e:
+        logger.warning(f"[ProcessedFP] Save failed: {e}")
+
+
+def _mark_messages_processed(buffer: list[dict]):
+    """Mark all messages in buffer as processed (called after flush).
+
+    Saves their fingerprints so they won't be re-added if wwbun re-sends them.
+    Also cleans up fingerprints older than 24 hours to prevent unbounded growth.
+    """
+    fps = _get_processed_fingerprints()
+    now_ts = time.time()
+
+    # Add new fingerprints
+    for m in buffer:
+        fp = _message_fingerprint(m)
+        if fp:
+            fps[fp] = now_ts
+
+    # Cleanup: remove fingerprints older than 24 hours
+    cutoff = now_ts - 86400  # 24 hours
+    fps = {k: v for k, v in fps.items() if v > cutoff}
+
+    _save_processed_fingerprints(fps)
+    logger.info(f"[ProcessedFP] Marked {len(buffer)} msgs as processed, total tracked: {len(fps)}")
+
+
 def _message_fingerprint(m: dict) -> str:
     """Create a unique fingerprint for a message to detect duplicates.
 
@@ -1398,6 +1448,10 @@ def _flush_learning_buffer(owner_user_id: str) -> dict:
         items_count=result.get("count", 0),
     )
 
+    # Mark all buffer messages as processed BEFORE clearing —
+    # so wwbun re-sending old messages won't re-add them to fresh buffer
+    _mark_messages_processed(buffer)
+
     # Clear buffer after successful learning
     _save_learning_buffer([])
 
@@ -1507,22 +1561,34 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     buffer = _get_learning_buffer()
 
     # Build a set of existing message fingerprints for dedup
+    # Check BOTH current buffer AND previously processed messages (survives flush)
     existing_fps = set()
     for m in buffer:
         fp = _message_fingerprint(m)
         if fp:
             existing_fps.add(fp)
 
+    # Also load processed fingerprints — these persist after buffer flush
+    # so old messages don't get re-added when wwbun re-sends them
+    processed_fps = _get_processed_fingerprints()
+    already_processed_count = 0
+
     # Only add genuinely new messages
     new_count = 0
     for m in req.messages:
         fp = _message_fingerprint(m)
         if fp and fp in existing_fps:
-            continue  # Skip duplicate
+            continue  # Skip duplicate (already in buffer)
+        if fp and fp in processed_fps:
+            already_processed_count += 1
+            continue  # Skip — already processed in a previous batch
         buffer.append(m)
         if fp:
             existing_fps.add(fp)
         new_count += 1
+
+    if already_processed_count:
+        logger.info(f"[wwbun-sync DEDUP] Skipped {already_processed_count} already-processed messages")
 
     logger.info(
         f"[wwbun-sync DEDUP] received={len(req.messages)}, new={new_count}, "
@@ -1680,6 +1746,8 @@ async def clear_learning_buffer():
     """Clear the learning buffer without learning — use when buffer has bad data."""
     buffer = _get_learning_buffer()
     count = len(buffer)
+    # Mark as processed so they don't get re-added on next wwbun sync
+    _mark_messages_processed(buffer)
     _save_learning_buffer([])
     logger.info(f"[Buffer] Cleared {count} messages from buffer")
     return {"status": "cleared", "messages_cleared": count}
