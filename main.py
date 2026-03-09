@@ -2448,6 +2448,15 @@ async def api_ketu_replied(req: KetuRepliedRequest):
             ketu_reply=req.ketu_message or "",
         )
 
+        # Log takeover IMMEDIATELY so dashboard shows it right away
+        _add_correction_history({
+            "source": "ketu-takeover",
+            "customer_phone": req.customer_phone[-4:] if req.customer_phone else "?",
+            "customer_message": customer_last_msg[:120],
+            "ketu_reply": (req.ketu_message or "")[:120],
+            "status": "learning..." if req.ketu_message else "takeover-only",
+        })
+
         # Send to cloud for deep learning (background thread)
         if req.ketu_message:
             import threading
@@ -2459,20 +2468,6 @@ async def api_ketu_replied(req: KetuRepliedRequest):
                     customer_phone=req.customer_phone,
                     source="ketu-takeover",
                 )
-                # Track in correction history ring buffer for dashboard
-                _add_correction_history({
-                    "source": "ketu-takeover",
-                    "customer_phone": req.customer_phone[-4:] if req.customer_phone else "?",
-                    "customer_message": customer_last_msg[:120],
-                    "ketu_reply": req.ketu_message[:120],
-                    "category": result.get("category", ""),
-                    "question_pattern": result.get("question_pattern", ""),
-                    "why_ketu_only": result.get("why_ketu_only", ""),
-                    "should_learn": result.get("should_learn", False),
-                    "status": result.get("status", "unknown"),
-                    "input_tokens": result.get("input_tokens", 0),
-                    "output_tokens": result.get("output_tokens", 0),
-                })
             threading.Thread(target=_cloud_learn_takeover, daemon=True).start()
 
     log_activity(
@@ -2906,6 +2901,20 @@ async def edit_whatsapp_message(req: EditMessageRequest):
                 },
             )
 
+            # Log correction IMMEDIATELY so dashboard shows it right away
+            # (don't wait for cloud learning — that can take 5-10 seconds or fail)
+            _add_correction_history({
+                "source": "whatsapp-edit",
+                "customer_phone": req.phone[-4:] if req.phone else "?",
+                "customer_name": customer_name or "",
+                "customer_message": customer_message[:120],
+                "ai_reply": ai_reply[:120],
+                "ketu_correction": req.new_text[:120],
+                "status": "learning...",
+                "updates_applied": [],
+                "updates_count": 0,
+            })
+
             # Learn from the correction in background thread
             import threading
             def _learn_from_edit():
@@ -2917,19 +2926,6 @@ async def edit_whatsapp_message(req: EditMessageRequest):
                         customer_phone=req.phone,
                         customer_name=customer_name,
                     )
-                    # Track in correction history ring buffer
-                    _add_correction_history({
-                        "source": "whatsapp-edit",
-                        "customer_phone": req.phone[-4:] if req.phone else "?",
-                        "customer_name": customer_name or "",
-                        "customer_message": customer_message[:120],
-                        "ai_reply": ai_reply[:120],
-                        "ketu_correction": req.new_text[:120],
-                        "what_went_wrong": learn_result.get("what_went_wrong", ""),
-                        "status": learn_result.get("status", "unknown"),
-                        "updates_applied": learn_result.get("updates_applied", []),
-                        "updates_count": learn_result.get("count", 0),
-                    })
                     if learn_result.get("status") == "learned":
                         log_activity(
                             source="correction-learner",
