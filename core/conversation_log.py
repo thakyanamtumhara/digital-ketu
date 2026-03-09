@@ -188,8 +188,11 @@ def mark_corrected(customer_phone: str):
         if is_db_available():
             _execute(
                 """UPDATE conversation_log SET corrected = TRUE
-                   WHERE customer_phone = %s AND corrected = FALSE
-                   ORDER BY timestamp DESC LIMIT 1""",
+                   WHERE id = (
+                       SELECT id FROM conversation_log
+                       WHERE customer_phone = %s AND corrected = FALSE
+                       ORDER BY timestamp DESC LIMIT 1
+                   )""",
                 (customer_phone,),
             )
     except Exception:

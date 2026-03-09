@@ -253,19 +253,49 @@ def update_profile(
     elif any(w in msg_lower for w in ["premium", "best quality", "heavy", "430", "240"]):
         profile["price_sensitivity"] = "premium"
 
-    # Detect language preference
+    # Detect language preference — checks script (Unicode ranges) and word patterns
     hindi_chars = sum(1 for c in message if '\u0900' <= c <= '\u097F')
     tamil_chars = sum(1 for c in message if '\u0B80' <= c <= '\u0BFF')
     telugu_chars = sum(1 for c in message if '\u0C00' <= c <= '\u0C7F')
+    gujarati_chars = sum(1 for c in message if '\u0A80' <= c <= '\u0AFF')
+    bengali_chars = sum(1 for c in message if '\u0980' <= c <= '\u09FF')
+    marathi_chars = sum(1 for c in message if '\u0900' <= c <= '\u097F')  # Same script as Hindi
 
     if tamil_chars > 2:
         profile["language"] = "tamil"
     elif telugu_chars > 2:
         profile["language"] = "telugu"
+    elif gujarati_chars > 2:
+        profile["language"] = "gujarati"
+    elif bengali_chars > 2:
+        profile["language"] = "bengali"
     elif hindi_chars > 5:
-        profile["language"] = "hindi"
+        # Pure Devanagari script — could be Hindi or Marathi
+        # Detect Marathi-specific words
+        import re
+        marathi_words = {"कसा", "काय", "आहे", "नाही", "होय", "बरं", "बरोबर", "पाठवा", "किती", "द्या"}
+        msg_words = set(re.findall(r'[\u0900-\u097F]+', message))
+        if msg_words & marathi_words:
+            profile["language"] = "marathi"
+        else:
+            profile["language"] = "hindi"
     elif all(ord(c) < 128 or c in ' \n\t' for c in message):
-        profile["language"] = "english"
+        # Pure ASCII — check if it's English or Hinglish (romanized Hindi)
+        hinglish_words = {
+            "bhai", "sir", "ji", "hai", "nahi", "kya", "kitna", "kitne",
+            "kaise", "chahiye", "batao", "bhej", "bol", "acha", "theek",
+            "haan", "mujhe", "yeh", "woh", "toh", "bhi", "aur", "mein",
+            "karo", "lena", "dena", "milega", "dikhao", "sasta", "mehnga",
+        }
+        msg_words_lower = set(msg_lower.split())
+        hinglish_match = msg_words_lower & hinglish_words
+        if len(hinglish_match) >= 2:
+            profile["language"] = "hinglish"
+        elif len(hinglish_match) == 1 and len(msg_words_lower) <= 5:
+            # Short message with one Hinglish word — keep existing or default
+            profile["language"] = profile.get("language", "") or "hinglish"
+        else:
+            profile["language"] = "english"
     else:
         profile["language"] = profile.get("language", "") or "hinglish"
 
@@ -330,8 +360,20 @@ def format_customer_context(phone: str) -> str:
         parts.append("- Premium quality chahiye — heavy GSM recommend kar")
 
     language = profile.get("language", "")
-    if language and language not in ("hinglish", ""):
-        parts.append(f"- Language preference: {language} (isi mein reply kar)")
+    if language:
+        lang_instructions = {
+            "english": "- Language: Customer speaks ENGLISH. Reply in English only, no Hindi words",
+            "hindi": "- Language: Customer speaks HINDI (Devanagari). Reply in Hindi/Hinglish — NOT pure English",
+            "tamil": "- Language: Customer speaks TAMIL. Reply in simple English (they may not know Hindi)",
+            "telugu": "- Language: Customer speaks TELUGU. Reply in simple English (they may not know Hindi)",
+            "gujarati": "- Language: Customer speaks GUJARATI. Reply in simple Hindi/English (they understand)",
+            "bengali": "- Language: Customer speaks BENGALI. Reply in simple Hindi/English",
+            "marathi": "- Language: Customer speaks MARATHI. Reply in Hindi/Hinglish (they understand)",
+            "hinglish": "- Language: Hinglish (default — Hindi+English mix)",
+        }
+        instruction = lang_instructions.get(language, f"- Language: {language}")
+        if language != "hinglish":  # Don't add noise for default language
+            parts.append(instruction)
 
     topics = profile.get("last_topics", [])
     if topics:
@@ -416,8 +458,9 @@ def get_repeat_customers(days: int = 30) -> list[dict]:
             stage = data.get("stage", STAGE_NEW)
             already_followed = data.get("follow_up_sent", False)
 
-            # Repeat or bought customers who haven't been followed up
-            if stage in (STAGE_REPEAT, STAGE_BOUGHT) and not already_followed:
+            # Only REPEAT customers (ordered before, coming back) — NOT freshly bought
+            # BOUGHT = just paid, order is dispatching → no follow-up needed
+            if stage == STAGE_REPEAT and not already_followed:
                 last_purchase = data.get("last_purchase_at", "")
                 days_since = 0
                 if last_purchase:

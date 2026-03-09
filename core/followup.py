@@ -27,6 +27,34 @@ logger = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# Test/fake phone number patterns — never send follow-ups to these
+_TEST_NUMBER_PREFIXES = ("9999900", "0000000", "1234567")
+
+
+def _is_valid_customer_phone(phone: str) -> bool:
+    """Validate phone number before sending follow-up.
+
+    Rejects test numbers (919999900003, etc.), too-short numbers,
+    and numbers with suspicious patterns.
+    """
+    if not phone or len(phone) < 10:
+        return False
+    # Strip country code
+    digits = phone.lstrip("+")
+    if digits.startswith("91") and len(digits) > 10:
+        digits = digits[2:]
+    # Must be 10 digits starting with 6-9 (valid Indian mobile)
+    if len(digits) != 10 or digits[0] not in "6789":
+        return False
+    # Reject test number patterns (9999900xxx, 0000000xxx, etc.)
+    if any(digits.startswith(prefix) for prefix in _TEST_NUMBER_PREFIXES):
+        logger.warning(f"[FollowUp] Skipping test number: {phone}")
+        return False
+    # Reject all-same-digit numbers (9999999999, 8888888888, etc.)
+    if len(set(digits)) == 1:
+        return False
+    return True
+
 # Follow-up message templates — genuine, helpful, not pushy
 _FOLLOWUP_TEMPLATES = [
     "Ji {name_or_sir}, order hua? Koi question ho toh bata do, help kar deta hun.",
@@ -98,6 +126,8 @@ def get_pending_followups() -> list[dict]:
     customers = get_interested_customers(hours=24)
     for customer in customers:
         phone = customer["phone"]
+        if not _is_valid_customer_phone(phone):
+            continue
         name = customer.get("name", "")
         interests = customer.get("interests", [])
 
@@ -116,6 +146,8 @@ def get_pending_followups() -> list[dict]:
     repeat_customers = get_repeat_customers(days=30)
     for customer in repeat_customers:
         phone = customer["phone"]
+        if not _is_valid_customer_phone(phone):
+            continue
         name = customer.get("name", "")
         days_since = customer.get("days_since_last_purchase", 0)
 
@@ -142,6 +174,9 @@ def execute_followup(phone: str) -> dict:
 
     The actual sending happens via wwbun API (caller's responsibility).
     """
+    if not _is_valid_customer_phone(phone):
+        return {"status": "rejected", "phone": phone, "reason": "invalid_phone"}
+
     profile = get_profile(phone)
     name = ""  # We'll get it from the profile's notable details or leave empty
 

@@ -159,6 +159,44 @@ def get_last_sent_message(to: str) -> dict | None:
     }
 
 
+async def send_image_message(
+    to: str,
+    image_url: str,
+    caption: str = "",
+) -> dict | None:
+    """Send an image message via WhatsApp Business API.
+
+    Used for sending product images when customer asks about a specific product.
+    Zero API cost — just a WhatsApp API call.
+    """
+    url = f"{GRAPH_API_URL}/{settings.whatsapp_phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {settings.whatsapp_access_token}",
+        "Content-Type": "application/json",
+    }
+    image_payload = {"link": image_url}
+    if caption:
+        image_payload["caption"] = caption
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "image",
+        "image": image_payload,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            result = response.json()
+            logger.info(f"[Image] Sent to {to}: {image_url[:60]}")
+            return result
+    except Exception as e:
+        logger.error(f"[Image] Send failed to {to}: {e}")
+        return None
+
+
 async def send_template_message(
     to: str,
     template_name: str,

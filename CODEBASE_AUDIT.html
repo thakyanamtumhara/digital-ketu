@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<title>Digital Ketu - Codebase Audit Report</title>
+<style>
+  @media print {
+    body { font-size: 11px; }
+    .page-break { page-break-before: always; }
+    table { page-break-inside: avoid; }
+  }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    max-width: 900px;
+    margin: 30px auto;
+    padding: 0 20px;
+    color: #222;
+    line-height: 1.5;
+  }
+  h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; font-size: 24px; }
+  h2 { color: #16213e; border-bottom: 2px solid #0f3460; padding-bottom: 6px; margin-top: 30px; font-size: 18px; }
+  h3 { color: #e94560; margin-top: 20px; font-size: 15px; }
+  h4 { color: #0f3460; margin-top: 15px; font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12px; }
+  th { background: #16213e; color: white; padding: 8px; text-align: left; }
+  td { border: 1px solid #ddd; padding: 6px 8px; }
+  tr:nth-child(even) { background: #f9f9f9; }
+  code { background: #f0f0f0; padding: 2px 5px; border-radius: 3px; font-size: 11px; }
+  pre { background: #f5f5f5; padding: 12px; border-radius: 5px; overflow-x: auto; font-size: 11px; }
+  .bug { background: #fff3cd; border-left: 4px solid #e94560; padding: 10px; margin: 10px 0; }
+  .critical { background: #f8d7da; border-left: 4px solid #dc3545; }
+  .info { background: #d1ecf1; border-left: 4px solid #17a2b8; padding: 10px; margin: 10px 0; }
+  .header-meta { color: #666; font-size: 13px; margin-bottom: 20px; }
+  .score { display: inline-block; padding: 3px 10px; border-radius: 12px; color: white; font-weight: bold; font-size: 12px; }
+  .score-good { background: #28a745; }
+  .score-ok { background: #ffc107; color: #333; }
+  .score-bad { background: #dc3545; }
+  .print-btn { background: #e94560; color: white; border: none; padding: 10px 25px; border-radius: 5px; cursor: pointer; font-size: 14px; margin: 10px 0; }
+  .print-btn:hover { background: #c73650; }
+  @media print { .print-btn { display: none; } }
+</style>
+</head>
+<body>
+
+<button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
+
+<h1>Digital Ketu - Complete Codebase Audit</h1>
+<div class="header-meta">
+  <strong>Date:</strong> 09 March 2026 &nbsp;|&nbsp;
+  <strong>Audited by:</strong> Claude AI &nbsp;|&nbsp;
+  <strong>Project:</strong> Digital Ketu - AI Digital Twin for Sale91.com
+</div>
+
+<div class="info">
+  <strong>Overall:</strong>
+  Code Quality <span class="score score-good">7/10</span> &nbsp;
+  Architecture <span class="score score-good">8/10</span> &nbsp;
+  Reliability <span class="score score-ok">6/10</span> &nbsp;
+  <strong>Verdict:</strong> Fix, don't rewrite.
+</div>
+
+<h2>What is Digital Ketu?</h2>
+<p>AI-powered WhatsApp chatbot jo Ketu (Sale91.com ka owner) ka "digital twin" hai. Customer ke WhatsApp messages ka auto-reply deta hai Ketu ke style mein (Hinglish).</p>
+<pre>
+Customer (WhatsApp)
+  → wwbun (WhatsApp Gateway)
+  → Digital Ketu API (/api/reply)
+  → Claude API (Haiku/Sonnet)
+  → Reply back → Customer ko WhatsApp pe
+</pre>
+<p><strong>Storage:</strong> PostgreSQL (Railway) primary → JSON files fallback → GitHub backup last resort</p>
+
+<h2>File-by-File Function Audit</h2>
+
+<!-- main.py -->
+<h3>1. main.py (~3131 lines) - Main FastAPI Application</h3>
+
+<h4>Startup & Config (Lines 1-141)</h4>
+<table>
+<tr><th>Function/Block</th><th>Line</th><th>Kya Karta Hai</th></tr>
+<tr><td><code>lifespan()</code></td><td>78-120</td><td>App startup — DB init, knowledge load, scheduler start, GitHub restore</td></tr>
+<tr><td><code>app = FastAPI(...)</code></td><td>123-128</td><td>FastAPI app create with CORS middleware</td></tr>
+<tr><td>CORS middleware</td><td>131-137</td><td><code>allow_origins=["*"]</code> — sabko allow (production mein risky)</td></tr>
+<tr><td>Router includes</td><td>140-141</td><td>WhatsApp webhook + YouTube handler mount</td></tr>
+</table>
+
+<h4>Health & Status APIs (Lines 144-190)</h4>
+<table>
+<tr><th>Endpoint</th><th>Line</th><th>Kya Karta Hai</th></tr>
+<tr><td><code>GET /api/health</code></td><td>147-153</td><td>Simple health check — returns status + auto_reply toggle</td></tr>
+<tr><td><code>GET /api/health/detailed</code></td><td>156-181</td><td>Detailed health — DB status, errors, scheduler status</td></tr>
+<tr><td><code>GET /api/errors</code></td><td>184-190</td><td>Recent errors list for dashboard</td></tr>
+</table>
+
+<h4>AI Reply API (Lines 193-362)</h4>
+<table>
+<tr><th>Function</th><th>Line</th><th>Kya Karta Hai</th></tr>
+<tr><td><code>POST /api/reply</code></td><td>215-362</td><td><strong>MAIN ENDPOINT</strong> — Customer message → AI reply generate</td></tr>
+<tr><td>Audio handling</td><td>228-298</td><td>Voice note → Whisper transcribe → reply generate</td></tr>
+<tr><td>Media skip</td><td>297-298</td><td>Image/video/sticker → silently skip</td></tr>
+<tr><td>Ender detection</td><td>317-329</td><td>"Ok", "Thanks" → should_reply=false</td></tr>
+<tr><td>Conversation logging</td><td>337-343</td><td>Every AI reply DB mein log</td></tr>
+</table>
+
+<h4>Toggle & Settings APIs (Lines 365-457)</h4>
+<table>
+<tr><th>Endpoint</th><th>Line</th><th>Kya Karta Hai</th></tr>
+<tr><td><code>POST /api/toggle</code></td><td>372-382</td><td>Auto-reply on/off toggle</td></tr>
+<tr><td><code>POST /api/followup/toggle</code></td><td>396-402</td><td>Follow-up intelligence on/off</td></tr>
+<tr><td><code>GET/POST /api/leaves</code></td><td>423-456</td><td>Leave management</td></tr>
+</table>
+
+<h4>Knowledge Management (Lines 459-586)</h4>
+<table>
+<tr><th>Endpoint</th><th>Line</th><th>Kya Karta Hai</th></tr>
+<tr><td><code>GET /api/knowledge/reload</code></td><td>462-470</td><td>Force reload knowledge from JSON/DB</td></tr>
+<tr><td><code>GET /api/knowledge</code></td><td>541-544</td><td>Full knowledge base return</td></tr>
+<tr><td><code>GET /api/knowledge/learned-summary</code></td><td>547-586</td><td>Learned patterns summary for dashboard</td></tr>
+</table>
+
+<h4>Learning APIs (Lines 589-1810)</h4>
+<table>
+<tr><th>Function</th><th>Line</th><th>Kya Karta Hai</th></tr>
+<tr><td><code>POST /api/learn/whatsapp-export</code></td><td>597-631</td><td>WhatsApp chat export se seekho</td></tr>
+<tr><td>wwbun Stats System</td><td>639-898</td><td>Complete sync stats tracking</td></tr>
+<tr><td><code>POST /api/learn/wwbun-sync</code></td><td>1546-1810</td><td><strong>MAIN SYNC</strong> — wwbun se messages → buffer → learn</td></tr>
+<tr><td><code>_extract_conversation_pairs()</code></td><td>902-1190</td><td><strong>CRITICAL</strong> — Customer→Ketu pairs extract</td></tr>
+<tr><td>Learning Buffer System</td><td>1208-1543</td><td>MIN=20 pairs, COOLDOWN=1800s, FORCE=50 pairs</td></tr>
+</table>
+
+<h4>More Learning APIs (Lines 1813-2598)</h4>
+<table>
+<tr><th>Endpoint</th><th>Line</th><th>Kya Karta Hai</th></tr>
+<tr><td><code>POST /api/learn/youtube</code></td><td>1904-1924</td><td>YouTube video se seekho</td></tr>
+<tr><td><code>POST /api/learn/correction</code></td><td>2259-2309</td><td>AI galat → Ketu correct → seekho</td></tr>
+<tr><td><code>POST /api/ketu-replied</code></td><td>2414-2507</td><td>SHUT UP MODE — Ketu replied → AI 10 min silent</td></tr>
+<tr><td><code>GET /api/costs</code></td><td>2568-2576</td><td>API cost tracking (USD + INR)</td></tr>
+</table>
+
+<h4>Dashboard & Monitoring (Lines 2601-3131)</h4>
+<table>
+<tr><th>Endpoint</th><th>Line</th><th>Kya Karta Hai</th></tr>
+<tr><td><code>GET /api/dashboard</code></td><td>2659-2668</td><td>Live dashboard data</td></tr>
+<tr><td><code>GET /api/insights/customers</code></td><td>2733-2736</td><td>Customer analytics</td></tr>
+<tr><td><code>GET /api/ketu-only/queue</code></td><td>3009-3020</td><td>Questions deferred to real Ketu</td></tr>
+<tr><td><code>GET /api/backup</code></td><td>3049-3077</td><td>Knowledge base ZIP download</td></tr>
+<tr><td><code>GET /</code></td><td>3119-3122</td><td>Dashboard UI serve</td></tr>
+</table>
+
+<div class="page-break"></div>
+
+<!-- engine.py -->
+<h3>2. core/engine.py (~1224 lines) - AI Reply Engine</h3>
+<table>
+<tr><th>Function</th><th>Line</th><th>Kya Karta Hai</th></tr>
+<tr><td><code>_build_system_prompt()</code></td><td>216-332</td><td><strong>CRITICAL</strong> — System prompt: STATIC (cached) + DYNAMIC</td></tr>
+<tr><td><code>generate_reply()</code></td><td>555-1066</td><td><strong>MAIN</strong> — Full reply pipeline: shutup → ender → ketu-only → confidence → model select → API call</td></tr>
+<tr><td><code>_is_conversation_ender()</code></td><td>490-524</td><td>"Ok", "Thanks" → don't reply</td></tr>
+<tr><td><code>_is_weak_reply()</code></td><td>527-552</td><td>Weak Haiku reply → retry with Sonnet</td></tr>
+<tr><td><code>activate_shutup()</code></td><td>356-369</td><td>Customer ke liye AI silent mode</td></tr>
+<tr><td><code>ketu_manual_reply()</code></td><td>388-401</td><td>Ketu manually replied → 10 min shutup</td></tr>
+</table>
+
+<!-- config.py -->
+<h3>3. core/config.py (69 lines) - Configuration</h3>
+<table>
+<tr><th>Item</th><th>Line</th><th>Kya Karta Hai</th></tr>
+<tr><td><code>Settings</code> class</td><td>21-66</td><td>All env vars: API keys, DB URL, rate limits</td></tr>
+<tr><td><code>settings</code> singleton</td><td>68</td><td>Global settings (.env se load)</td></tr>
+</table>
+<p><strong>Key:</strong> anthropic_api_key, openai_api_key, youtube_api_key, database_url, admin_phone, rate limits (10/customer/hr, 100 global/hr, 3 at night)</p>
+
+<!-- database.py -->
+<h3>4. core/database.py (~485 lines) - PostgreSQL Layer</h3>
+<table>
+<tr><th>Function</th><th>Line</th><th>Kya Karta Hai</th></tr>
+<tr><td><code>get_connection()</code></td><td>30-46</td><td>DB connection get/create (singleton)</td></tr>
+<tr><td><code>init_db()</code></td><td>87-135</td><td>Tables create: knowledge_store, activity_log, learned_files, kv_store</td></tr>
+<tr><td><code>save_knowledge()</code></td><td>145-152</td><td>Knowledge JSON save (UPSERT)</td></tr>
+<tr><td><code>kv_get()/kv_set()</code></td><td>344-359</td><td>Key-value store operations</td></tr>
+<tr><td><code>seed_from_json_files()</code></td><td>419-484</td><td>First-run: JSON → DB migration</td></tr>
+</table>
+
+<!-- context_selector.py -->
+<h3>5. core/context_selector.py (509 lines) - Smart Context Selection</h3>
+<table>
+<tr><th>Function</th><th>Kya Karta Hai</th></tr>
+<tr><td><code>classify_message()</code></td><td>Customer message → intents + product_ids (zero API cost, keyword-based)</td></tr>
+<tr><td><code>format_smart_context()</code></td><td>Relevant knowledge only (1200 token budget)</td></tr>
+</table>
+<p><strong>Intents:</strong> greeting, price_product, return_complaint, dropshipping, shipping, payment, order_how, location, gst, moq, printing, gsm_fabric</p>
+
+<!-- Other core modules -->
+<h3>6-15. Other Core Modules (Summary)</h3>
+<table>
+<tr><th>File</th><th>Lines</th><th>Purpose</th></tr>
+<tr><td><code>core/knowledge.py</code></td><td>322</td><td>Knowledge loading with 60s TTL cache, learned fields merge</td></tr>
+<tr><td><code>core/token_budget.py</code></td><td>97</td><td>Token estimation (3.2 chars/token for Hinglish) + truncation</td></tr>
+<tr><td><code>core/confidence.py</code></td><td>215</td><td>Reply confidence scoring (0-100), defer threshold=25</td></tr>
+<tr><td><code>core/customer_memory.py</code></td><td>532</td><td>Customer profiles: stage, language, interests, product preferences</td></tr>
+<tr><td><code>core/conversation_log.py</code></td><td>248</td><td>AI reply logging for corrections</td></tr>
+<tr><td><code>core/cost_tracker.py</code></td><td>323</td><td>API cost tracking: cache-aware pricing, 90 day retention</td></tr>
+<tr><td><code>core/escalation.py</code></td><td>144</td><td>Complaint/anger detection (regex-based)</td></tr>
+<tr><td><code>core/ketu_only.py</code></td><td>314</td><td>Questions to defer: stock, orders, custom pricing</td></tr>
+<tr><td><code>core/peak_hours.py</code></td><td>227</td><td>Ketu's WhatsApp activity patterns, defer when active</td></tr>
+<tr><td><code>core/reply_length.py</code></td><td>164</td><td>Auto-constrain AI reply length (match Ketu's style)</td></tr>
+<tr><td><code>core/leave_manager.py</code></td><td>214</td><td>Leave/busy schedule with auto-reply</td></tr>
+<tr><td><code>core/activity_log.py</code></td><td>316</td><td>Activity logging to DB + JSON backup</td></tr>
+<tr><td><code>core/error_tracker.py</code></td><td>66</td><td>In-memory error ring buffer (50 entries)</td></tr>
+<tr><td><code>core/cloud_payload_log.py</code></td><td>185</td><td>Claude API call logging/debug</td></tr>
+<tr><td><code>core/git_persist.py</code></td><td>326</td><td>GitHub backup for surviving Railway deploys</td></tr>
+</table>
+
+<div class="page-break"></div>
+
+<!-- Learner modules -->
+<h3>16-20. Learner Modules</h3>
+<table>
+<tr><th>File</th><th>Lines</th><th>Purpose</th></tr>
+<tr><td><code>learner/chat_learner.py</code></td><td>~500</td><td>WhatsApp chat learning from wwbun — style, FAQs, enders, corrections</td></tr>
+<tr><td><code>learner/realtime_learner.py</code></td><td>~400</td><td>Realtime learning: corrections, voice notes, batch conversations</td></tr>
+<tr><td><code>learner/youtube_learner.py</code></td><td>262</td><td>YouTube transcript → knowledge extraction (OAuth Captions API)</td></tr>
+<tr><td><code>learner/catalog_syncer.py</code></td><td>207</td><td>GitHub catalog repo sync with diff detection</td></tr>
+<tr><td><code>learner/faq_validator.py</code></td><td>462</td><td>FAQ health checking vs catalog (price/product mismatch)</td></tr>
+<tr><td><code>learner/audio_transcriber.py</code></td><td>308</td><td>WhatsApp voice notes → OpenAI Whisper transcription</td></tr>
+</table>
+
+<!-- Integrations -->
+<h3>21-23. Integrations & Other</h3>
+<table>
+<tr><th>File</th><th>Lines</th><th>Purpose</th></tr>
+<tr><td><code>integrations/whatsapp/webhook.py</code></td><td>631</td><td>WhatsApp webhook: receive messages, rate limit, dedup, admin commands</td></tr>
+<tr><td><code>integrations/whatsapp/sender.py</code></td><td>234</td><td>WhatsApp Business API: send, edit, images, templates</td></tr>
+<tr><td><code>integrations/youtube/handler.py</code></td><td>159</td><td>YouTube comment auto-reply (OAuth pending)</td></tr>
+<tr><td><code>scheduler.py</code></td><td>925</td><td>Background tasks: YouTube (daily), catalog sync (6h), cleanup (daily)</td></tr>
+<tr><td><code>static/dashboard.html</code></td><td>3215</td><td>Full dashboard: stats, costs, corrections, knowledge, insights</td></tr>
+</table>
+
+<div class="page-break"></div>
+
+<!-- Bugs -->
+<h2>Bugs Found & Fixed</h2>
+
+<div class="bug critical">
+<h4>Bug 1: <code>minutes</code> parameter ignored (main.py) — FIXED</h4>
+<p><code>api_ketu_replied</code> mein <code>req.minutes</code> pass nahi ho raha tha. Always default 10 min use hota tha.</p>
+</div>
+
+<div class="bug critical">
+<h4>Bug 2: Conversation log inconsistency (main.py) — FIXED</h4>
+<p>Raw message log ho rahi thi, clean (stripped) message nahi. Correction detection fail ho sakta tha.</p>
+</div>
+
+<div class="bug critical">
+<h4>Bug 3: <code>save_knowledge_to_db()</code> doesn't exist (ketu_only.py) — FIXED</h4>
+<p>Function name galat tha, <code>save_knowledge()</code> hona chahiye tha. Ketu-only learned patterns DB mein save nahi ho rahe the!</p>
+</div>
+
+<div class="bug critical">
+<h4>Bug 4: Invalid PostgreSQL syntax (conversation_log.py) — FIXED</h4>
+<p><code>ORDER BY ... LIMIT 1</code> in UPDATE is MySQL syntax. PostgreSQL mein kaam nahi karta. Corrections mark nahi ho rahe the.</p>
+</div>
+
+<div class="bug critical">
+<h4>Bug 5: Cost alert wrong pricing (engine.py) — FIXED</h4>
+<p>Sonnet ka reply bhi Haiku ki rate se calculate ho raha tha ($0.80/$4.00 instead of $3.00/$15.00). Cost alerts underreporting.</p>
+</div>
+
+<h3>Known Issues (Not Fixed — Need Discussion)</h3>
+
+<div class="bug">
+<h4>Issue 1: CORS wildcard in production (main.py:132)</h4>
+<p><code>allow_origins=["*"]</code> — Security risk. Specific origins allow karo.</p>
+</div>
+
+<div class="bug">
+<h4>Issue 2: Single DB connection, no pooling (database.py:28)</h4>
+<p>Single global connection NOT thread-safe. Use <code>psycopg2.pool.ThreadedConnectionPool</code>.</p>
+</div>
+
+<div class="bug">
+<h4>Issue 3: In-memory state loss on redeploy (engine.py:52-76)</h4>
+<p>Conversations, shutup cooldowns, rate limits — all lost on Railway redeploy.</p>
+</div>
+
+<div class="bug">
+<h4>Issue 4: Settings not persisted (main.py:375)</h4>
+<p>Toggle changes (auto_reply, followup) are in-memory only. Reset after redeploy.</p>
+</div>
+
+<div class="page-break"></div>
+
+<h2>Overall Assessment</h2>
+<table>
+<tr><th>Aspect</th><th>Score</th><th>Notes</th></tr>
+<tr><td>Code Quality</td><td><span class="score score-good">7/10</span></td><td>Well-structured, good logging. main.py too large (3131 lines)</td></tr>
+<tr><td>Architecture</td><td><span class="score score-good">8/10</span></td><td>Smart: prompt caching, context selection, dual model, learning buffer</td></tr>
+<tr><td>Reliability</td><td><span class="score score-ok">6/10</span></td><td>Memory state loss, single DB conn, no pooling, thread safety</td></tr>
+</table>
+
+<h3>Priority Fixes (Recommended Order)</h3>
+<ol>
+<li>Persist settings/toggles in DB (kv_store already exists)</li>
+<li>Add DB connection pooling (psycopg2.pool)</li>
+<li>Split main.py into FastAPI routers (learning, dashboard, knowledge, settings)</li>
+<li>Add Redis for conversations/shutup state (optional — DB kv_store bhi chalega)</li>
+</ol>
+
+<h3>Verdict</h3>
+<div class="info">
+<strong>Naya project banane ki zaroorat NAHI.</strong> Architecture solid hai. 5 bugs fix ho gaye. Remaining improvements incrementally ho sakti hain.
+</div>
+
+<p style="text-align: center; color: #999; margin-top: 40px; font-size: 11px;">
+  Generated by Claude AI — 09 March 2026
+</p>
+
+</body>
+</html>

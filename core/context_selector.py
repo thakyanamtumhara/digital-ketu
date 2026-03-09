@@ -1,19 +1,21 @@
 """Smart context selector — classifies customer messages and picks only relevant knowledge.
 
 Uses keyword matching (zero API cost) to determine what the customer is asking about,
-then returns only the relevant sections of knowledge to include in the system prompt.
+then returns only the relevant sections of knowledge in ULTRA-COMPACT format.
 
-This reduces token count by ~60-70% per API call while maintaining reply quality.
+TOKEN BUDGET: Max ~1,200 tokens for knowledge context.
+Everything is compressed to one-liners. No verbose descriptions.
+This keeps cost under ₹0.50/reply even as knowledge base grows.
 """
 
 import logging
 import re
 
+from core.token_budget import estimate_tokens, truncate_to_budget, BUDGET_KNOWLEDGE_TOKENS
+
 logger = logging.getLogger(__name__)
 
 # --- Intent categories with keyword patterns ---
-# Each category maps to which knowledge sections are needed.
-
 INTENT_KEYWORDS = {
     "price_product": {
         "keywords": {
@@ -21,7 +23,7 @@ INTENT_KEYWORDS = {
             "cheap", "budget", "rs", "rupees", "rupee", "paisa", "amount",
             "bulk", "wholesale", "per piece", "discount", "offer",
         },
-        "sections": ["matched_products", "pricing_note", "bulk_discounts", "payment_terms", "relevant_faqs"],
+        "sections": ["matched_products", "pricing_note", "bulk_discounts", "payment_terms"],
     },
     "product_inquiry": {
         "keywords": {
@@ -31,7 +33,7 @@ INTENT_KEYWORDS = {
             "product", "catalogue", "catalog", "milega",
             "stock", "ready", "color", "colour", "size", "range",
         },
-        "sections": ["matched_products", "pricing_note", "bulk_discounts", "relevant_faqs"],
+        "sections": ["matched_products", "pricing_note"],
     },
     "gsm_fabric": {
         "keywords": {
@@ -39,61 +41,61 @@ INTENT_KEYWORDS = {
             "supercombed", "loopknit", "brushed", "terry", "thickness", "mota", "patla",
             "weight", "heavy", "light", "quality", "material", "kapda",
         },
-        "sections": ["gsm_guide", "fabric_features", "matched_products", "relevant_faqs"],
+        "sections": ["gsm_guide", "matched_products"],
     },
     "printing": {
         "keywords": {
             "print", "printing", "dtg", "dtf", "screen", "sublimation", "embroidery",
             "heat press", "htv", "design", "custom", "logo",
         },
-        "sections": ["printing_compatibility", "matched_products", "relevant_faqs"],
+        "sections": ["printing_compatibility", "matched_products"],
     },
     "shipping_delivery": {
         "keywords": {
             "delivery", "shipping", "dispatch", "courier", "transport", "kitne din",
             "kab milega", "track", "tracking", "porter", "rapido", "speed",
         },
-        "sections": ["shipping", "relevant_faqs"],
+        "sections": ["shipping"],
     },
     "payment": {
         "keywords": {
             "payment", "pay", "upi", "bank transfer", "neft", "imps", "cod",
             "cash on delivery", "prepaid", "online payment",
         },
-        "sections": ["payment_terms", "relevant_faqs"],
+        "sections": ["payment_terms"],
     },
     "order_how": {
         "keywords": {
             "order", "kaise karu", "how to order", "buy", "kharidna", "purchase",
             "website", "link", "checkout", "sample",
         },
-        "sections": ["company_basic", "payment_terms", "shipping", "relevant_faqs"],
+        "sections": ["company_basic", "payment_terms", "shipping"],
     },
     "dropshipping": {
         "keywords": {
             "dropship", "dropshipping", "blind", "resell", "reseller",
         },
-        "sections": ["dropshipping", "relevant_faqs"],
+        "sections": ["dropshipping"],
     },
     "location_visit": {
         "keywords": {
             "factory", "warehouse", "location", "address", "kahan", "where", "visit",
             "office", "showroom", "tiruppur", "delhi", "khanpur",
         },
-        "sections": ["company_locations", "relevant_faqs"],
+        "sections": ["company_locations"],
     },
     "return_complaint": {
         "keywords": {
             "return", "refund", "exchange", "defect", "damage", "problem", "issue",
             "complaint", "quality issue", "hole", "tear", "shrink", "color bleed",
         },
-        "sections": ["company_returns", "relevant_faqs"],
+        "sections": ["company_returns"],
     },
     "gst_invoice": {
         "keywords": {
             "gst", "invoice", "bill", "tax",
         },
-        "sections": ["gst", "relevant_faqs"],
+        "sections": ["gst"],
     },
     "greeting": {
         "keywords": {
@@ -107,11 +109,11 @@ INTENT_KEYWORDS = {
             "minimum", "moq", "kam se kam", "least", "kitne se",
             "minimum order", "kitna order",
         },
-        "sections": ["pricing_note", "relevant_faqs"],
+        "sections": ["pricing_note"],
     },
 }
 
-# Product matching keywords — maps keywords to product IDs for targeted product inclusion
+# Product matching keywords
 PRODUCT_KEYWORDS = {
     "oversize": ["oversize-210gsm", "oversize-240gsm", "oversize-180gsm"],
     "oversized": ["oversize-210gsm", "oversize-240gsm", "oversize-180gsm"],
@@ -150,18 +152,8 @@ GSM_PRODUCT_MAP = {
 
 
 def classify_message(message: str) -> dict:
-    """Classify a customer message into intent categories using keyword matching.
-
-    Returns:
-        {
-            "intents": ["price_product", "product_inquiry"],  # detected intents
-            "product_ids": ["oversize-240gsm"],  # specific products mentioned
-            "sections_needed": {"matched_products", "pricing_note", ...},  # union of all needed sections
-            "is_complex": False,  # True if we can't classify → use full context
-        }
-    """
+    """Classify a customer message into intent categories using keyword matching."""
     msg = message.strip().lower()
-    # Normalize common patterns
     msg_normalized = msg.replace("-", " ").replace("_", " ")
     words = set(re.split(r'[\s,.\-!?]+', msg_normalized))
 
@@ -169,28 +161,22 @@ def classify_message(message: str) -> dict:
     sections_needed = set()
     product_ids = set()
 
-    # 1. Match intents by keywords
     for intent, config in INTENT_KEYWORDS.items():
         keywords = config["keywords"]
-        # Check if any keyword is in the message (word-level or substring for multi-word keywords)
         matched = False
         for kw in keywords:
             if " " in kw:
-                # Multi-word keyword — check as substring
                 if kw in msg_normalized:
                     matched = True
                     break
             else:
-                # Single word — check in word set
                 if kw in words:
                     matched = True
                     break
-
         if matched:
             detected_intents.append(intent)
             sections_needed.update(config["sections"])
 
-    # 2. Match specific products
     for kw, pids in PRODUCT_KEYWORDS.items():
         if " " in kw:
             if kw in msg_normalized:
@@ -199,7 +185,6 @@ def classify_message(message: str) -> dict:
             if kw in words:
                 product_ids.update(pids)
 
-    # 3. Match GSM numbers
     gsm_matches = re.findall(r'\b(\d{3})\b', msg)
     for gsm in gsm_matches:
         if gsm in GSM_PRODUCT_MAP:
@@ -208,16 +193,12 @@ def classify_message(message: str) -> dict:
                 detected_intents.append("gsm_fabric")
                 sections_needed.update(INTENT_KEYWORDS["gsm_fabric"]["sections"])
 
-    # 4. If products were identified, ensure matched_products is in sections
     if product_ids:
         sections_needed.add("matched_products")
 
-    # 5. Determine if we can classify this
     is_complex = len(detected_intents) == 0
-
-    # If complex (unknown intent), use full context as fallback
     if is_complex:
-        logger.info(f"[ContextSelector] Could not classify: '{msg[:60]}' — using full context")
+        logger.info(f"[ContextSelector] Could not classify: '{msg[:60]}' — using minimal context")
 
     result = {
         "intents": detected_intents,
@@ -236,297 +217,292 @@ def classify_message(message: str) -> dict:
 
 
 def format_smart_context(knowledge: dict, classification: dict) -> str:
-    """Build a trimmed knowledge context based on classification results.
+    """Build ULTRA-COMPACT knowledge context within token budget.
 
-    Only includes sections that are relevant to the customer's question.
-    Falls back to MINIMAL context if classification failed (is_complex=True).
+    Everything is compressed to one-liners. Max 1,200 tokens total.
+    As knowledge grows, this function ensures we NEVER exceed the budget.
     """
     if classification["is_complex"]:
-        # Fallback — send minimal context instead of everything (saves ~10k tokens)
         return _format_minimal_context(knowledge)
 
     sections_needed = classification["sections_needed"]
     product_ids = set(classification["product_ids"])
     parts = []
 
-    # --- Company basic info (always minimal) ---
+    # --- Company basic (one-liner) ---
     if "company_basic" in sections_needed:
-        c = knowledge.get("company", {})
-        websites = c.get("websites", {})
-        parts.append(
-            f"## Company: {c.get('name', '')} (Brand: {c.get('brand', '')})\n"
-            f"- Website: {websites.get('primary', '')} | Catalog: {websites.get('catalog', '')}\n"
-            f"- B2B Wholesale Manufacturer — Factory direct, no middleman\n"
-            f"- Dispatch within minutes, MOQ 10 pcs"
-        )
+        parts.append("Sale91.com | B2B blank wears | Tiruppur factory, Delhi warehouse | MOQ 10 | Catalog: sale91.com/catalog")
 
-    # --- Matched products only ---
+    # --- Matched products (one-liner per product) ---
     if "matched_products" in sections_needed:
         products = knowledge.get("products", {})
         catalog = products.get("catalog", [])
 
         if product_ids:
-            # Only include specific matched products
             matched = [p for p in catalog if p.get("id") in product_ids]
         else:
-            # No specific product — include all (rare, usually product_inquiry without specifics)
             matched = catalog
 
         if matched:
             product_lines = []
-            for item in matched:
-                all_colors = item.get("colors", [])
-                # Show max 8 colors + count to save tokens (colors can have 15-25 items)
-                if len(all_colors) > 8:
-                    colors = ", ".join(all_colors[:8]) + f" +{len(all_colors)-8} more"
-                else:
-                    colors = ", ".join(all_colors)
-                sizes = ", ".join(item.get("sizes", []))
+            for item in matched[:6]:  # Max 6 products to cap tokens
                 if "bulk_price" in item:
-                    price_str = f"Rs {item['bulk_price']}/pc (bulk) | Rs {item['sample_price']}/pc (sample)"
+                    price_str = f"₹{item['bulk_price']}bulk/₹{item['sample_price']}sample"
                 else:
                     price_str = item.get("price_range", "N/A")
+                # Include color names (max 5 + count) — customers ask "kaun se color hai"
+                all_colors = item.get("colors", [])
+                if len(all_colors) > 5:
+                    colors_str = ", ".join(all_colors[:5]) + f" +{len(all_colors)-5}more"
+                else:
+                    colors_str = ", ".join(all_colors) if all_colors else "N/A"
                 product_lines.append(
-                    f"### {item['name']} ({item['gsm']} GSM)\n"
-                    f"  Price: {price_str}\n"
-                    f"  Fabric: {item.get('fabric', 'N/A')}\n"
-                    f"  MOQ: {item.get('moq', 10)} pcs | Sizes: {sizes}\n"
-                    f"  Colors ({len(all_colors)}): {colors}"
+                    f"- {item['name']} | {item['gsm']}GSM | {price_str} | {item.get('fabric', '')} | Colors: {colors_str}"
                 )
-            parts.append(f"## Products ({len(matched)} items)\n" + "\n\n".join(product_lines))
+            parts.append("PRODUCTS:\n" + "\n".join(product_lines))
 
-    # --- Pricing note ---
+    # --- Pricing note (one-liner) ---
     if "pricing_note" in sections_needed:
         products = knowledge.get("products", {})
         price_note = products.get("price_note", "")
         if price_note:
-            parts.append(f"## Pricing Note: {price_note}")
+            parts.append(f"PRICING: {price_note}")
 
-    # --- Bulk discounts ---
+    # --- Bulk discounts (one-liner) ---
     if "bulk_discounts" in sections_needed:
         products = knowledge.get("products", {})
         discounts = products.get("bulk_discounts", {})
         if discounts:
-            d_lines = [f"- {k}: {v}" for k, v in discounts.items()]
-            parts.append("## Discounts\n" + "\n".join(d_lines))
+            d_str = " | ".join(f"{k}: {v}" for k, v in discounts.items())
+            parts.append(f"DISCOUNTS: {d_str}")
 
-    # --- GSM guide ---
+    # --- GSM guide (compact) ---
     if "gsm_guide" in sections_needed:
         products = knowledge.get("products", {})
         gsm_guide = products.get("gsm_guide", {})
         if gsm_guide:
-            gsm_lines = [f"- {gsm} GSM: {desc}" for gsm, desc in gsm_guide.items()]
-            parts.append("## GSM Guide\n" + "\n".join(gsm_lines))
+            gsm_str = " | ".join(f"{gsm}GSM={desc}" for gsm, desc in gsm_guide.items())
+            parts.append(f"GSM: {gsm_str}")
 
-    # --- Fabric features ---
-    if "fabric_features" in sections_needed:
-        products = knowledge.get("products", {})
-        features = products.get("fabric_features", {})
-        if features:
-            f_lines = [f"- {k}: {v}" for k, v in features.items()]
-            parts.append("## Fabric Features\n" + "\n".join(f_lines))
-
-    # --- Printing compatibility ---
+    # --- Printing compatibility (compact) ---
     if "printing_compatibility" in sections_needed:
         products = knowledge.get("products", {})
         printing = products.get("printing_compatibility", {})
         if printing:
-            p_lines = [f"- {k}: {v}" for k, v in printing.items()]
-            parts.append("## Printing Compatibility\n" + "\n".join(p_lines))
+            p_str = " | ".join(f"{k}: {v}" for k, v in printing.items())
+            parts.append(f"PRINTING: {p_str}")
 
-    # --- Payment terms ---
+    # --- Payment terms (one-liner) ---
     if "payment_terms" in sections_needed:
         c = knowledge.get("company", {})
         pt = c.get("payment_terms", {})
         if pt:
-            parts.append(
-                f"## Payment Terms\n"
-                f"- Policy: {pt.get('policy', '100% Prepaid')}\n"
-                f"- Modes: {', '.join(pt.get('modes', []))}\n"
-                f"- Website discount: {pt.get('website_discount', '')}"
-            )
+            modes = ", ".join(pt.get("modes", []))
+            parts.append(f"PAYMENT: {pt.get('policy', '100% Prepaid')} | {modes} | Website pe ₹2/pc discount")
 
-    # --- Shipping ---
+    # --- Shipping (one-liner) ---
     if "shipping" in sections_needed:
         c = knowledge.get("company", {})
         s = c.get("shipping", {})
         if s:
             delivery = s.get("delivery_time", {})
-            parts.append(
-                f"## Shipping\n"
-                f"- Speed: {s.get('dispatch_speed', 'Dispatch within minutes')}\n"
-                f"- Delhi NCR: {delivery.get('delhi_ncr', '1-2 hours')}\n"
-                f"- PAN India: {delivery.get('pan_india', '1-3 days')}"
-            )
+            parts.append(f"SHIPPING: Dispatch within minutes | Delhi NCR 1-2hrs | PAN India 1-3 days")
 
-    # --- Dropshipping ---
+    # --- Dropshipping (one-liner) ---
     if "dropshipping" in sections_needed:
-        c = knowledge.get("company", {})
-        ds = c.get("dropshipping", {})
-        if ds:
-            parts.append(
-                f"## Dropshipping\n"
-                f"- {ds.get('type', 'Zero-contact blind dropshipping')}\n"
-                f"- {ds.get('description', '')}\n"
-                f"- Setup fee: {ds.get('setup_fee', 'None')}"
-            )
+        parts.append("DROPSHIPPING: Zero-contact blind dropshipping, no branding, no setup fee, no monthly charge")
 
-    # --- Company locations ---
+    # --- Locations (one-liner) ---
     if "company_locations" in sections_needed:
-        c = knowledge.get("company", {})
-        locs = c.get("locations", {})
-        if locs:
-            factory = locs.get("factory", {})
-            warehouse = locs.get("warehouse", {})
-            parts.append(
-                f"## Locations\n"
-                f"- Factory: {factory.get('city', '')}, {factory.get('state', '')} — {factory.get('description', '')}\n"
-                f"- Warehouse: {warehouse.get('city', '')} ({warehouse.get('area', '')}) — {warehouse.get('description', '')}"
-            )
+        parts.append("LOCATIONS: Factory=Tiruppur,TN (no visit) | Warehouse=Khanpur,South Delhi (pickup Mon-Sat 10-6, Sun 11-4)")
 
-    # --- Returns ---
+    # --- Returns (one-liner) ---
     if "company_returns" in sections_needed:
-        c = knowledge.get("company", {})
-        returns = c.get("returns", {})
-        if returns:
-            parts.append(
-                f"## Returns\n"
-                f"- {returns.get('policy', '')}\n"
-                f"- {returns.get('guarantee', '')}\n"
-                f"- {returns.get('note', '')}"
-            )
+        parts.append("RETURNS: Manufacturing defect pe replacement (photo bhejo) | No shrinkage, no color bleeding guarantee")
 
-    # --- GST ---
+    # --- GST (one-liner) ---
     if "gst" in sections_needed:
-        c = knowledge.get("company", {})
-        gst = c.get("gst", {})
-        if gst:
-            parts.append(f"## GST: {gst.get('rate', '5%')} — {gst.get('note', '')}")
+        parts.append("GST: 5% extra on all prices | GST invoice har order ke saath")
 
-    # --- Relevant FAQs only ---
-    if "relevant_faqs" in sections_needed:
-        faqs = knowledge.get("faq", {}).get("faqs", [])
-        intents = classification["intents"]
-        relevant_faqs = _pick_relevant_faqs(faqs, intents, classification)
+    # --- PICK relevant FAQs (max 2, keyword-matched) ---
+    # Not ALL FAQs — only the ones matching this customer's question.
+    # As FAQs grow to 100+, we still only send 2 most relevant ones.
+    faqs = knowledge.get("faq", {}).get("faqs", [])
+    if faqs:
+        relevant_faqs = _pick_relevant_faqs(faqs, classification)
         if relevant_faqs:
-            faq_lines = [f"Q: {f['question']}\nA: {f['answer']}" for f in relevant_faqs]
-            parts.append("## Relevant Q&A\n" + "\n\n".join(faq_lines))
+            faq_lines = [f"Q: {f['question']} A: {f['answer']}" for f in relevant_faqs]
+            parts.append("FAQ:\n" + "\n".join(faq_lines))
 
-    # --- Style rules (always include — small, important for tone) ---
-    if "style" in knowledge:
-        s = knowledge["style"]
-        parts.append("## Reply Style\n" + "\n".join(f"- {r}" for r in s.get("rules", [])))
+    # --- PICK relevant learned patterns (max 3, keyword-matched) ---
+    # As patterns grow to 200+, we still only send the 3 most relevant.
+    style = knowledge.get("style", {})
+    learned_patterns = style.get("learned_patterns", [])
+    if learned_patterns:
+        relevant_patterns = _pick_relevant_patterns(learned_patterns, classification)
+        if relevant_patterns:
+            parts.append("LEARNED: " + " | ".join(relevant_patterns))
 
-        # Include learned patterns (important for evolution)
-        learned_patterns = s.get("learned_patterns", [])
-        if learned_patterns:
-            import json
-            parts.append("## Learned Patterns\n" + "\n".join(
-                f"- {p}" if isinstance(p, str) else f"- {json.dumps(p, ensure_ascii=False)}"
-                for p in learned_patterns
-            ))
+    # --- PICK relevant evolved rules (max 2) ---
+    prompt_data = knowledge.get("prompt", {})
+    evolved_rules = prompt_data.get("evolved_rules", [])
+    if evolved_rules:
+        relevant_rules = _pick_relevant_patterns(evolved_rules, classification)
+        if relevant_rules:
+            parts.append("EXTRA RULES: " + " | ".join(relevant_rules))
 
-    # --- Skip: full example conversations, full YouTube knowledge, full avoid list ---
-    # These are the biggest token hogs and least useful per-message
+    context = "\n".join(parts)
 
-    return "\n\n".join(parts)
+    # HARD CAP — truncate if over budget (should rarely happen with compact format)
+    estimated = estimate_tokens(context)
+    if estimated > BUDGET_KNOWLEDGE_TOKENS:
+        context = truncate_to_budget(context, BUDGET_KNOWLEDGE_TOKENS)
+        logger.warning(f"[ContextSelector] Knowledge context truncated: {estimated} → ~{BUDGET_KNOWLEDGE_TOKENS} tokens")
+    else:
+        logger.info(f"[ContextSelector] Knowledge context: ~{estimated} tokens (budget: {BUDGET_KNOWLEDGE_TOKENS})")
 
-
-def _pick_relevant_faqs(faqs: list, intents: list, classification: dict) -> list:
-    """Pick only FAQs relevant to the detected intents. Max 5."""
-    # Map intents to FAQ keyword groups
-    intent_faq_keywords = {
-        "price_product": {"rate", "price", "kitna", "oversized", "round neck", "hoodie", "polo", "sweatshirt", "shorts", "kids", "acid", "varsity", "boxy", "sublimation"},
-        "product_inquiry": {"oversized", "round neck", "hoodie", "polo", "sweatshirt", "shorts", "kids", "acid", "varsity", "boxy", "sublimation", "available", "sample"},
-        "gsm_fabric": {"gsm", "bio-wash", "biowash", "thickness", "fabric"},
-        "printing": {"print", "dtg", "dtf", "screen", "sublimation", "embroidery"},
-        "shipping_delivery": {"delivery", "shipping", "dispatch"},
-        "payment": {"cod", "payment", "pay"},
-        "order_how": {"order", "sample", "website", "discount"},
-        "dropshipping": {"dropship", "blind", "resell"},
-        "location_visit": {"factory", "warehouse", "location", "address"},
-        "return_complaint": {"return", "refund", "defect", "quality issue"},
-        "gst_invoice": {"gst", "invoice", "bill", "tax"},
-        "moq": {"minimum", "moq", "kam se kam"},
-    }
-
-    # Collect relevant FAQ keywords from all detected intents
-    relevant_kw = set()
-    for intent in intents:
-        relevant_kw.update(intent_faq_keywords.get(intent, set()))
-
-    # Score FAQs by keyword overlap
-    scored = []
-    for faq in faqs:
-        if faq.get("status") == "inactive":
-            continue
-        faq_keywords = set(kw.lower() for kw in faq.get("keywords", []))
-        overlap = len(faq_keywords & relevant_kw)
-        if overlap > 0:
-            scored.append((overlap, faq))
-
-    # Sort by relevance, take top 5
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [faq for _, faq in scored[:5]]
+    return context
 
 
 def _format_minimal_context(knowledge: dict) -> str:
-    """Minimal context fallback — used when we can't classify the message.
+    """Ultra-minimal context for unclassified messages.
 
-    Instead of sending EVERYTHING (21 products, all FAQs, examples, YouTube knowledge),
-    send only essential business info. The AI already has personality/rules in the
-    system prompt — it just needs basic company + product overview to handle unknown intents.
-    This saves ~10,000-15,000 tokens per unclassified message.
+    Just product price list + company one-liner. ~400 tokens max.
     """
     parts = []
 
-    # Company basics
-    c = knowledge.get("company", {})
-    if c:
-        websites = c.get("websites", {})
-        parts.append(
-            f"## Company: {c.get('name', '')} (Brand: {c.get('brand', '')})\n"
-            f"- Website: {websites.get('primary', '')} | Catalog: {websites.get('catalog', '')}\n"
-            f"- B2B Wholesale Manufacturer — Factory direct, no middleman\n"
-            f"- Tiruppur factory, Delhi warehouse\n"
-            f"- Dispatch within minutes, MOQ 10 pcs"
-        )
+    parts.append("Sale91.com | B2B blank wears manufacturer | Tiruppur factory, Delhi warehouse | MOQ 10 | 100% prepaid | Dispatch within minutes")
 
-    # Product summary (just names + prices, NOT full details with all colors)
+    # Product price list — one-liner per product, no details
     products = knowledge.get("products", {})
     catalog = products.get("catalog", [])
     if catalog:
         product_lines = []
         for item in catalog:
             if "bulk_price" in item:
-                price_str = f"Rs {item['bulk_price']}/pc"
+                price_str = f"₹{item['bulk_price']}"
             else:
                 price_str = item.get("price_range", "N/A")
-            product_lines.append(f"- {item['name']} ({item['gsm']} GSM) — {price_str}")
-        parts.append("## Products (quick reference)\n" + "\n".join(product_lines))
+            product_lines.append(f"- {item['name']} {item['gsm']}GSM {price_str}")
+        parts.append("PRODUCTS:\n" + "\n".join(product_lines))
 
-    # Payment & shipping basics
-    pt = c.get("payment_terms", {})
-    if pt:
-        parts.append(f"## Payment: {pt.get('policy', '100% Prepaid')} | Modes: {', '.join(pt.get('modes', []))}")
+    context = "\n".join(parts)
 
-    s = c.get("shipping", {})
-    if s:
-        parts.append(f"## Shipping: {s.get('dispatch_speed', 'Dispatch within minutes')}")
+    estimated = estimate_tokens(context)
+    if estimated > BUDGET_KNOWLEDGE_TOKENS:
+        context = truncate_to_budget(context, BUDGET_KNOWLEDGE_TOKENS)
 
-    # Style rules (small, important)
-    if "style" in knowledge:
-        style = knowledge["style"]
-        parts.append("## Reply Style\n" + "\n".join(f"- {r}" for r in style.get("rules", [])))
-
-    return "\n\n".join(parts)
+    logger.info(f"[ContextSelector] Minimal context: ~{estimated} tokens")
+    return context
 
 
-def _format_full_context(knowledge: dict) -> str:
-    """Full context fallback — same as the original format_context().
+def _pick_relevant_faqs(faqs: list, classification: dict) -> list:
+    """Pick only FAQs relevant to the customer's message. Max 2.
 
-    Used when we can't classify the message (is_complex=True).
+    Uses keyword overlap between FAQ keywords and the detected intents/products.
+    As FAQs grow to 100+, this ensures we only send 2 most relevant.
     """
-    # Import the original formatter as fallback
+    # Build a keyword set from classification
+    intents = classification.get("intents", [])
+    product_ids = classification.get("product_ids", [])
+
+    # Map intents to FAQ-matching keywords
+    intent_keywords = {
+        "price_product": {"rate", "price", "kitna", "discount", "bulk"},
+        "product_inquiry": {"available", "sample", "stock"},
+        "gsm_fabric": {"gsm", "biowash", "fabric", "thickness"},
+        "printing": {"print", "dtg", "dtf", "screen", "sublimation", "embroidery"},
+        "shipping_delivery": {"delivery", "shipping", "dispatch"},
+        "payment": {"cod", "payment", "prepaid"},
+        "order_how": {"order", "sample", "website"},
+        "dropshipping": {"dropship", "blind", "resell"},
+        "location_visit": {"factory", "warehouse", "location", "address"},
+        "return_complaint": {"return", "refund", "defect"},
+        "gst_invoice": {"gst", "invoice", "tax"},
+        "moq": {"minimum", "moq"},
+    }
+
+    # Also add product names as matching keywords
+    product_keywords = set()
+    for pid in product_ids:
+        # "hoodie-320gsm" → {"hoodie", "320gsm"}
+        product_keywords.update(pid.replace("-", " ").split())
+
+    search_keywords = product_keywords.copy()
+    for intent in intents:
+        search_keywords.update(intent_keywords.get(intent, set()))
+
+    if not search_keywords:
+        return []
+
+    # Score FAQs by keyword overlap
+    scored = []
+    for faq in faqs:
+        if faq.get("status") == "inactive":
+            continue
+        faq_kw = set(kw.lower() for kw in faq.get("keywords", []))
+        # Also check FAQ question text for product keywords
+        q_lower = faq.get("question", "").lower()
+        overlap = len(faq_kw & search_keywords)
+        # Bonus if product name appears in FAQ question
+        for pk in product_keywords:
+            if pk in q_lower:
+                overlap += 2
+        if overlap > 0:
+            scored.append((overlap, faq))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [faq for _, faq in scored[:2]]  # Max 2 FAQs
+
+
+def _pick_relevant_patterns(patterns: list, classification: dict) -> list:
+    """Pick learned patterns relevant to the customer's message. Max 4.
+
+    [Correction]-tagged patterns (from Ketu's direct edits) are ALWAYS included
+    because they represent the strongest learning signal.
+    Other patterns are keyword-matched against the classification.
+    """
+    if not patterns:
+        return []
+
+    intents = set(classification.get("intents", []))
+    product_ids = classification.get("product_ids", [])
+
+    # Separate [Correction] patterns (always include) from others (keyword-match)
+    correction_patterns = []
+    other_patterns = []
+    for p in patterns:
+        text = p if isinstance(p, str) else str(p)
+        if "[Correction]" in text:
+            correction_patterns.append(text[:150])
+        else:
+            other_patterns.append(text)
+
+    # Always include latest 2 correction patterns — most recent = most relevant
+    result = correction_patterns[-2:]
+
+    # Keyword-match remaining patterns
+    search_terms = set()
+    for pid in product_ids:
+        search_terms.update(pid.replace("-", " ").split())
+    for intent in intents:
+        search_terms.update(intent.replace("_", " ").split())
+
+    if search_terms:
+        scored = []
+        for text in other_patterns:
+            text_lower = text.lower()
+            score = sum(1 for term in search_terms if term in text_lower)
+            if score > 0:
+                scored.append((score, text[:150]))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        result += [text for _, text in scored[:2]]  # Add 2 keyword-matched
+
+    return result[:4]  # Max 4 total
+
+
+# Keep for backwards compatibility but should not be used in normal flow
+def _format_full_context(knowledge: dict) -> str:
+    """Full context fallback — DEPRECATED, kept for backwards compat only."""
     from core.knowledge import format_context
     return format_context()

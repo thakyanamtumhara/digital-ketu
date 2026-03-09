@@ -19,22 +19,51 @@ def load_knowledge() -> dict:
 
     knowledge = {}
 
-    # Try DB first, fall back to JSON files
+    # Load JSON files first (always — they contain learned patterns from corrections)
+    for file in KNOWLEDGE_DIR.glob("*.json"):
+        if file.name == "activity_log.json":
+            continue
+        try:
+            with open(file, "r", encoding="utf-8") as f:
+                knowledge[file.stem] = json.load(f)
+        except Exception:
+            pass
+
+    # Overlay DB data — DB is source of truth for catalog/products,
+    # but learned fields (learned_patterns, evolved_rules, etc.) must be MERGED
+    # not overwritten, because DB writes can fail silently.
     from core.database import is_db_available, load_all_knowledge_from_db
     if is_db_available():
         db_data = load_all_knowledge_from_db()
         if db_data:
-            knowledge = db_data
-            logger.debug("Knowledge loaded from DB")
+            _LEARNED_LIST_FIELDS = (
+                "learned_patterns", "evolved_rules", "evolved_traits",
+                "evolved_phrases", "example_conversations",
+            )
+            for key, db_value in db_data.items():
+                json_value = knowledge.get(key)
+                if json_value and isinstance(db_value, dict) and isinstance(json_value, dict):
+                    # Merge: DB overwrites, but combine learned list fields
+                    merged = {**json_value, **db_value}
+                    for lf in _LEARNED_LIST_FIELDS:
+                        json_list = json_value.get(lf, [])
+                        db_list = db_value.get(lf, [])
+                        if json_list or db_list:
+                            seen = set()
+                            combined = []
+                            for item in db_list + json_list:
+                                key_str = str(item)[:100]
+                                if key_str not in seen:
+                                    seen.add(key_str)
+                                    combined.append(item)
+                            merged[lf] = combined
+                    knowledge[key] = merged
+                else:
+                    knowledge[key] = db_value
+            logger.debug("Knowledge merged from DB + JSON files")
 
-    # Fall back to JSON files (or fill gaps)
     if not knowledge:
-        for file in KNOWLEDGE_DIR.glob("*.json"):
-            if file.name == "activity_log.json":
-                continue
-            with open(file, "r", encoding="utf-8") as f:
-                knowledge[file.stem] = json.load(f)
-        logger.debug("Knowledge loaded from JSON files")
+        logger.warning("No knowledge loaded from DB or JSON files")
 
     # Load learned knowledge
     learned_knowledge = _load_learned_knowledge()

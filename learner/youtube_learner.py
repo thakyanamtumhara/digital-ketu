@@ -3,8 +3,7 @@ import logging
 import re
 
 import httpx
-from anthropic import Anthropic
-
+from core.cloud_payload_log import get_anthropic_client
 from core.config import settings, KNOWLEDGE_DIR
 
 logger = logging.getLogger(__name__)
@@ -173,7 +172,7 @@ def get_transcript(video_url: str) -> str | None:
 
 def extract_knowledge_from_transcript(transcript: str, video_title: str = "") -> dict:
     """Use Claude to extract business knowledge from a YouTube video transcript."""
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = get_anthropic_client()
 
     prompt = f"""Analyze this YouTube video transcript from Ketu (owner of Sale91.com / Own Knitted Blank Wears — a B2B plain t-shirt manufacturer).
 
@@ -182,18 +181,15 @@ Transcript:
 {transcript[:5000]}
 
 Extract the following (in JSON format):
-1. "product_info": Any product details, specifications, new products mentioned
-2. "pricing": Any prices mentioned
-3. "business_knowledge": Business tips, market info, industry knowledge shared
-4. "faqs_covered": Any common questions answered in the video
-5. "key_points": 3-5 main takeaways from this video
+1. "business_knowledge": Business tips, market info, industry knowledge shared
+2. "faqs_covered": Any common questions answered in the video
 
 Return ONLY valid JSON."""
 
     try:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=1200,
+            max_tokens=800,
             messages=[{"role": "user", "content": prompt}],
         )
 

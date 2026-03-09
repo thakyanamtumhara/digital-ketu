@@ -24,6 +24,13 @@ _audio_stats = {
     "today_failed": 0,
     "today_date": "",
     "recent_transcriptions": [],  # Last 20 transcription previews
+    # Enhanced tracking
+    "knowledge_learned": 0,       # Voice notes that added to knowledge
+    "replied_from_voice": 0,      # Voice messages that got AI replies
+    "top_voice_customers": {},     # phone_last4 -> count
+    "avg_transcription_length": 0, # Average text length
+    "total_text_length": 0,        # Running total for average
+    "languages_detected": {},      # language -> count
 }
 _audio_stats_loaded = False
 
@@ -76,12 +83,29 @@ def _track_transcription(text: str, customer_phone: str = "", source: str = "wha
     _audio_stats["total_transcribed"] += 1
     _audio_stats["today_transcribed"] += 1
 
+    # Track customer voice usage
+    if customer_phone:
+        key = customer_phone[-4:] if len(customer_phone) >= 4 else customer_phone
+        top = _audio_stats.get("top_voice_customers", {})
+        top[key] = top.get(key, 0) + 1
+        _audio_stats["top_voice_customers"] = top
+
+    # Track average transcription length
+    total_len = _audio_stats.get("total_text_length", 0) + len(text)
+    _audio_stats["total_text_length"] = total_len
+    _audio_stats["avg_transcription_length"] = round(total_len / _audio_stats["total_transcribed"])
+
+    # Track that this voice got a reply
+    if source == "whatsapp":
+        _audio_stats["replied_from_voice"] = _audio_stats.get("replied_from_voice", 0) + 1
+
     _audio_stats["recent_transcriptions"].append({
         "text_preview": text[:100],
         "phone_last4": customer_phone[-4:] if customer_phone else "",
         "source": source,
         "time": datetime.now(ist).strftime("%I:%M %p"),
         "date": _audio_stats["today_date"],
+        "text_length": len(text),
     })
     # Keep only last 20
     _audio_stats["recent_transcriptions"] = _audio_stats["recent_transcriptions"][-20:]
@@ -98,17 +122,58 @@ def _track_transcription_failure():
     _save_audio_stats()
 
 
+def track_knowledge_from_voice():
+    """Track that a voice note contributed to knowledge learning."""
+    _load_audio_stats()
+    _audio_stats["knowledge_learned"] = _audio_stats.get("knowledge_learned", 0) + 1
+    _save_audio_stats()
+
+
 def get_audio_stats() -> dict:
-    """Get audio transcription stats for dashboard."""
+    """Get audio transcription stats for dashboard — rich insights."""
     _load_audio_stats()
     _reset_today_if_needed()
+
+    total = _audio_stats["total_transcribed"]
+    failed = _audio_stats["total_failed"]
+    success_rate = round((total / (total + failed)) * 100, 1) if (total + failed) > 0 else 0
+
+    # Top voice customers (sorted by count)
+    top_customers = sorted(
+        _audio_stats.get("top_voice_customers", {}).items(),
+        key=lambda x: x[1], reverse=True,
+    )[:5]
+
     return {
-        "total_transcribed": _audio_stats["total_transcribed"],
-        "total_failed": _audio_stats["total_failed"],
+        "total_transcribed": total,
+        "total_failed": failed,
         "today_transcribed": _audio_stats["today_transcribed"],
         "today_failed": _audio_stats["today_failed"],
         "recent_transcriptions": _audio_stats["recent_transcriptions"][-10:],
+        # Enhanced stats
+        "knowledge_learned": _audio_stats.get("knowledge_learned", 0),
+        "replied_from_voice": _audio_stats.get("replied_from_voice", 0),
+        "success_rate": success_rate,
+        "avg_text_length": _audio_stats.get("avg_transcription_length", 0),
+        "top_voice_customers": [{"phone_last4": p, "count": c} for p, c in top_customers],
+        "setup_status": "active" if settings.openai_api_key else "needs_api_key",
     }
+
+
+async def download_audio_from_url(audio_url: str) -> bytes | None:
+    """Download audio from a direct URL (e.g., from wwbun's hosted file)."""
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(audio_url)
+            resp.raise_for_status()
+            if len(resp.content) < 100:
+                logger.error(f"Audio file too small ({len(resp.content)} bytes) from URL")
+                return None
+            logger.info(f"Downloaded audio from URL: {len(resp.content)} bytes")
+            return resp.content
+    except Exception as e:
+        logger.error(f"Audio download from URL failed: {e}")
+        return None
 
 
 async def download_whatsapp_media(media_id: str) -> bytes | None:
@@ -187,29 +252,56 @@ async def transcribe_audio(audio_bytes: bytes, language: str = "hi") -> str | No
         return None
 
 
-async def process_whatsapp_audio(
-    media_id: str,
+async def process_audio_from_any_source(
+    media_id: str = "",
+    audio_url: str = "",
+    audio_base64: str = "",
     language: str = "hi",
     customer_phone: str = "",
+    source: str = "whatsapp",
 ) -> str | None:
-    """Full pipeline: download WhatsApp audio → transcribe → return text.
+    """Download audio from any source (URL, base64, or WhatsApp media_id) → transcribe.
 
-    Audio bytes are NOT stored — only returned as text.
-    Tracks transcription stats for dashboard visibility.
+    Priority: audio_base64 > audio_url > media_id
     """
-    audio_bytes = await download_whatsapp_media(media_id)
+    import base64
+
+    audio_bytes: bytes | None = None
+
+    if audio_base64:
+        try:
+            audio_bytes = base64.b64decode(audio_base64)
+            logger.info(f"Got audio from base64: {len(audio_bytes)} bytes")
+        except Exception as e:
+            logger.error(f"Invalid base64 audio: {e}")
+    elif audio_url:
+        audio_bytes = await download_audio_from_url(audio_url)
+    elif media_id:
+        audio_bytes = await download_whatsapp_media(media_id)
+
     if not audio_bytes:
         _track_transcription_failure()
         return None
 
     text = await transcribe_audio(audio_bytes, language=language)
     if text:
-        _track_transcription(text, customer_phone=customer_phone, source="whatsapp")
-
-        # Track Whisper cost
+        _track_transcription(text, customer_phone=customer_phone, source=source)
         from core.cost_tracker import track_whisper_cost
-        # Estimate audio duration from file size (OGG ~16kbps for voice)
-        estimated_seconds = len(audio_bytes) / 2000  # rough estimate
-        track_whisper_cost(duration_seconds=estimated_seconds, source="whatsapp-audio")
+        estimated_seconds = len(audio_bytes) / 2000
+        track_whisper_cost(duration_seconds=estimated_seconds, source=f"{source}-audio")
 
     return text
+
+
+async def process_whatsapp_audio(
+    media_id: str,
+    language: str = "hi",
+    customer_phone: str = "",
+) -> str | None:
+    """Full pipeline: download WhatsApp audio → transcribe → return text."""
+    return await process_audio_from_any_source(
+        media_id=media_id,
+        language=language,
+        customer_phone=customer_phone,
+        source="whatsapp",
+    )

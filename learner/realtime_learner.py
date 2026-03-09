@@ -15,7 +15,7 @@ import threading
 from collections import deque
 from datetime import datetime, timezone, timedelta
 
-from anthropic import Anthropic
+from core.cloud_payload_log import get_anthropic_client
 
 from core.config import settings, KNOWLEDGE_DIR
 
@@ -74,13 +74,16 @@ def buffer_conversation(
     Called after every AI reply. When buffer hits threshold,
     triggers batch analysis. Junk messages are filtered out
     before buffering to keep learning data high-quality.
+
+    Conversations from customers who later bought get priority=high,
+    making them more valuable for learning what converts.
     """
     global _conversation_count
 
     _load_buffer_from_db()
 
     # Filter out junk messages — no point learning from "ok", "hmm", emojis etc.
-    from learner.chat_learner import is_junk_message
+    from learner.chat_learner import is_junk_message, is_media_only_message, has_business_intent
     if is_junk_message(customer_message) and is_junk_message(ai_reply):
         logger.debug(f"[Buffer] Skipped junk pair: '{customer_message[:30]}' / '{ai_reply[:30]}'")
         return
@@ -89,6 +92,32 @@ def buffer_conversation(
     if is_junk_message(customer_message):
         logger.debug(f"[Buffer] Skipped junk customer msg: '{customer_message[:30]}'")
         return
+    # If AI reply is media-only ([Image], [Document]), skip — can't learn text from media
+    if is_media_only_message(ai_reply):
+        logger.debug(f"[Buffer] Skipped media-only reply: '{ai_reply[:30]}'")
+        return
+    # If customer sent media-only (image/document) and AI just acknowledged, skip
+    if is_media_only_message(customer_message):
+        logger.debug(f"[Buffer] Skipped media-only customer msg: '{customer_message[:30]}'")
+        return
+    # Only buffer conversations with business intent — skip random chit-chat
+    if not has_business_intent(customer_message):
+        logger.debug(f"[Buffer] Skipped no-business-intent: '{customer_message[:30]}'")
+        return
+
+    # Check if this customer already bought — conversations that led to sales
+    # are the most valuable learning data (priority=high)
+    priority = "normal"
+    if customer_phone:
+        try:
+            from core.customer_memory import get_profile, STAGE_BOUGHT, STAGE_REPEAT
+            profile = get_profile(customer_phone)
+            stage = profile.get("stage", "new")
+            if stage in (STAGE_BOUGHT, STAGE_REPEAT):
+                priority = "high"
+                logger.info(f"[Buffer] HIGH priority pair from buyer {customer_phone[-4:]}")
+        except Exception:
+            pass
 
     _conversation_buffer.append({
         "customer": customer_message,
@@ -96,6 +125,7 @@ def buffer_conversation(
         "name": customer_name,
         "phone_last4": customer_phone[-4:] if customer_phone else "",
         "time": datetime.now(IST).strftime("%I:%M %p"),
+        "priority": priority,
     })
     _conversation_count += 1
 
@@ -126,15 +156,35 @@ def _batch_learn_from_conversations():
         if len(conversations) < 5:
             return
 
-        client = Anthropic(api_key=settings.anthropic_api_key)
+        client = get_anthropic_client()
+
+        # Prioritize conversations from buyers — these are the most valuable
+        # because they show what messaging style converts customers to sales
+        high_priority = [c for c in conversations if c.get("priority") == "high"]
+        normal = [c for c in conversations if c.get("priority") != "high"]
+
+        # Include ALL high-priority (buyer) conversations + fill rest with normal
+        # This ensures buyer conversations are always analyzed
+        max_convos = 20
+        selected = high_priority[:max_convos]
+        remaining_slots = max_convos - len(selected)
+        if remaining_slots > 0:
+            selected.extend(normal[-remaining_slots:])
+
+        if not selected:
+            selected = conversations[-max_convos:]
+
+        buyer_count = len([c for c in selected if c.get("priority") == "high"])
 
         conv_text = "\n".join(
-            f"Customer ({c['name'] or c['phone_last4']}): {c['customer']}\n"
+            f"Customer ({c['name'] or c['phone_last4']}){' [BUYER]' if c.get('priority') == 'high' else ''}: {c['customer']}\n"
             f"Digital Ketu: {c['reply']}"
-            for c in conversations[-20:]  # Last 20 conversations
+            for c in selected
         )
 
         prompt = f"""Analyze these recent conversations between customers and Digital Ketu (AI twin of Ketu, a t-shirt manufacturer).
+
+{f"IMPORTANT: {buyer_count} conversations are from customers who BOUGHT (marked [BUYER]). Pay EXTRA attention to these — learn what messaging style, tone, and answers led to successful sales." if buyer_count > 0 else ""}
 
 Conversations:
 {conv_text}
@@ -146,6 +196,8 @@ Extract (JSON only):
    Format: [{{"customer_asked": "...", "ai_replied": "...", "issue": "..."}}]
 3. "hot_topics": Top 3 topics customers are asking about right now
    Format: ["topic1", "topic2", "topic3"]
+4. "sales_patterns": What reply patterns/phrases appeared in conversations that led to a sale (from [BUYER] conversations only)
+   Format: [{{"pattern": "...", "example": "..."}}] or []
 
 Return ONLY valid JSON. If nothing notable, return empty arrays."""
 
@@ -214,6 +266,35 @@ Return ONLY valid JSON. If nothing notable, return empty arrays."""
                     items_count=0,
                 )
 
+            # Learn sales patterns from buyer conversations → style patterns
+            sales_patterns = analysis.get("sales_patterns", [])
+            if sales_patterns:
+                from learner.chat_learner import apply_knowledge_updates
+                from core.knowledge import invalidate_cache
+                from core.activity_log import log_activity
+
+                style_patterns = [
+                    f"[Sales] {sp['pattern']}" for sp in sales_patterns
+                    if isinstance(sp, dict) and sp.get("pattern")
+                ]
+                if style_patterns:
+                    result = apply_knowledge_updates({"style_patterns": style_patterns})
+                    if result.get("count", 0) > 0:
+                        invalidate_cache()
+                        log_activity(
+                            source="realtime-learner",
+                            action="sales-patterns",
+                            details={
+                                "patterns_learned": [sp.get("pattern", "") for sp in sales_patterns[:5]],
+                                "from_buyer_conversations": buyer_count,
+                            },
+                            items_count=result.get("count", 0),
+                        )
+                        logger.info(
+                            f"Realtime learner: Learned {result['count']} sales patterns "
+                            f"from {buyer_count} buyer conversations"
+                        )
+
     except Exception as e:
         logger.error(f"Realtime conversation learning error: {e}")
     finally:
@@ -221,6 +302,191 @@ Return ONLY valid JSON. If nothing notable, return empty arrays."""
 
 
 # --- Correction Learning ---
+
+# Track correction patterns in DB — when same mistake type repeats 3+ times,
+# auto-generate a stronger rule to prevent it permanently
+_CORRECTION_PATTERN_KEY = "correction_patterns"
+
+
+def _load_correction_patterns() -> dict:
+    """Load correction pattern history from DB."""
+    try:
+        from core.database import is_db_available, kv_get
+        if is_db_available():
+            data = kv_get(_CORRECTION_PATTERN_KEY)
+            if data and isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {"patterns": {}, "total_corrections": 0}
+
+
+def _save_correction_patterns(data: dict):
+    """Save correction pattern history to DB."""
+    try:
+        from core.database import is_db_available, kv_set
+        if is_db_available():
+            kv_set(_CORRECTION_PATTERN_KEY, data)
+    except Exception:
+        pass
+
+
+def _track_correction_pattern(what_went_wrong: str, customer_message: str, ketu_correction: str):
+    """Track what types of mistakes the AI keeps making.
+
+    When the same mistake type happens 3+ times, generates a stronger
+    rule and logs it for the dashboard. This is medium-impact correction
+    learning — catches recurring patterns the single-correction learning misses.
+    """
+    if not what_went_wrong:
+        return
+
+    data = _load_correction_patterns()
+    data["total_corrections"] = data.get("total_corrections", 0) + 1
+
+    # Normalize the error type to group similar mistakes
+    wrong_lower = what_went_wrong.lower()
+    error_category = "other"
+    if any(w in wrong_lower for w in ["too long", "wordy", "verbose", "lengthy"]):
+        error_category = "reply_too_long"
+    elif any(w in wrong_lower for w in ["fabricat", "made up", "fake", "invented", "wrong"]):
+        error_category = "fabricated_info"
+    elif any(w in wrong_lower for w in ["tone", "rude", "formal", "cold", "robotic"]):
+        error_category = "wrong_tone"
+    elif any(w in wrong_lower for w in ["price", "rate", "cost"]):
+        error_category = "wrong_price"
+    elif any(w in wrong_lower for w in ["emoji", "smiley"]):
+        error_category = "unwanted_emoji"
+    elif any(w in wrong_lower for w in ["language", "hindi", "english", "hinglish"]):
+        error_category = "wrong_language"
+    elif any(w in wrong_lower for w in ["sales pitch", "cta", "buy now", "order now"]):
+        error_category = "sales_pitch"
+    elif any(w in wrong_lower for w in ["generic", "template", "vague"]):
+        error_category = "too_generic"
+
+    patterns = data.get("patterns", {})
+    if error_category not in patterns:
+        patterns[error_category] = {
+            "count": 0,
+            "examples": [],
+            "rule_generated": False,
+        }
+
+    cat_data = patterns[error_category]
+    cat_data["count"] = cat_data.get("count", 0) + 1
+    cat_data["examples"] = (cat_data.get("examples", []) + [{
+        "customer": customer_message[:80],
+        "correction": ketu_correction[:80],
+        "error": what_went_wrong[:100],
+        "time": datetime.now(IST).strftime("%d %b %I:%M %p"),
+    }])[-5:]  # Keep last 5 examples
+
+    # When same mistake happens 3+ times and rule not yet generated → create strong rule
+    if cat_data["count"] >= 3 and not cat_data.get("rule_generated"):
+        _generate_correction_rule(error_category, cat_data)
+        cat_data["rule_generated"] = True
+
+    data["patterns"] = patterns
+    _save_correction_patterns(data)
+
+
+def _generate_correction_rule(error_category: str, cat_data: dict):
+    """Generate a strong rule from repeated correction patterns.
+
+    Called when the same type of mistake happens 3+ times.
+    Creates a new evolved_rule to prevent the mistake permanently.
+    """
+    # Map error categories to concrete rules
+    rule_map = {
+        "reply_too_long": "STRICT: Reply 10-15 words ONLY. Ketu har baar edit karta hai long reply ko. Chhota rakho.",
+        "fabricated_info": "NEVER fabricate information — stock, delivery dates, availability. Agar nahi pata toh 'Ketu sir batayenge' bol",
+        "wrong_tone": "Match Ketu's factory-owner tone — direct, confident, no unnecessary formality. Robotic/corporate tone avoid karo",
+        "wrong_price": "NEVER guess prices. ONLY use prices from the PRODUCTS section. Galat price se customer confuse hota hai",
+        "unwanted_emoji": "EMOJI MAT USE KAR. Ketu emoji nahi bhejta. Har baar edit karta hai. ZERO emojis",
+        "wrong_language": "Customer ki language match karo — Hindi mein bole toh Hindi, English mein toh English. Default Hinglish",
+        "sales_pitch": "SALES PITCH KABHI MAT KAR. 'Order now', 'Interested?' jaise CTA mat bol. Tu salesman nahi, factory owner hai",
+        "too_generic": "Generic template replies avoid karo. Customer ke specific sawaal ka specific jawab de — seedha, with details",
+    }
+
+    rule = rule_map.get(error_category)
+    if not rule:
+        # Build from examples
+        examples = cat_data.get("examples", [])
+        if examples:
+            rule = f"[Auto-correction] Mistake: {examples[0]['error']}. Ketu's way: {examples[0]['correction']}"
+        else:
+            return
+
+    try:
+        from core.database import is_db_available, load_knowledge_from_db, save_knowledge
+        prompt_data = None
+        if is_db_available():
+            prompt_data = load_knowledge_from_db("prompt")
+        if not prompt_data:
+            prompt_path = KNOWLEDGE_DIR / "prompt.json"
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    prompt_data = json.load(f)
+            except Exception:
+                prompt_data = {}
+
+        existing_rules = set(
+            r.lower() for r in prompt_data.get("reply_rules", [])
+            + prompt_data.get("evolved_rules", [])
+        )
+
+        if rule.lower() not in existing_rules:
+            prompt_data.setdefault("evolved_rules", []).append(rule)
+            if is_db_available():
+                save_knowledge("prompt", prompt_data)
+            # Also write to file
+            prompt_path = KNOWLEDGE_DIR / "prompt.json"
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                json.dump(prompt_data, f, indent=2, ensure_ascii=False)
+
+            from core.knowledge import invalidate_cache
+            invalidate_cache()
+
+            from core.activity_log import log_activity
+            log_activity(
+                source="correction-learner",
+                action="auto-rule-generated",
+                details={
+                    "error_category": error_category,
+                    "correction_count": cat_data.get("count", 0),
+                    "rule": rule,
+                    "examples": cat_data.get("examples", [])[:3],
+                },
+                items_count=1,
+            )
+            logger.info(
+                f"[CorrectionLearn] Auto-generated rule from {cat_data.get('count', 0)} corrections: "
+                f"{error_category} → '{rule[:60]}...'"
+            )
+    except Exception as e:
+        logger.warning(f"[CorrectionLearn] Rule generation failed (non-fatal): {e}")
+
+
+def get_correction_stats() -> dict:
+    """Get correction learning statistics for dashboard."""
+    data = _load_correction_patterns()
+    patterns = data.get("patterns", {})
+    return {
+        "total_corrections": data.get("total_corrections", 0),
+        "error_categories": {
+            cat: {
+                "count": info.get("count", 0),
+                "rule_generated": info.get("rule_generated", False),
+                "last_example": info.get("examples", [{}])[-1] if info.get("examples") else None,
+            }
+            for cat, info in patterns.items()
+        },
+        "top_mistakes": sorted(
+            [(cat, info.get("count", 0)) for cat, info in patterns.items()],
+            key=lambda x: x[1], reverse=True,
+        )[:5],
+    }
+
 
 def learn_from_correction(
     customer_message: str,
@@ -238,27 +504,13 @@ def learn_from_correction(
     1. The correct reply style/content → new FAQ or style pattern
     2. What the AI got wrong → evolve the prompt to avoid this
     3. The customer<>Ketu exchange → new example conversation
+    4. Track correction patterns → auto-generate rules when same mistake repeats 3+ times
     """
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = get_anthropic_client()
 
-    # Load current prompt context — DB first (survives deploys), file fallback
-    prompt_data = None
-    try:
-        from core.database import is_db_available, load_knowledge_from_db
-        if is_db_available():
-            prompt_data = load_knowledge_from_db("prompt")
-    except Exception:
-        pass
-    if not prompt_data:
-        prompt_path = KNOWLEDGE_DIR / "prompt.json"
-        try:
-            with open(prompt_path, "r", encoding="utf-8") as f:
-                prompt_data = json.load(f)
-        except Exception:
-            prompt_data = {}
-
-    current_traits = prompt_data.get("personality_traits", []) + prompt_data.get("evolved_traits", [])
-    current_rules = prompt_data.get("reply_rules", []) + prompt_data.get("evolved_rules", [])
+    # NOTE: We do NOT send current traits/rules/phrases to Claude anymore.
+    # The 194KB prompt.json was adding ~8000+ tokens per call for dedup that
+    # already happens in apply_knowledge_updates() AFTER Claude returns.
 
     prompt = f"""Ketu (business owner) CORRECTED an AI-generated reply. This is a critical learning moment.
 
@@ -267,9 +519,6 @@ Customer asked: "{customer_message}"
 AI (Digital Ketu) replied: "{ai_reply}"
 
 Ketu CORRECTED it to: "{ketu_correction}"
-
-CURRENT personality traits: {json.dumps(current_traits, ensure_ascii=False)}
-CURRENT reply rules: {json.dumps(current_rules, ensure_ascii=False)}
 
 Analyze the correction and extract (JSON):
 1. "new_faq": If this Q&A pair is worth saving as a FAQ
@@ -351,6 +600,13 @@ Return ONLY valid JSON."""
             ai_reply=ai_reply,
             ketu_correction=ketu_correction,
             what_went_wrong=analysis.get("what_went_wrong", ""),
+        )
+
+        # Track correction patterns — auto-generate rules when same mistake repeats 3+ times
+        _track_correction_pattern(
+            what_went_wrong=analysis.get("what_went_wrong", ""),
+            customer_message=customer_message,
+            ketu_correction=ketu_correction,
         )
 
         return {
@@ -553,6 +809,121 @@ def learn_ketu_only_from_manual_chat(
         logger.warning(f"[KetuOnly] Learning from chat failed (non-fatal): {e}")
 
 
+def learn_ketu_defer_patterns(
+    customer_message: str,
+    ketu_reply: str = "",
+    customer_phone: str = "",
+    source: str = "ketu-takeover",
+    category_name: str = "",
+) -> dict:
+    """Send ketu takeover / ketu-only detection data to cloud for deep learning.
+
+    Called when:
+    1. Ketu manually takes over a conversation (source="ketu-takeover")
+    2. AI detects a question only Ketu can answer (source="ketu-detection")
+
+    Cloud analyzes the customer message and learns which types of questions
+    need Ketu's personal reply — so AI can auto-defer similar questions next time.
+    """
+    client = get_anthropic_client()
+
+    context_parts = [f'Customer message: "{customer_message}"']
+    if ketu_reply:
+        context_parts.append(f'Ketu\'s reply: "{ketu_reply}"')
+    if category_name:
+        context_parts.append(f'Detected category: "{category_name}"')
+
+    context_text = "\n".join(context_parts)
+
+    prompt = f"""You are analyzing a WhatsApp business conversation where the AI assistant could NOT handle the customer's question — the business owner (Ketu) had to reply personally.
+
+{context_text}
+
+Source: {"Ketu manually took over and replied himself" if source == "ketu-takeover" else "AI detected this needs Ketu's personal reply"}
+
+Analyze this and extract (JSON):
+1. "category": Which category does this question fall into? One of: "stock_restock", "order_status", "custom_pricing", "delivery_specific", "payment_issues", or a new category name if none fit
+2. "question_pattern": Extract 2-5 key Hindi/English words from the customer's question that form a reusable pattern (remove filler words like bhai, sir, ji, kya, hai). This pattern will be used to match similar future questions.
+3. "why_ketu_only": Brief explanation of why only Ketu can answer this (1 line)
+4. "defer_reply_template": A natural Hindi/English reply to tell the customer "Ketu will reply shortly" — casual, friendly, specific to the question type
+5. "should_learn": true if this is a genuinely new pattern the AI should remember, false if it's already a common/obvious pattern
+
+Return ONLY valid JSON."""
+
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        result_text = response.content[0].text
+
+        # Track API cost
+        from core.cost_tracker import track_api_cost
+        track_api_cost(
+            model=response.model,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            source="ketu-takeover-learning",
+        )
+
+        json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
+        if not json_match:
+            return {"status": "parse_error", "raw": result_text[:200]}
+
+        analysis = json.loads(json_match.group())
+
+        # Learn the pattern if cloud says it's new
+        if analysis.get("should_learn") and analysis.get("question_pattern"):
+            from core.ketu_only import detect_ketu_only, add_learned_pattern
+            # Only add if not already detected by existing patterns
+            existing = detect_ketu_only(customer_message)
+            if not existing:
+                cat_id = analysis.get("category", "learned")
+                cat_name_learned = analysis.get("category", "Learned Pattern")
+                add_learned_pattern(analysis["question_pattern"], cat_id, cat_name_learned)
+
+        result = {
+            "status": "learned",
+            "source": source,
+            "category": analysis.get("category", ""),
+            "question_pattern": analysis.get("question_pattern", ""),
+            "why_ketu_only": analysis.get("why_ketu_only", ""),
+            "defer_reply_template": analysis.get("defer_reply_template", ""),
+            "should_learn": analysis.get("should_learn", False),
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+            "customer_message": customer_message[:120],
+            "ketu_reply": ketu_reply[:120] if ketu_reply else "",
+        }
+
+        from core.activity_log import log_activity
+        log_activity(
+            source="ketu-only",
+            action="cloud-learning",
+            details={
+                "learning_source": source,
+                "category": analysis.get("category", ""),
+                "pattern": analysis.get("question_pattern", ""),
+                "phone_last4": customer_phone[-4:] if customer_phone else "",
+                "tokens": response.usage.input_tokens + response.usage.output_tokens,
+            },
+            items_count=1,
+        )
+        logger.info(f"[KetuDefer] Cloud learned: {analysis.get('category', '?')} | pattern: {analysis.get('question_pattern', '?')}")
+
+        return result
+
+    except Exception as e:
+        import traceback
+        err_detail = f"{type(e).__name__}: {e}"
+        logger.error(f"[KetuDefer] Cloud learning error: {err_detail}\n{traceback.format_exc()}")
+        from core.error_tracker import track_error
+        track_error("ketu-defer-learner", err_detail)
+        return {"status": "error", "detail": err_detail}
+
+
 # --- Voice Note Learning ---
 
 async def learn_from_voice_note(
@@ -584,27 +955,13 @@ async def learn_from_voice_note(
     logger.info(f"Voice note transcribed ({len(transcript)} chars): {transcript[:100]}...")
 
     # Step 2: Extract knowledge from transcript
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = get_anthropic_client()
 
     context_line = f"\nContext: {context}" if context else ""
 
-    # Load current knowledge for dedup — DB first, file fallback
-    prompt_data = None
-    try:
-        from core.database import is_db_available, load_knowledge_from_db
-        if is_db_available():
-            prompt_data = load_knowledge_from_db("prompt")
-    except Exception:
-        pass
-    if not prompt_data:
-        prompt_path = KNOWLEDGE_DIR / "prompt.json"
-        try:
-            with open(prompt_path, "r", encoding="utf-8") as f:
-                prompt_data = json.load(f)
-        except Exception:
-            prompt_data = {}
-
-    current_phrases = prompt_data.get("signature_phrases", []) + prompt_data.get("evolved_phrases", [])
+    # NOTE: We do NOT send current phrases/traits to Claude anymore.
+    # The 194KB prompt.json was adding ~8000+ tokens per call for dedup that
+    # already happens in apply_knowledge_updates() AFTER Claude returns.
 
     prompt = f"""This is a transcript of Ketu's VOICE NOTE (he's a t-shirt manufacturer, owner of Sale91.com).
 Ketu speaks naturally in voice — this reveals his real speaking style.
@@ -612,8 +969,6 @@ Ketu speaks naturally in voice — this reveals his real speaking style.
 
 Voice note transcript:
 "{transcript}"
-
-CURRENT known signature phrases: {json.dumps(current_phrases, ensure_ascii=False)}
 
 Extract from this voice note (JSON):
 1. "product_info": Any product details, prices, features mentioned

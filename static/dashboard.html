@@ -786,6 +786,125 @@
     </div>
   </div>
 
+  <!-- Correction History: Edit tracking + cloud calls -->
+  <div style="margin-bottom:25px;">
+    <h3 style="font-size:15px;color:var(--text-bright);margin-bottom:12px;">
+      Corrections & Edits
+      <span style="font-weight:400;color:var(--text-dim);font-size:13px;">(AI replies you corrected — each one triggers instant learning)</span>
+    </h3>
+    <div id="correctionHistoryContainer" style="background:var(--card);border:1px solid var(--card-border);border-radius:12px;padding:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-size:13px;color:var(--text-dim);">
+          Before/after of each correction + what was sent to Claude for learning
+        </div>
+        <button onclick="loadCorrectionHistory()" style="background:rgba(253,121,168,0.15);color:#fd79a8;border:1px solid rgba(253,121,168,0.3);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;">Refresh</button>
+      </div>
+
+      <!-- Summary stats -->
+      <div id="correctionStats" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;">
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Total Corrections</div>
+          <div id="chTotal" style="font-size:20px;font-weight:600;color:#fd79a8;">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Cloud API Calls</div>
+          <div id="chCloudCalls" style="font-size:20px;font-weight:600;color:var(--orange);">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Successfully Learned</div>
+          <div id="chLearned" style="font-size:20px;font-weight:600;color:var(--green);">--</div>
+        </div>
+      </div>
+
+      <!-- Correction list -->
+      <div id="correctionHistoryList" style="max-height:500px;overflow-y:auto;">
+        <div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">Loading... (corrections appear after you edit an AI reply)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Active Learned Knowledge -->
+  <div style="margin-bottom:25px;">
+    <h3 style="font-size:15px;color:var(--text-bright);margin-bottom:12px;">
+      Active Learned Knowledge
+      <span style="font-weight:400;color:var(--text-dim);font-size:13px;">(agar yahan dikhta hai = AI chats mein use ho raha hai)</span>
+    </h3>
+    <div id="learnedKnowledgeContainer" style="background:var(--card);border:1px solid var(--card-border);border-radius:12px;padding:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-size:13px;color:var(--text-dim);">
+          Corrections, style patterns, evolved rules, and auto-learned FAQs currently loaded in AI
+        </div>
+        <button onclick="loadLearnedKnowledge()" style="background:rgba(108,92,231,0.15);color:var(--accent);border:1px solid rgba(108,92,231,0.3);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;">Refresh</button>
+      </div>
+
+      <!-- Summary stats -->
+      <div id="learnedKnowledgeStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;">
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:10px;color:var(--text-dim);">Correction Patterns</div>
+          <div id="lkPatterns" style="font-size:20px;font-weight:600;color:var(--accent);">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:10px;color:var(--text-dim);">Evolved Rules</div>
+          <div id="lkRules" style="font-size:20px;font-weight:600;color:var(--green);">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:10px;color:var(--text-dim);">Auto-Learned FAQs</div>
+          <div id="lkFaqs" style="font-size:20px;font-weight:600;color:var(--orange);">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:10px;color:var(--text-dim);">Total Active</div>
+          <div id="lkTotal" style="font-size:20px;font-weight:600;color:var(--accent2);">--</div>
+        </div>
+      </div>
+
+      <!-- Knowledge list -->
+      <div id="learnedKnowledgeList" style="max-height:500px;overflow-y:auto;">
+        <div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cloud Debug: What's Being Sent to Claude API -->
+  <div style="margin-bottom:25px;">
+    <h3 style="font-size:15px;color:var(--text-bright);margin-bottom:12px;">
+      What's Being Sent to Cloud
+      <span style="font-weight:400;color:var(--text-dim);font-size:13px;">(exact prompts sent to Claude API for learning)</span>
+    </h3>
+    <div id="cloudPayloadsContainer" style="background:var(--card);border:1px solid var(--card-border);border-radius:12px;padding:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-size:13px;color:var(--text-dim);">
+          Recent API calls — click any to see the full prompt text
+        </div>
+        <button onclick="loadCloudPayloads()" style="background:rgba(108,92,231,0.15);color:var(--accent);border:1px solid rgba(108,92,231,0.3);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;">Refresh</button>
+      </div>
+
+      <!-- Summary stats -->
+      <div id="cloudPayloadStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;">
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Total Calls Logged</div>
+          <div id="cpTotalCalls" style="font-size:20px;font-weight:600;color:var(--accent2);">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Avg Input Tokens</div>
+          <div id="cpAvgTokens" style="font-size:20px;font-weight:600;color:var(--orange);">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Avg Words in Prompt</div>
+          <div id="cpAvgWords" style="font-size:20px;font-weight:600;color:var(--accent);">--</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);">Avg Pairs Sent</div>
+          <div id="cpAvgPairs" style="font-size:20px;font-weight:600;color:var(--green);">--</div>
+        </div>
+      </div>
+
+      <!-- Payload list -->
+      <div id="cloudPayloadList" style="max-height:500px;overflow-y:auto;">
+        <div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">Loading... (payloads appear after next learning API call)</div>
+      </div>
+    </div>
+  </div>
+
   <div class="grid">
 
     <!-- Live Activity Feed -->
@@ -828,7 +947,7 @@
           </div>
           <div style="background:rgba(0,184,148,0.08);border-radius:8px;padding:14px;text-align:center;">
             <div style="font-size:24px;font-weight:700;color:var(--green);" id="wwbunTodayQuality">0</div>
-            <div style="font-size:11px;color:var(--text-dim);">Quality Messages Today</div>
+            <div style="font-size:11px;color:var(--text-dim);">Quality Pairs Today</div>
           </div>
           <div style="background:rgba(253,203,110,0.08);border-radius:8px;padding:14px;text-align:center;">
             <div style="font-size:24px;font-weight:700;color:var(--orange);" id="wwbunTodayKnowledge">0</div>
@@ -846,7 +965,7 @@
           </div>
           <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">
             <div style="font-size:18px;font-weight:600;color:var(--text-bright);" id="wwbunTotalQuality">0</div>
-            <div style="font-size:10px;color:var(--text-dim);">Total Quality</div>
+            <div style="font-size:10px;color:var(--text-dim);">Total Pairs</div>
           </div>
           <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">
             <div style="font-size:18px;font-weight:600;color:var(--text-bright);" id="wwbunTotalJunk">0</div>
@@ -962,6 +1081,11 @@
         <h3>Customer Insights</h3>
         <span class="badge" id="customerBadge">0 customers</span>
       </div>
+      <!-- Source toggle: Digital Ketu vs Total -->
+      <div style="display:flex;gap:0;margin:0 14px 8px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);">
+        <button id="srcAI" onclick="switchInsightSource('ai')" style="flex:1;padding:8px 0;font-size:11px;font-weight:700;border:none;cursor:pointer;background:var(--accent);color:#fff;transition:all 0.2s;">Digital Ketu</button>
+        <button id="srcTotal" onclick="switchInsightSource('total')" style="flex:1;padding:8px 0;font-size:11px;font-weight:700;border:none;cursor:pointer;background:rgba(255,255,255,0.05);color:var(--text-dim);transition:all 0.2s;">Total (AI + Manual)</button>
+      </div>
       <div class="tab-bar">
         <button class="tab-btn active" onclick="switchInsightTab('top')">Top Customers</button>
         <button class="tab-btn" onclick="switchInsightTab('hours')">Peak Hours</button>
@@ -974,31 +1098,61 @@
       </div>
     </div>
 
-    <!-- Audio Transcription Stats -->
+    <!-- Voice Notes (Audio) — Enhanced -->
     <div class="card">
       <div class="card-header">
         <h3>Voice Notes (Audio)</h3>
         <span class="badge" id="audioBadge" style="background:rgba(108,92,231,0.15);color:var(--accent);">Loading</span>
       </div>
       <div class="card-body">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
-          <div style="background:rgba(108,92,231,0.08);border-radius:8px;padding:14px;text-align:center;">
-            <div style="font-size:24px;font-weight:700;color:var(--accent);" id="audioTodayCount">0</div>
-            <div style="font-size:11px;color:var(--text-dim);">Transcribed Today</div>
+        <!-- Setup status banner -->
+        <div id="audioSetupBanner" style="display:none;background:rgba(253,203,110,0.12);border:1px solid rgba(253,203,110,0.3);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--orange);">
+          OpenAI API key not set — voice notes won't be transcribed. Add OPENAI_API_KEY to Railway env vars.
+        </div>
+
+        <!-- Main stats grid -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px;">
+          <div style="background:rgba(108,92,231,0.08);border-radius:8px;padding:12px;text-align:center;">
+            <div style="font-size:22px;font-weight:700;color:var(--accent);" id="audioTodayCount">0</div>
+            <div style="font-size:10px;color:var(--text-dim);">Today</div>
           </div>
-          <div style="background:rgba(0,184,148,0.08);border-radius:8px;padding:14px;text-align:center;">
-            <div style="font-size:24px;font-weight:700;color:var(--green);" id="audioTotalCount">0</div>
-            <div style="font-size:11px;color:var(--text-dim);">Total Transcribed</div>
+          <div style="background:rgba(0,184,148,0.08);border-radius:8px;padding:12px;text-align:center;">
+            <div style="font-size:22px;font-weight:700;color:var(--green);" id="audioTotalCount">0</div>
+            <div style="font-size:10px;color:var(--text-dim);">Total Understood</div>
           </div>
-          <div style="background:rgba(214,48,49,0.08);border-radius:8px;padding:14px;text-align:center;">
-            <div style="font-size:24px;font-weight:700;color:var(--red);" id="audioFailedCount">0</div>
-            <div style="font-size:11px;color:var(--text-dim);">Failed Today</div>
-          </div>
-          <div style="background:rgba(253,203,110,0.08);border-radius:8px;padding:14px;text-align:center;">
-            <div style="font-size:24px;font-weight:700;color:var(--orange);" id="audioTotalFailed">0</div>
-            <div style="font-size:11px;color:var(--text-dim);">Total Failed</div>
+          <div style="background:rgba(214,48,49,0.08);border-radius:8px;padding:12px;text-align:center;">
+            <div style="font-size:22px;font-weight:700;color:var(--red);" id="audioFailedCount">0</div>
+            <div style="font-size:10px;color:var(--text-dim);">Failed</div>
           </div>
         </div>
+
+        <!-- Insight cards -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+          <div style="background:rgba(0,184,148,0.06);border:1px solid rgba(0,184,148,0.15);border-radius:8px;padding:10px 12px;">
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">AI Replied to Voice</div>
+            <div style="font-size:18px;font-weight:700;color:var(--green);" id="audioRepliedCount">0</div>
+          </div>
+          <div style="background:rgba(253,203,110,0.06);border:1px solid rgba(253,203,110,0.15);border-radius:8px;padding:10px 12px;">
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Knowledge Learned</div>
+            <div style="font-size:18px;font-weight:700;color:var(--orange);" id="audioKnowledgeCount">0</div>
+          </div>
+          <div style="background:rgba(108,92,231,0.06);border:1px solid rgba(108,92,231,0.15);border-radius:8px;padding:10px 12px;">
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Success Rate</div>
+            <div style="font-size:18px;font-weight:700;color:var(--accent);" id="audioSuccessRate">0%</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px;">
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Avg Text Length</div>
+            <div style="font-size:18px;font-weight:700;color:var(--text);" id="audioAvgLength">0</div>
+          </div>
+        </div>
+
+        <!-- Top voice customers -->
+        <div id="audioTopCustomers" style="display:none;margin-bottom:14px;">
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;font-weight:600;">Top Voice Note Senders:</div>
+          <div id="audioTopList" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+        </div>
+
+        <!-- Recent transcriptions -->
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;font-weight:600;">Recent Transcriptions:</div>
         <div id="audioRecentList" style="max-height:200px;overflow-y:auto;">
           <div class="empty-state" style="font-size:12px;">No audio transcriptions yet</div>
@@ -1014,6 +1168,80 @@
       </div>
       <div class="card-body" id="convoBody" style="max-height:600px;">
         <div class="empty-state">Loading conversations...</div>
+      </div>
+    </div>
+
+    <!-- Leave Management -->
+    <div class="card full-width">
+      <div class="card-header">
+        <h3>Leave / Busy Schedule</h3>
+        <span class="badge" id="leaveBadge" style="background:rgba(253,203,110,0.15);color:var(--orange);">No Leave</span>
+      </div>
+      <div class="card-body">
+        <!-- Current status banner -->
+        <div id="leaveStatusBanner" style="display:none;background:rgba(214,48,49,0.1);border:1px solid rgba(214,48,49,0.25);border-radius:8px;padding:12px 16px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:16px;">OFF</span>
+            <span style="font-size:13px;font-weight:600;color:var(--red);" id="leaveStatusText">-</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:4px;" id="leaveStatusDetail">AI auto-replying with leave message</div>
+        </div>
+
+        <!-- Add new leave form -->
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:13px;font-weight:600;color:var(--text-bright);margin-bottom:12px;">Add Leave / Busy Time</div>
+          <div style="display:flex;gap:8px;margin-bottom:10px;">
+            <label style="flex:1;cursor:pointer;">
+              <input type="radio" name="leaveType" value="full_day" checked onchange="toggleLeaveForm()">
+              <span style="font-size:12px;color:var(--text);">Full Day Leave</span>
+            </label>
+            <label style="flex:1;cursor:pointer;">
+              <input type="radio" name="leaveType" value="busy_hours" onchange="toggleLeaveForm()">
+              <span style="font-size:12px;color:var(--text);">Busy Hours</span>
+            </label>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:3px;">Start Date</label>
+              <input type="date" id="leaveStartDate" style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:12px;">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:3px;">End Date</label>
+              <input type="date" id="leaveEndDate" style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:12px;">
+            </div>
+          </div>
+
+          <div id="busyHoursFields" style="display:none;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:3px;">From Time</label>
+              <input type="time" id="leaveStartTime" style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:12px;">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:3px;">To Time</label>
+              <input type="time" id="leaveEndTime" style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:12px;">
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:3px;">Reason (optional)</label>
+              <input type="text" id="leaveReason" placeholder="e.g., Family function" style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:12px;">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:3px;">Urgent Contact (optional)</label>
+              <input type="text" id="leaveContact" placeholder="e.g., Godown: 9876543210" style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:12px;">
+            </div>
+          </div>
+
+          <button onclick="addLeave()" style="width:100%;padding:10px;background:var(--accent);color:white;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">Add Leave</button>
+        </div>
+
+        <!-- Existing leaves list -->
+        <div style="font-size:12px;color:var(--text-dim);font-weight:600;margin-bottom:8px;">Scheduled Leaves:</div>
+        <div id="leaveList" style="max-height:250px;overflow-y:auto;">
+          <div class="empty-state" style="font-size:12px;">No leaves scheduled</div>
+        </div>
       </div>
     </div>
 
@@ -1177,12 +1405,10 @@ async function loadDashboard() {
         title = `Replied to ${d.customer_name || 'customer'}`;
         detail = d.message_preview || '';
       } else if (e.source === 'wwbun-sync') {
-        const kept = d.quality_messages_count || 0;
         const junk = d.junk_skipped || 0;
         const short = d.too_short_skipped || 0;
-        const isBuffering = e.action === 'buffered' || (!kept && !d.updates_applied?.length);
+        const isBuffering = e.action === 'buffered' || (!d.quality_pairs_count && !d.updates_applied?.length);
         if (isBuffering) {
-          const bufTotal = d.buffer_total || d.quality_in_buffer || 0;
           const needed = d.needed || 10;
           const remaining = d.remaining || (needed - (d.quality_in_buffer || 0));
           const added = d.messages_added || 0;
@@ -1191,14 +1417,14 @@ async function loadDashboard() {
         } else {
           const pairs = d.quality_pairs_count || 0;
           const total = d.total_buffered || 0;
-          title = `Learned from ${pairs} pairs (${kept} msgs, ${junk + short} trash)`;
+          const msgsUsed = d.msgs_used || (pairs * 2);
+          const unpaired = d.unpaired_skipped || 0;
+          const totalSkipped = junk + short + unpaired;
+          title = `Learned from ${pairs} pairs (${msgsUsed} msgs used)`;
           const applied = (d.updates_applied || []).slice(0, 2).join(', ');
-          const extracted = (d.extracted_summary || []).join(', ');
-          const breakdown = `${total} total msgs → ${kept} quality, ${junk} junk, ${short} too short`;
+          const breakdown = `${total} total → ${pairs} pairs used, ${totalSkipped} skipped (${junk} junk, ${short} too short, ${unpaired} no pair)`;
           if (applied) {
             detail = '\u2705 ' + applied;
-          } else if (extracted) {
-            detail = breakdown + ' | ' + extracted;
           } else {
             detail = breakdown;
           }
@@ -1918,19 +2144,34 @@ async function loadErrors() {
 
 // ---- CUSTOMER INSIGHTS ----
 
+let _insightsData = null;
+let _insightSource = 'ai'; // 'ai' or 'total'
+
 async function loadInsights() {
   const [customers, faqHits] = await Promise.all([
     fetchJSON('/api/insights/customers'),
     fetchJSON('/api/insights/faq-hits'),
   ]);
 
+  _insightsData = { customers, faqHits };
+  renderInsights();
+}
+
+function renderInsights() {
+  const customers = _insightsData?.customers;
+  const faqHits = _insightsData?.faqHits;
+  const isTotal = _insightSource === 'total';
+
   if (customers) {
+    const msgs = isTotal ? (customers.total_all_messages || 0) : customers.total_messages;
+    const custs = isTotal ? (customers.total_all_customers || 0) : customers.unique_customers;
+    const label = isTotal ? 'Total' : 'DK';
     document.getElementById('customerBadge').textContent =
-      `${customers.unique_customers} customers | ${customers.total_messages} msgs`;
+      `${custs} customers | ${msgs} msgs`;
 
     // Top customers tab
     const topTab = document.getElementById('itab-top');
-    const topList = customers.top_customers || [];
+    const topList = isTotal ? (customers.total_top_customers || []) : (customers.top_customers || []);
     if (topList.length) {
       const maxCount = topList[0]?.messages || 1;
       topTab.innerHTML = topList.map(c => `
@@ -1946,7 +2187,7 @@ async function loadInsights() {
 
     // Peak hours tab
     const hoursTab = document.getElementById('itab-hours');
-    const hourly = customers.hourly_distribution || {};
+    const hourly = isTotal ? (customers.total_hourly_distribution || {}) : (customers.hourly_distribution || {});
     const hourEntries = Object.entries(hourly).sort((a, b) => b[1] - a[1]);
     if (hourEntries.length) {
       const maxH = hourEntries[0]?.[1] || 1;
@@ -1980,6 +2221,20 @@ async function loadInsights() {
       faqTab.innerHTML = '<div class="empty-state">No FAQ usage data yet — will track as customers ask questions</div>';
     }
   }
+}
+
+function switchInsightSource(source) {
+  _insightSource = source;
+  const aiBtn = document.getElementById('srcAI');
+  const totalBtn = document.getElementById('srcTotal');
+  if (source === 'ai') {
+    aiBtn.style.background = 'var(--accent)'; aiBtn.style.color = '#fff';
+    totalBtn.style.background = 'rgba(255,255,255,0.05)'; totalBtn.style.color = 'var(--text-dim)';
+  } else {
+    totalBtn.style.background = 'var(--accent)'; totalBtn.style.color = '#fff';
+    aiBtn.style.background = 'rgba(255,255,255,0.05)'; aiBtn.style.color = 'var(--text-dim)';
+  }
+  renderInsights();
 }
 
 function switchInsightTab(tabName) {
@@ -2398,11 +2653,14 @@ async function loadWwbunStats() {
       // Pair format: Customer Q → Ketu Reply
       const replyLabel = m.ai ? 'AI ↩' : 'KETU ↩';
       const replyColor = m.ai ? 'var(--accent)' : 'var(--green)';
+      const nameOrPhone = m.name ? m.name.substring(0, 15) : (m.phone ? '...' + m.phone : '');
+      const phoneTag = nameOrPhone ? '<span style="color:var(--accent);font-size:9px;font-weight:600;background:rgba(139,92,246,0.15);padding:1px 5px;border-radius:3px;margin-left:4px;">' + nameOrPhone + '</span>' : '';
       html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px 12px;margin-bottom:6px;font-size:12px;">' +
         '<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;">' +
           '<span style="color:var(--text-dim);font-size:11px;min-width:52px;">' + (m.time || '') + '</span>' +
           '<span style="color:var(--orange);font-size:10px;font-weight:600;min-width:50px;">BUYER</span>' +
-          '<span style="color:var(--text-dim);">' + m.customer.substring(0, 90) + '</span>' +
+          phoneTag +
+          '<span style="color:var(--text-dim);margin-left:2px;">' + m.customer.substring(0, 85) + '</span>' +
         '</div>' +
         '<div style="display:flex;align-items:flex-start;gap:6px;">' +
           '<span style="min-width:52px;"></span>' +
@@ -2427,15 +2685,53 @@ async function loadAudioStats() {
   const data = await fetchJSON('/api/audio/stats');
   if (!data) return;
 
+  // Main stats
   document.getElementById('audioTodayCount').textContent = data.today_transcribed || 0;
   document.getElementById('audioTotalCount').textContent = data.total_transcribed || 0;
-  document.getElementById('audioFailedCount').textContent = data.today_failed || 0;
-  document.getElementById('audioTotalFailed').textContent = data.total_failed || 0;
+  document.getElementById('audioFailedCount').textContent = (data.today_failed || 0) + (data.total_failed || 0);
 
+  // Enhanced stats
+  document.getElementById('audioRepliedCount').textContent = data.replied_from_voice || 0;
+  document.getElementById('audioKnowledgeCount').textContent = data.knowledge_learned || 0;
+  document.getElementById('audioSuccessRate').textContent = (data.success_rate || 0) + '%';
+  document.getElementById('audioAvgLength').textContent = (data.avg_text_length || 0) + ' chars';
+
+  // Setup status banner
+  const banner = document.getElementById('audioSetupBanner');
+  if (data.setup_status === 'needs_api_key') {
+    banner.style.display = 'block';
+  } else {
+    banner.style.display = 'none';
+  }
+
+  // Badge
   const badge = document.getElementById('audioBadge');
   const total = data.total_transcribed || 0;
-  badge.textContent = total > 0 ? total + ' total' : 'No audio yet';
+  if (data.setup_status === 'needs_api_key') {
+    badge.textContent = 'Setup needed';
+    badge.style.background = 'rgba(253,203,110,0.15)';
+    badge.style.color = 'var(--orange)';
+  } else if (total > 0) {
+    badge.textContent = total + ' understood';
+    badge.style.background = 'rgba(0,184,148,0.15)';
+    badge.style.color = 'var(--green)';
+  } else {
+    badge.textContent = 'No audio yet';
+  }
 
+  // Top voice customers
+  const topCustomers = data.top_voice_customers || [];
+  const topSection = document.getElementById('audioTopCustomers');
+  const topList = document.getElementById('audioTopList');
+  if (topCustomers.length > 0) {
+    topSection.style.display = 'block';
+    topList.innerHTML = topCustomers.map(c =>
+      '<span style="background:rgba(108,92,231,0.12);border:1px solid rgba(108,92,231,0.2);border-radius:12px;padding:4px 10px;font-size:11px;color:var(--accent);">' +
+      '...' + c.phone_last4 + ' <b>' + c.count + '</b></span>'
+    ).join('');
+  }
+
+  // Recent transcriptions
   const listEl = document.getElementById('audioRecentList');
   const recent = data.recent_transcriptions || [];
   if (recent.length === 0) {
@@ -2445,15 +2741,289 @@ async function loadAudioStats() {
 
   let html = '';
   for (const t of recent.reverse()) {
+    const lenBadge = t.text_length ? '<span style="color:var(--text-dim);font-size:10px;margin-left:6px;">' + t.text_length + ' chars</span>' : '';
     html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:12px;">' +
-      '<div style="display:flex;justify-content:space-between;margin-bottom:4px;">' +
-      '<span style="color:var(--accent);">...' + (t.phone_last4 || '????') + '</span>' +
-      '<span style="color:var(--text-dim);">' + (t.time || '') + ' | ' + (t.date || '') + '</span>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">' +
+      '<span style="color:var(--accent);">...' + (t.phone_last4 || '????') + lenBadge + '</span>' +
+      '<span style="color:var(--text-dim);font-size:10px;">' + (t.time || '') + '</span>' +
       '</div>' +
-      '<div style="color:var(--text);">"' + (t.text_preview || '') + '"</div>' +
+      '<div style="color:var(--text);font-style:italic;">"' + (t.text_preview || '') + '"</div>' +
       '</div>';
   }
   listEl.innerHTML = html;
+}
+
+// ---- ACTIVE LEARNED KNOWLEDGE ----
+
+async function loadLearnedKnowledge() {
+  const data = await fetchJSON('/api/knowledge/learned-summary');
+  if (!data) return;
+
+  // Update stats
+  document.getElementById('lkPatterns').textContent = data.learned_patterns?.length || 0;
+  document.getElementById('lkRules').textContent = data.evolved_rules?.length || 0;
+  document.getElementById('lkFaqs').textContent = data.auto_learned_faqs?.length || 0;
+  document.getElementById('lkTotal').textContent = data.total || 0;
+
+  let html = '';
+
+  // Helper: safely convert any item to display string
+  function toStr(item) {
+    if (typeof item === 'string') return item;
+    if (item && typeof item === 'object') return JSON.stringify(item, null, 0);
+    return String(item || '');
+  }
+
+  // Helper: render a category with "show more" (max 25 visible)
+  function renderCat(title, items, color, bg, max) {
+    if (!items || items.length === 0) return '';
+    max = max || 25;
+    let out = '<div style="margin-bottom:12px;">';
+    out += '<div style="font-size:12px;font-weight:600;color:' + color + ';margin-bottom:6px;padding:4px 8px;background:' + bg + ';border-radius:4px;display:inline-block;">' + title + ' (' + items.length + ')</div>';
+    items.slice(0, max).forEach(item => {
+      const text = toStr(item);
+      const isCor = text.includes('[Correction]');
+      const c = isCor ? 'var(--accent)' : color;
+      out += '<div style="padding:6px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;margin-bottom:3px;font-size:11px;color:' + c + ';border-left:3px solid ' + c + ';">' + escapeHtml(text) + '</div>';
+    });
+    if (items.length > max) out += '<div style="color:var(--text-dim);font-size:11px;text-align:center;padding:6px;">... and ' + (items.length - max) + ' more</div>';
+    out += '</div>';
+    return out;
+  }
+
+  html += renderCat('Correction Patterns', data.learned_patterns, 'var(--accent)', 'rgba(108,92,231,0.1)', 25);
+  html += renderCat('Evolved Rules', data.evolved_rules, 'var(--green)', 'rgba(0,184,148,0.1)', 25);
+  html += renderCat('Evolved Traits', data.evolved_traits, 'var(--accent2)', 'rgba(0,206,201,0.1)', 25);
+
+  // Auto-Learned FAQs (Q/A format)
+  if (data.auto_learned_faqs?.length > 0) {
+    html += '<div style="margin-bottom:12px;">';
+    html += '<div style="font-size:12px;font-weight:600;color:var(--orange);margin-bottom:6px;padding:4px 8px;background:rgba(253,203,110,0.1);border-radius:4px;display:inline-block;">Auto-Learned FAQs (' + data.auto_learned_faqs.length + ')</div>';
+    data.auto_learned_faqs.slice(0, 25).forEach(f => {
+      html += '<div style="padding:6px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;margin-bottom:3px;font-size:11px;">';
+      html += '<span style="color:var(--orange);">Q: ' + escapeHtml(toStr(f.question || f.q || '')) + '</span><br>';
+      html += '<span style="color:var(--text-bright);">A: ' + escapeHtml(toStr(f.answer || f.a || '')) + '</span>';
+      html += '</div>';
+    });
+    if (data.auto_learned_faqs.length > 25) html += '<div style="color:var(--text-dim);font-size:11px;text-align:center;padding:6px;">... and ' + (data.auto_learned_faqs.length - 25) + ' more</div>';
+    html += '</div>';
+  }
+
+  // Example Conversations
+  if (data.example_conversations?.length > 0) {
+    html += '<div style="margin-bottom:12px;">';
+    html += '<div style="font-size:12px;font-weight:600;color:#fd79a8;margin-bottom:6px;padding:4px 8px;background:rgba(253,121,168,0.1);border-radius:4px;display:inline-block;">Example Conversations (' + data.example_conversations.length + ')</div>';
+    data.example_conversations.slice(0, 15).forEach(ex => {
+      html += '<div style="padding:6px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;margin-bottom:3px;font-size:11px;">';
+      html += '<span style="color:var(--text-dim);">Customer:</span> <span style="color:var(--text-bright);">' + escapeHtml(toStr(ex.customer || '')) + '</span><br>';
+      html += '<span style="color:var(--text-dim);">Ketu:</span> <span style="color:var(--green);">' + escapeHtml(toStr(ex.reply || '')) + '</span>';
+      html += '</div>';
+    });
+    if (data.example_conversations.length > 15) html += '<div style="color:var(--text-dim);font-size:11px;text-align:center;padding:6px;">... and ' + (data.example_conversations.length - 15) + ' more</div>';
+    html += '</div>';
+  }
+
+  if (!html) {
+    html = '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">No learned knowledge yet. Correct AI replies to start learning.</div>';
+  }
+
+  document.getElementById('learnedKnowledgeList').innerHTML = html;
+}
+
+// ---- CLOUD PAYLOAD DEBUG ----
+
+async function loadCorrectionHistory() {
+  const data = await fetchJSON('/api/learn/correction-history');
+  if (!data) return;
+
+  const corrections = data.corrections || [];
+  const cloudCalls = data.cloud_calls || [];
+  const correctionEntries = corrections.filter(c => c.source !== 'ketu-takeover');
+  const takeoverEntries = corrections.filter(c => c.source === 'ketu-takeover');
+  const learned = corrections.filter(c => c.status === 'learned').length;
+
+  document.getElementById('chTotal').textContent = data.total || 0;
+  document.getElementById('chCloudCalls').textContent = data.cloud_call_count || 0;
+  document.getElementById('chLearned').textContent = learned;
+
+  if (corrections.length === 0) {
+    document.getElementById('correctionHistoryList').innerHTML =
+      '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">No corrections or takeovers yet. Edit an AI reply or take over a chat to see history here.</div>';
+    return;
+  }
+
+  let html = '';
+
+  // Takeover summary badge
+  if (takeoverEntries.length > 0) {
+    const takeoverTokens = takeoverEntries.reduce((sum, t) => sum + (t.input_tokens || 0) + (t.output_tokens || 0), 0);
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">';
+    html += '<span style="background:rgba(0,206,201,0.1);color:var(--accent2);font-size:11px;padding:4px 10px;border-radius:10px;">Ketu Takeovers sent to cloud: ' + takeoverEntries.length + '</span>';
+    html += '<span style="background:rgba(253,203,110,0.1);color:var(--orange);font-size:11px;padding:4px 10px;border-radius:10px;">Takeover tokens: ' + takeoverTokens + '</span>';
+    html += '</div>';
+  }
+
+  corrections.forEach((c, i) => {
+    const time = new Date(c.timestamp * 1000).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit'});
+    const statusColor = c.status === 'learned' ? 'var(--green)' : c.status === 'error' ? 'var(--red)' : 'var(--orange)';
+    const isTakeover = c.source === 'ketu-takeover';
+    const srcLabel = isTakeover ? 'Takeover' : (c.source === 'whatsapp-edit' ? 'Edit' : 'API');
+    const srcColor = isTakeover ? 'rgba(0,206,201,0.15)' : 'rgba(253,121,168,0.15)';
+    const srcTextColor = isTakeover ? 'var(--accent2)' : '#fd79a8';
+
+    html += '<div style="border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:8px;padding:12px 14px;' + (isTakeover ? 'border-left:3px solid var(--accent2);' : '') + '">';
+
+    // Header
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+    html += '<div style="display:flex;align-items:center;gap:8px;">';
+    html += '<span style="background:' + srcColor + ';border-radius:4px;padding:2px 8px;font-size:11px;color:' + srcTextColor + ';">' + srcLabel + '</span>';
+    html += '<span style="font-size:12px;color:var(--text-dim);">' + time + '</span>';
+    if (c.customer_phone) html += '<span style="font-size:12px;color:var(--text-dim);">...' + escapeHtml(c.customer_phone) + '</span>';
+    if (c.customer_name) html += '<span style="font-size:12px;color:var(--accent2);">' + escapeHtml(c.customer_name.slice(0, 20)) + '</span>';
+    if (isTakeover && (c.input_tokens || c.output_tokens)) {
+      html += '<span style="font-size:10px;color:var(--orange);">' + (c.input_tokens + c.output_tokens) + ' tokens</span>';
+    }
+    html += '</div>';
+    html += '<span style="font-size:11px;font-weight:600;color:' + statusColor + ';">' + (c.status || '?') + '</span>';
+    html += '</div>';
+
+    // Customer message
+    html += '<div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">Customer asked:</div>';
+    html += '<div style="font-size:13px;color:var(--text);background:rgba(255,255,255,0.03);border-radius:6px;padding:8px;margin-bottom:8px;">' + escapeHtml(c.customer_message || '') + '</div>';
+
+    if (isTakeover) {
+      // Takeover-specific: Ketu's reply + what cloud learned
+      if (c.ketu_reply) {
+        html += '<div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">Ketu replied:</div>';
+        html += '<div style="font-size:12px;color:var(--text);background:rgba(0,206,201,0.08);border:1px solid rgba(0,206,201,0.15);border-radius:6px;padding:8px;margin-bottom:8px;">' + escapeHtml(c.ketu_reply) + '</div>';
+      }
+      if (c.category) {
+        html += '<div style="font-size:11px;color:var(--accent);margin-bottom:3px;">Category: ' + escapeHtml(c.category) + '</div>';
+      }
+      if (c.question_pattern) {
+        html += '<div style="font-size:11px;color:var(--accent2);margin-bottom:3px;">Pattern learned: "' + escapeHtml(c.question_pattern) + '"</div>';
+      }
+      if (c.why_ketu_only) {
+        html += '<div style="font-size:11px;color:var(--orange);margin-bottom:3px;">Why Ketu only: ' + escapeHtml(c.why_ketu_only) + '</div>';
+      }
+      if (c.should_learn) {
+        html += '<div style="font-size:10px;color:var(--green);">New pattern saved — AI will defer similar questions</div>';
+      }
+    } else {
+      // Correction-specific: Before/After
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">';
+      html += '<div>';
+      html += '<div style="font-size:11px;color:var(--red);margin-bottom:3px;">AI replied (wrong):</div>';
+      html += '<div style="font-size:12px;color:var(--text);background:rgba(214,48,49,0.08);border:1px solid rgba(214,48,49,0.15);border-radius:6px;padding:8px;">' + escapeHtml(c.ai_reply || '') + '</div>';
+      html += '</div>';
+      html += '<div>';
+      html += '<div style="font-size:11px;color:var(--green);margin-bottom:3px;">Ketu corrected to:</div>';
+      html += '<div style="font-size:12px;color:var(--text);background:rgba(0,206,201,0.08);border:1px solid rgba(0,206,201,0.15);border-radius:6px;padding:8px;">' + escapeHtml(c.ketu_correction || '') + '</div>';
+      html += '</div>';
+      html += '</div>';
+      if (c.what_went_wrong) {
+        html += '<div style="font-size:12px;color:var(--orange);margin-bottom:4px;">What went wrong: ' + escapeHtml(c.what_went_wrong) + '</div>';
+      }
+      if (c.updates_applied && c.updates_applied.length > 0) {
+        html += '<div style="font-size:11px;color:var(--accent);">Learned: ' + escapeHtml(c.updates_applied.join(', ')) + ' (' + c.updates_count + ' updates)</div>';
+      }
+    }
+
+    html += '</div>';
+  });
+
+  document.getElementById('correctionHistoryList').innerHTML = html;
+}
+
+async function loadCloudPayloads() {
+  const data = await fetchJSON('/api/cloud-payloads');
+  if (!data || !data.payloads) {
+    document.getElementById('cloudPayloadList').innerHTML =
+      '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">No payloads logged yet. Payloads appear after the next learning API call.</div>';
+    return;
+  }
+
+  const payloads = data.payloads;
+
+  // Stats
+  document.getElementById('cpTotalCalls').textContent = payloads.length;
+
+  if (payloads.length > 0) {
+    const avgTokens = Math.round(payloads.reduce((s, p) => s + (p.actual_input_tokens || p.estimated_input_tokens || 0), 0) / payloads.length);
+    const avgWords = Math.round(payloads.reduce((s, p) => s + (p.prompt_word_count || 0), 0) / payloads.length);
+    const pairsPayloads = payloads.filter(p => p.pair_count != null);
+    const avgPairs = pairsPayloads.length > 0 ? Math.round(pairsPayloads.reduce((s, p) => s + p.pair_count, 0) / pairsPayloads.length) : '--';
+    document.getElementById('cpAvgTokens').textContent = avgTokens.toLocaleString();
+    document.getElementById('cpAvgWords').textContent = avgWords.toLocaleString();
+    document.getElementById('cpAvgPairs').textContent = avgPairs;
+  }
+
+  // Build payload list
+  let html = '';
+  payloads.forEach((p, i) => {
+    const time = new Date(p.timestamp * 1000).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+    const date = new Date(p.timestamp * 1000).toLocaleDateString('en-IN');
+    const actualTokens = p.actual_input_tokens || 0;
+    const estTokens = p.estimated_input_tokens || 0;
+    const tokenColor = actualTokens > 3000 ? 'var(--red)' : actualTokens > 1500 ? 'var(--orange)' : 'var(--green)';
+    const sourceColors = {
+      'wwbun-learning': 'var(--accent2)',
+      'whatsapp-learning': 'var(--accent)',
+      'realtime-analysis': 'var(--orange)',
+    };
+    const srcColor = sourceColors[p.source] || 'var(--text-dim)';
+
+    html += '<div style="border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:8px;overflow:hidden;">';
+
+    // Header row (clickable)
+    html += '<div onclick="togglePayload(' + i + ')" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;cursor:pointer;background:rgba(255,255,255,0.02);">';
+    html += '<div style="display:flex;align-items:center;gap:10px;">';
+    html += '<span style="background:rgba(255,255,255,0.06);border-radius:4px;padding:2px 8px;font-size:11px;color:' + srcColor + ';">' + (p.source || 'unknown') + '</span>';
+    html += '<span style="font-size:12px;color:var(--text-dim);">' + date + ' ' + time + '</span>';
+    if (p.pair_count != null) {
+      html += '<span style="font-size:12px;color:var(--text-dim);">' + p.pair_count + ' pairs</span>';
+    }
+    html += '</div>';
+    html += '<div style="display:flex;align-items:center;gap:12px;">';
+    html += '<span style="font-size:12px;color:var(--text-dim);">' + (p.prompt_word_count || 0) + ' words</span>';
+    html += '<span style="font-size:14px;font-weight:600;color:' + tokenColor + ';">' + actualTokens.toLocaleString() + ' tokens</span>';
+    html += '<span style="font-size:11px;color:var(--text-dim);">(est: ' + estTokens.toLocaleString() + ')</span>';
+    html += '<span id="cpArrow' + i + '" style="color:var(--text-dim);font-size:10px;">&#9660;</span>';
+    html += '</div></div>';
+
+    // Expandable prompt text (hidden by default)
+    html += '<div id="cpBody' + i + '" style="display:none;padding:12px 14px;border-top:1px solid rgba(255,255,255,0.06);">';
+    html += '<div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">EXACT PROMPT SENT TO CLAUDE (' + p.model + ', max_tokens=' + p.max_tokens + '):</div>';
+    html += '<pre style="white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--text);background:rgba(0,0,0,0.3);border-radius:6px;padding:12px;max-height:400px;overflow-y:auto;line-height:1.5;">';
+    html += escapeHtml(p.prompt_text || '(empty)');
+    html += '</pre>';
+    if (p.actual_output_tokens) {
+      html += '<div style="font-size:11px;color:var(--text-dim);margin-top:8px;">Output tokens used: ' + p.actual_output_tokens + '</div>';
+    }
+    html += '</div></div>';
+  });
+
+  if (!html) {
+    html = '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:20px;">No payloads logged yet. Payloads appear after the next learning API call.</div>';
+  }
+
+  document.getElementById('cloudPayloadList').innerHTML = html;
+}
+
+function togglePayload(i) {
+  const body = document.getElementById('cpBody' + i);
+  const arrow = document.getElementById('cpArrow' + i);
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    arrow.innerHTML = '&#9650;';
+  } else {
+    body.style.display = 'none';
+    arrow.innerHTML = '&#9660;';
+  }
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ---- INIT & AUTO-REFRESH ----
@@ -2478,6 +3048,10 @@ async function init() {
     safe(loadAudioStats),
     safe(loadWwbunStats),
     safe(loadKetuOnly),
+    safe(loadLeaves),
+    safe(loadCloudPayloads),
+    safe(loadCorrectionHistory),
+    safe(loadLearnedKnowledge),
   ]);
 
   // Countdown ticks every second (local, no API call)
@@ -2497,8 +3071,142 @@ async function init() {
       safe(loadAudioStats),
       safe(loadWwbunStats),
       safe(loadKetuOnly),
+      safe(loadLeaves),
+      safe(loadCloudPayloads),
+      safe(loadCorrectionHistory),
     ]);
   }, 30000);
+}
+
+// ---- LEAVE MANAGEMENT ----
+
+function toggleLeaveForm() {
+  const isFullDay = document.querySelector('input[name="leaveType"]:checked').value === 'full_day';
+  document.getElementById('busyHoursFields').style.display = isFullDay ? 'none' : 'grid';
+}
+
+async function addLeave() {
+  const leaveType = document.querySelector('input[name="leaveType"]:checked').value;
+  const body = {
+    leave_type: leaveType,
+    start_date: document.getElementById('leaveStartDate').value,
+    end_date: document.getElementById('leaveEndDate').value || null,
+    reason: document.getElementById('leaveReason').value,
+    contact_info: document.getElementById('leaveContact').value,
+  };
+
+  if (!body.start_date) {
+    alert('Please select a start date');
+    return;
+  }
+
+  if (leaveType === 'busy_hours') {
+    body.start_time = document.getElementById('leaveStartTime').value || null;
+    body.end_time = document.getElementById('leaveEndTime').value || null;
+    if (!body.start_time || !body.end_time) {
+      alert('Please select start and end times for busy hours');
+      return;
+    }
+  }
+
+  try {
+    const resp = await fetch(BASE + '/api/leaves', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (resp.ok) {
+      // Clear form
+      document.getElementById('leaveStartDate').value = '';
+      document.getElementById('leaveEndDate').value = '';
+      document.getElementById('leaveStartTime').value = '';
+      document.getElementById('leaveEndTime').value = '';
+      document.getElementById('leaveReason').value = '';
+      document.getElementById('leaveContact').value = '';
+      loadLeaves();
+    }
+  } catch(e) { console.error('Add leave failed:', e); }
+}
+
+async function removeLeave(leaveId) {
+  if (!confirm('Remove this leave?')) return;
+  try {
+    await fetch(BASE + '/api/leaves/' + leaveId, {method: 'DELETE'});
+    loadLeaves();
+  } catch(e) { console.error('Remove leave failed:', e); }
+}
+
+async function loadLeaves() {
+  const data = await fetchJSON('/api/leaves');
+  if (!data) return;
+
+  const badge = document.getElementById('leaveBadge');
+  const banner = document.getElementById('leaveStatusBanner');
+  const statusText = document.getElementById('leaveStatusText');
+  const statusDetail = document.getElementById('leaveStatusDetail');
+  const list = document.getElementById('leaveList');
+
+  // Current status
+  const status = data.current_status;
+  if (status && status.active) {
+    banner.style.display = 'block';
+    if (status.type === 'full_day') {
+      statusText.textContent = 'ON LEAVE' + (status.days_left > 1 ? ` (${status.days_left} days left)` : ' (today)');
+      statusDetail.textContent = status.reason ? `Reason: ${status.reason}. ` : '';
+      statusDetail.textContent += 'AI auto-replying with leave message to all customers';
+    } else {
+      statusText.textContent = `BUSY (until ${status.end_time})`;
+      statusDetail.textContent = status.reason ? `Reason: ${status.reason}. ` : '';
+      statusDetail.textContent += 'AI telling customers Ketu will reply soon';
+    }
+    badge.textContent = status.type === 'full_day' ? 'ON LEAVE' : 'BUSY';
+    badge.style.background = 'rgba(214,48,49,0.15)';
+    badge.style.color = 'var(--red)';
+  } else {
+    banner.style.display = 'none';
+    badge.textContent = 'Available';
+    badge.style.background = 'rgba(0,184,148,0.15)';
+    badge.style.color = 'var(--green)';
+  }
+
+  // Leave list
+  const leaves = data.leaves || [];
+  if (leaves.length === 0) {
+    list.innerHTML = '<div class="empty-state" style="font-size:12px;">No leaves scheduled</div>';
+    return;
+  }
+
+  let html = '';
+  for (const l of leaves) {
+    const isActive = status && status.active &&
+      ((status.type === 'full_day' && l.start_date === status.start_date) ||
+       (status.type === 'busy_hours' && l.start_time === status.start_time));
+
+    const activeDot = isActive ? '<span style="color:var(--red);font-weight:700;"> ACTIVE</span>' : '';
+
+    let dateStr = l.start_date;
+    if (l.end_date && l.end_date !== l.start_date) {
+      dateStr += ' to ' + l.end_date;
+    }
+    if (l.type === 'busy_hours' && l.start_time) {
+      dateStr += ` (${l.start_time} - ${l.end_time})`;
+    }
+
+    const typeLabel = l.type === 'full_day' ? 'LEAVE' : 'BUSY';
+    const typeColor = l.type === 'full_day' ? 'var(--red)' : 'var(--orange)';
+    const reason = l.reason ? ` — ${l.reason}` : '';
+    const contact = l.contact_info ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px;">Contact: ${l.contact_info}</div>` : '';
+
+    html += `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:6px;margin-bottom:6px;border-left:3px solid ${typeColor};">
+      <div>
+        <span style="font-size:10px;font-weight:700;color:${typeColor};text-transform:uppercase;">${typeLabel}</span>${activeDot}
+        <span style="font-size:12px;color:var(--text);margin-left:8px;">${dateStr}${reason}</span>
+        ${contact}
+      </div>
+      <button onclick="removeLeave(${l.id})" style="background:rgba(214,48,49,0.15);color:var(--red);border:none;border-radius:4px;padding:4px 8px;font-size:10px;cursor:pointer;">Remove</button>
+    </div>`;
+  }
+  list.innerHTML = html;
 }
 
 init();

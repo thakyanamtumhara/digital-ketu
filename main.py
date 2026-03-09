@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import re
+import time
 from contextlib import asynccontextmanager
 
 from pathlib import Path
@@ -13,7 +15,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from core.config import settings, init_knowledge_dir, KNOWLEDGE_DIR
-from core.engine import generate_reply, get_customer_insights, get_faq_hit_rates, invalidate_ender_cache, get_last_escalation, ketu_manual_reply, activate_shutup
+from core.engine import generate_reply, get_customer_insights, get_faq_hit_rates, invalidate_ender_cache, get_last_escalation, ketu_manual_reply, activate_shutup, track_wwbun_insights
 from core.knowledge import load_knowledge, invalidate_cache
 from core.activity_log import log_activity, get_activity_log, get_today_summary, get_storage_stats
 from integrations.whatsapp.webhook import router as whatsapp_router
@@ -26,6 +28,8 @@ from learner.chat_learner import (
     learn_conversation_enders,
     detect_bought_customers_from_chat,
     learn_repeat_buyer_patterns,
+    is_low_quality_owner_reply,
+    has_business_intent,
 )
 from learner.youtube_learner import process_video
 from scheduler import (
@@ -48,6 +52,7 @@ from learner.realtime_learner import (
     learn_from_correction,
     learn_from_voice_note,
     get_realtime_stats,
+    get_correction_stats,
 )
 from core.conversation_log import (
     get_recent_conversations,
@@ -193,6 +198,10 @@ class ReplyRequest(BaseModel):
     customer_phone: str = ""
     customer_name: str = ""
     conversation_history: list[dict] | None = None
+    # Audio fields — wwbun sends these when customer sends voice note
+    audio_url: str = ""       # Direct URL to audio file (from wwbun's storage)
+    audio_base64: str = ""    # Base64-encoded audio bytes
+    media_id: str = ""        # WhatsApp Business API media ID
 
 
 class ReplyResponse(BaseModel):
@@ -211,9 +220,94 @@ async def api_reply(req: ReplyRequest):
     If should_reply is false, wwbun should NOT send anything — customer
     just acknowledged (said "ok", "thanks", etc.) and conversation is done.
     """
+    # Handle media markers from wwbun — these are not real text messages
+    msg_lower = req.message.strip().lower()
+    if msg_lower in ("[audio]", "[image]", "[video]", "[sticker]", "[document]",
+                      "[location]", "[contacts]", "[system message]"):
+        # Voice notes: transcribe if audio data provided, otherwise ask for text
+        if msg_lower == "[audio]":
+            has_audio = req.audio_url or req.audio_base64 or req.media_id
+            if has_audio and settings.openai_api_key:
+                # Transcribe the voice note
+                from learner.audio_transcriber import process_audio_from_any_source
+                try:
+                    transcribed = await process_audio_from_any_source(
+                        media_id=req.media_id,
+                        audio_url=req.audio_url,
+                        audio_base64=req.audio_base64,
+                        customer_phone=req.customer_phone,
+                        source="wwbun",
+                    )
+                except Exception as e:
+                    logger.error(f"[VoiceNote] wwbun transcription failed: {e}")
+                    transcribed = None
+
+                if transcribed:
+                    # Got text from voice — now generate reply as normal
+                    logger.info(f"[VoiceNote] wwbun transcribed: '{transcribed[:60]}' from {req.customer_phone[-4:] if req.customer_phone else '?'}")
+                    log_activity(
+                        source="api-reply",
+                        action="voice-transcribed",
+                        details={
+                            "customer_phone": req.customer_phone[-4:] if req.customer_phone else "unknown",
+                            "text_preview": transcribed[:80],
+                        },
+                        items_count=1,
+                    )
+                    # Use transcribed text as the message for reply generation
+                    reply = await asyncio.to_thread(
+                        generate_reply,
+                        message=transcribed,
+                        customer_phone=req.customer_phone,
+                        customer_name=req.customer_name,
+                        conversation_history=req.conversation_history,
+                    )
+                    if not reply:
+                        return ReplyResponse(reply="", status="skipped", should_reply=False)
+                    from core.conversation_log import log_conversation
+                    log_conversation(
+                        customer_phone=req.customer_phone or "",
+                        customer_name=req.customer_name or "",
+                        customer_message=transcribed,
+                        ai_reply=reply,
+                    )
+                    escalation = get_last_escalation(req.customer_phone) if req.customer_phone else {}
+                    return ReplyResponse(
+                        reply=reply,
+                        escalation_level=escalation.get("level", "none"),
+                        escalation_reason=escalation.get("reason", ""),
+                    )
+                else:
+                    # Transcription failed — ask for text
+                    reply = "Ji sir, voice message clear nahi aa raha. Text mein bata dijiye please!"
+                    return ReplyResponse(reply=reply, status="ok", should_reply=True)
+            else:
+                # No audio data or no OpenAI key — ask for text
+                reply = "Ji sir, voice message text mein bhej dijiye please — jaldi reply karunga!"
+                log_activity(
+                    source="api-reply",
+                    action="voice-text-request",
+                    details={
+                        "customer_phone": req.customer_phone[-4:] if req.customer_phone else "unknown",
+                        "customer_name": req.customer_name or "unknown",
+                    },
+                    items_count=0,
+                )
+                return ReplyResponse(reply=reply, status="ok", should_reply=True)
+        # Other media: skip silently (images, stickers, etc.)
+        return ReplyResponse(reply="", status="skipped", should_reply=False)
+
+    # Strip wwbun's [Replying to: "..."] prefix from quoted replies.
+    # The quote context is already in conversation_history — the prefix just
+    # confuses ender detection (e.g. "Ok" becomes "[Replying to: ...] Ok" and
+    # doesn't get caught as a conversation ender).
+    clean_message = re.sub(r'^\[Replying to:\s*"?[^]]*"?\]\s*', '', req.message.strip()).strip()
+    if not clean_message:
+        clean_message = req.message.strip()  # Fallback: don't lose message
+
     reply = await asyncio.to_thread(
         generate_reply,
-        message=req.message,
+        message=clean_message,
         customer_phone=req.customer_phone,
         customer_name=req.customer_name,
         conversation_history=req.conversation_history,
@@ -238,6 +332,15 @@ async def api_reply(req: ReplyRequest):
     escalation = get_last_escalation(req.customer_phone) if req.customer_phone else {}
     esc_level = escalation.get("level", "none")
     esc_reason = escalation.get("reason", "")
+
+    # Log conversation so corrections can find the original AI reply
+    from core.conversation_log import log_conversation
+    log_conversation(
+        customer_phone=req.customer_phone or "",
+        customer_name=req.customer_name or "",
+        customer_message=clean_message,
+        ai_reply=reply,
+    )
 
     log_activity(
         source="api-reply",
@@ -268,11 +371,8 @@ class ToggleRequest(BaseModel):
 
 @app.post("/api/toggle")
 async def toggle_auto_reply(req: ToggleRequest):
-    """Enable/disable auto-reply. Also auto-enables follow-up when turning on."""
+    """Enable/disable auto-reply. Follow-up is controlled independently."""
     settings.auto_reply_enabled = req.enabled
-    # Auto-enable followup when auto-reply turns on
-    if req.enabled:
-        settings.followup_enabled = True
     status = "enabled" if req.enabled else "disabled"
     logger.info(f"Auto-reply {status} (followup: {'on' if settings.followup_enabled else 'off'})")
     return {
@@ -307,6 +407,55 @@ async def get_followup_toggle_status():
     return {"followup_enabled": settings.followup_enabled}
 
 
+# --- Leave Management ---
+
+
+class LeaveRequest(BaseModel):
+    leave_type: str  # "full_day" or "busy_hours"
+    start_date: str  # "2026-09-04"
+    end_date: str | None = None  # "2026-09-05" for multi-day
+    start_time: str | None = None  # "14:00" for busy_hours
+    end_time: str | None = None  # "16:00" for busy_hours
+    reason: str = ""
+    contact_info: str = ""  # Godown number, website, alternate contact
+
+
+@app.get("/api/leaves")
+async def get_leaves():
+    """Get all active and upcoming leaves."""
+    from core.leave_manager import get_active_leaves, check_leave_status
+    return {
+        "leaves": get_active_leaves(),
+        "current_status": check_leave_status(),
+    }
+
+
+@app.post("/api/leaves")
+async def add_leave(req: LeaveRequest):
+    """Add a new leave/busy period."""
+    from core.leave_manager import add_leave as _add_leave
+    leave = _add_leave(
+        leave_type=req.leave_type,
+        start_date=req.start_date,
+        end_date=req.end_date,
+        start_time=req.start_time,
+        end_time=req.end_time,
+        reason=req.reason,
+        contact_info=req.contact_info,
+    )
+    return {"status": "added", "leave": leave}
+
+
+@app.delete("/api/leaves/{leave_id}")
+async def delete_leave(leave_id: int):
+    """Remove a leave entry."""
+    from core.leave_manager import remove_leave
+    removed = remove_leave(leave_id)
+    if removed:
+        return {"status": "removed"}
+    return {"status": "not_found"}
+
+
 # --- Knowledge Management ---
 
 
@@ -321,10 +470,120 @@ async def reload_knowledge():
     }
 
 
+@app.get("/api/knowledge/cleanup-enders")
+async def cleanup_bad_enders():
+    """Remove greetings and junk from learned enders list.
+
+    Fixes the bug where greetings like 'hi', 'hello' were incorrectly
+    learned as conversation enders because Ketu was busy and didn't reply.
+    """
+    from core.database import is_db_available, load_knowledge_from_db, save_knowledge
+
+    # Greetings that should NEVER be enders
+    never_enders = {
+        "hi", "hii", "hiii", "hiiii", "hello", "hey", "heyy", "heyyy",
+        "hlo", "helo", "hllo", "helloo", "hellooo",
+        "namaste", "namaskar", "namaskaar",
+        "good morning", "good afternoon", "good evening", "good night",
+        "gm", "gn", "sir", "bhai", "bhaiya", "bro", "boss",
+        "hello sir", "hi sir", "hey sir", "hello bhai", "hi bhai",
+    }
+
+    # Also remove obvious junk (gibberish, system messages, etc.)
+    junk_prefixes = ["[image", "[audio", "[video", "[sticker", "[system", "[order", "[reacted"]
+
+    enders_data = None
+    if is_db_available():
+        enders_data = load_knowledge_from_db("conversation_enders")
+
+    if not enders_data:
+        return {"status": "no_data", "removed": 0}
+
+    learned = enders_data.get("learned_enders", [])
+    original_count = len(learned)
+
+    # Filter out greetings and junk
+    cleaned = []
+    removed = []
+    for e in learned:
+        pattern = e.get("pattern", e) if isinstance(e, dict) else e
+        pattern_lower = pattern.lower().strip()
+
+        # Remove greetings
+        if pattern_lower in never_enders:
+            removed.append(pattern_lower)
+            continue
+
+        # Remove junk prefixes
+        if any(pattern_lower.startswith(p) for p in junk_prefixes):
+            removed.append(pattern_lower)
+            continue
+
+        cleaned.append(e)
+
+    enders_data["learned_enders"] = cleaned
+
+    # Save back
+    save_knowledge("conversation_enders", enders_data)
+
+    # Also invalidate the engine's cached ender patterns
+    invalidate_cache()
+
+    return {
+        "status": "cleaned",
+        "removed_count": len(removed),
+        "removed_patterns": removed,
+        "remaining_count": len(cleaned),
+        "original_count": original_count,
+    }
+
+
 @app.get("/api/knowledge")
 async def get_knowledge():
     """View current knowledge base."""
     return load_knowledge()
+
+
+@app.get("/api/knowledge/learned-summary")
+async def get_learned_summary():
+    """Summary of all learned knowledge — for dashboard 'Active Learned Knowledge' section.
+
+    Returns learned_patterns, evolved_rules, evolved_traits, auto-learned FAQs,
+    and example_conversations so Ketu can verify what the AI has learned.
+    """
+    knowledge = load_knowledge()
+
+    # Learned patterns from style.json
+    style = knowledge.get("style", {})
+    learned_patterns = style.get("learned_patterns", [])
+    example_conversations = style.get("example_conversations", [])
+
+    # Evolved rules/traits from prompt.json
+    prompt_data = knowledge.get("prompt", {})
+    evolved_rules = prompt_data.get("evolved_rules", [])
+    evolved_traits = prompt_data.get("evolved_traits", [])
+    evolved_phrases = prompt_data.get("evolved_phrases", [])
+
+    # Auto-learned FAQs
+    faqs = knowledge.get("faq", {}).get("faqs", [])
+    auto_learned_faqs = [f for f in faqs if f.get("source") == "auto_learned"]
+
+    # Learned files from learned/ directory
+    learned_files = knowledge.get("learned", [])
+
+    total = (len(learned_patterns) + len(evolved_rules) + len(evolved_traits)
+             + len(auto_learned_faqs) + len(learned_files))
+
+    return {
+        "total": total,
+        "learned_patterns": learned_patterns,
+        "evolved_rules": evolved_rules,
+        "evolved_traits": evolved_traits,
+        "evolved_phrases": evolved_phrases,
+        "example_conversations": example_conversations,
+        "auto_learned_faqs": auto_learned_faqs,
+        "learned_files_count": len(learned_files),
+    }
 
 
 # --- Learner APIs ---
@@ -461,6 +720,7 @@ def _track_wwbun_sync(
         _wwbun_stats["today_messages"] = 0
         _wwbun_stats["today_quality"] = 0
         _wwbun_stats["today_knowledge"] = 0
+        _wwbun_stats["recent_quality_messages"] = []  # Clear old day's messages from live feed
 
     # Update totals
     _wwbun_stats["total_syncs"] += 1
@@ -484,21 +744,53 @@ def _track_wwbun_sync(
     # Recent quality pairs (for live preview — customer Q + Ketu reply)
     # Take the LAST 5 (newest) pairs, not the first 5 (oldest)
     # Deduplicate against existing pairs to avoid re-adding same pairs from full buffer
+    # FILTER: Only show today's messages — skip old conversations from days ago
     existing_keys = set()
     for existing in _wwbun_stats["recent_quality_messages"]:
         key = (existing.get("customer", ""), existing.get("ketu", ""))
         existing_keys.add(key)
 
-    for msg in quality_previews[-5:]:
+    for msg in quality_previews:
         if isinstance(msg, dict) and msg.get("customer") and msg.get("ketu"):
+            # Skip old messages — only show today's conversations in live feed
+            # Convert to IST before comparing dates (wwbun may send UTC)
+            msg_ts = msg.get("msg_timestamp", "")
+            if msg_ts:
+                try:
+                    from datetime import datetime as _dt
+                    parsed_msg = _dt.fromisoformat(msg_ts)
+                    msg_date_ist = parsed_msg.astimezone(ist).strftime("%Y-%m-%d")
+                    today_str = now.strftime("%Y-%m-%d")
+                    if msg_date_ist < today_str:
+                        continue  # Old message, skip from live feed
+                except Exception:
+                    pass
+
             key = (msg["customer"][:100], msg["ketu"][:120])
             if key in existing_keys:
                 continue  # Skip duplicate pair
+
+            # Use original message time if available, else sync time
+            # Convert to IST — wwbun may send UTC timestamps
+            display_time = now.strftime("%I:%M %p")
+            if msg_ts:
+                try:
+                    from datetime import datetime as _dt
+                    parsed = _dt.fromisoformat(msg_ts)
+                    # Convert to IST for display
+                    parsed_ist = parsed.astimezone(ist)
+                    display_time = parsed_ist.strftime("%I:%M %p")
+                except Exception:
+                    pass
+
             _wwbun_stats["recent_quality_messages"].append({
                 "customer": msg["customer"][:100],
                 "ketu": msg["ketu"][:120],
                 "ai": msg.get("ai", False),
-                "time": now.strftime("%I:%M %p"),
+                "time": display_time,
+                "phone": msg.get("phone_hint", ""),
+                "chat_id": msg.get("chat_id", ""),
+                "name": msg.get("contact_name", ""),
             })
             existing_keys.add(key)
         elif isinstance(msg, str):
@@ -631,52 +923,269 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
             logger.warning("[extract-pairs] sender_ids AND is_owner BOTH unreliable → word-count heuristic")
 
     # Group by chat_id (same conversation)
+    # CRITICAL: when chat_id is missing (wwbun doesn't send it), fall back to
+    # sender_id for NON-owner messages so different customers stay separated.
+    # Owner messages go into the same group as the customer they're replying to.
     by_chat: dict[str, list] = {}
     for m in messages:
-        chat_id = m.get("chat_id", m.get("remote_jid", "unknown"))
+        chat_id = m.get("chat_id", m.get("remote_jid", ""))
+        if not chat_id:
+            # No chat_id — use sender_id to group customer messages separately.
+            # Owner messages: group by "unknown" for now, then re-assign below.
+            sid = str(m.get("sender_id", ""))
+            is_owner = _is_owner_by_flag(m) if use_flag else _is_owner_message(m, owner_user_id)
+            if is_owner:
+                chat_id = f"_owner_{sid}"
+            else:
+                chat_id = f"_cust_{sid}"
         by_chat.setdefault(chat_id, []).append(m)
 
+    # When chat_id is missing, owner messages are in separate "_owner_*" groups.
+    # We need to assign each owner reply to the correct customer thread.
+    # Strategy: process chronologically — each Ketu reply goes to the thread
+    # with the oldest UNANSWERED customer message (not yet replied to since
+    # that customer's last message).
+    has_synthetic_groups = any(k.startswith("_cust_") or k.startswith("_owner_") for k in by_chat)
+    if has_synthetic_groups:
+        # Separate customer threads and owner messages
+        cust_threads: dict[str, list] = {}  # sender_id → messages
+        owner_msgs: list = []
+        real_groups: dict[str, list] = {}
+
+        for k, v in by_chat.items():
+            if k.startswith("_cust_"):
+                sid = k[len("_cust_"):]
+                cust_threads[sid] = sorted(v, key=lambda x: x.get("timestamp", x.get("created_at", "")))
+            elif k.startswith("_owner_"):
+                owner_msgs.extend(v)
+            else:
+                real_groups[k] = v
+
+        if cust_threads:
+            # Sort owner messages by timestamp
+            owner_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
+
+            # Build a timeline of ALL customer messages across all threads
+            # to know when each thread has "new" unanswered messages.
+            # Track: last_owner_reply_ts per thread — any customer msg AFTER this
+            # means the thread has unanswered messages.
+            last_reply_ts: dict[str, str] = {}  # sid → timestamp of last assigned owner reply
+
+            for owner_msg in owner_msgs:
+                owner_ts = owner_msg.get("timestamp", owner_msg.get("created_at", ""))
+                owner_content = (owner_msg.get("content", "") or owner_msg.get("text", "") or owner_msg.get("body", "")).strip()
+                owner_is_low_quality = is_low_quality_owner_reply(owner_content)
+
+                # Find threads with unanswered customer messages:
+                # A thread is "unanswered" if it has customer messages with
+                # timestamps AFTER the last owner reply assigned to it.
+                unanswered = []
+                for sid, msgs in cust_threads.items():
+                    last_reply = last_reply_ts.get(sid, "")
+                    # Find the latest customer msg in this thread
+                    latest_cust_ts = ""
+                    for m in msgs:
+                        m_ts = m.get("timestamp", m.get("created_at", ""))
+                        m_is_owner = _is_owner_by_flag(m) if use_flag else _is_owner_message(m, owner_user_id)
+                        if not m_is_owner and m_ts > latest_cust_ts:
+                            latest_cust_ts = m_ts
+                    # Thread has unanswered msgs if latest customer msg is after last reply
+                    if latest_cust_ts and latest_cust_ts > last_reply:
+                        # Use the FIRST unanswered customer msg timestamp for ordering
+                        first_unanswered = ""
+                        for m in msgs:
+                            m_ts = m.get("timestamp", m.get("created_at", ""))
+                            m_is_owner = _is_owner_by_flag(m) if use_flag else _is_owner_message(m, owner_user_id)
+                            if not m_is_owner and m_ts > last_reply:
+                                first_unanswered = m_ts
+                                break
+                        unanswered.append((sid, first_unanswered))
+
+                if unanswered:
+                    # Assign to thread with oldest unanswered message
+                    unanswered.sort(key=lambda x: x[1])
+                    target_sid = unanswered[0][0]
+                else:
+                    # All threads answered — assign to thread with oldest first msg
+                    target_sid = sorted(
+                        cust_threads.keys(),
+                        key=lambda s: cust_threads[s][0].get("timestamp", cust_threads[s][0].get("created_at", ""))
+                    )[0]
+
+                cust_threads[target_sid].append(owner_msg)
+                # FIX: Low-quality owner replies (e.g. "Ok", "Done", "Hmm") should NOT
+                # mark a thread as "answered". They won't create learning pairs anyway,
+                # and marking them as answered causes wrong assignment when Ketu replies
+                # out of order (newer buyer first, older buyer second).
+                if not owner_is_low_quality:
+                    last_reply_ts[target_sid] = owner_ts
+
+            # Rebuild by_chat with proper thread groups
+            rebuilt = {}
+            for sid, msgs in cust_threads.items():
+                rebuilt[f"_thread_{sid}"] = sorted(msgs, key=lambda x: x.get("timestamp", x.get("created_at", "")))
+            by_chat = {**real_groups, **rebuilt}
+
     all_pairs = []
+    skipped_low_quality = 0
+    skipped_no_intent = 0
+    # Max time gap (5 min) between consecutive customer messages to combine them.
+    # If gap > 5 min, treat as a new conversation thread and reset the buffer.
+    _COMBINE_MAX_GAP_SEC = 300  # 5 minutes
+
+    def _parse_ts(msg_dict: dict):
+        """Parse timestamp from message, return datetime or None."""
+        ts = msg_dict.get("timestamp") or msg_dict.get("created_at") or ""
+        if not ts:
+            return None
+        try:
+            from datetime import datetime as _dt
+            if isinstance(ts, str):
+                # ISO format: 2024-01-15T10:30:00.000Z
+                return _dt.fromisoformat(ts.replace("Z", "+00:00"))
+            return ts  # already a datetime
+        except Exception:
+            return None
+
     for chat_id, chat_msgs in by_chat.items():
         chat_msgs.sort(key=lambda x: x.get("timestamp", x.get("created_at", "")))
-        last_customer_msg = ""
+        # Extract contact_name from any message in this chat (for debug display)
+        _chat_contact_name = ""
+        for _cm in chat_msgs:
+            _cn = _cm.get("contact_name", "")
+            if _cn:
+                _chat_contact_name = _cn
+                break
+        # Multi-message combining: accumulate consecutive customer messages
+        customer_msgs_buffer: list[str] = []
+        last_customer_ts = None  # track timestamp of last buffered customer msg
 
         for msg in chat_msgs:
+            # Skip non-text messages (IMAGE, AUDIO, VIDEO, etc.) — no learning value
+            msg_type = (msg.get("message_type") or msg.get("type") or "TEXT").upper()
+            if msg_type not in ("TEXT", ""):
+                continue
+
             content = (msg.get("content", "") or msg.get("text", "") or msg.get("body", "")).strip()
             if not content:
                 continue
 
+            # Strip [Replying to: "..."] prefix — the quoted message is already
+            # a separate message in the conversation, so the prefix is redundant
+            # and pollutes learning data.
+            content = re.sub(r'^\[Replying to:\s*"?[^]]*"?\]\s*', '', content).strip()
+            if not content:
+                continue
+
+            msg_ts = _parse_ts(msg)
             is_ai = _safe_bool(msg.get("is_ai_generated"))
+
+            def _add_to_buffer(text: str):
+                """Add customer message to buffer, respecting time gap."""
+                nonlocal last_customer_ts
+                # If time gap > 5 min from last buffered msg, reset buffer (new thread)
+                if customer_msgs_buffer and msg_ts and last_customer_ts:
+                    gap = (msg_ts - last_customer_ts).total_seconds()
+                    if gap > _COMBINE_MAX_GAP_SEC:
+                        customer_msgs_buffer.clear()
+                customer_msgs_buffer.append(text)
+                last_customer_ts = msg_ts
+
+            def _try_create_pair(owner_content: str, is_ai_flag: bool):
+                """Try to create a quality pair from buffered customer msgs + owner reply."""
+                nonlocal last_customer_ts
+                if is_low_quality_owner_reply(owner_content):
+                    return "low_quality"
+                combined_customer = " | ".join(customer_msgs_buffer)
+                if not has_business_intent(combined_customer):
+                    return "no_intent"
+                # Extract phone hint from chat_id for debug display
+                _phone_hint = ""
+                _cid = chat_id or ""
+                if _cid.startswith("_thread_"):
+                    _phone_hint = _cid[len("_thread_"):][-4:]  # last 4 digits
+                elif "@" in _cid:
+                    _phone_hint = _cid.split("@")[0][-4:]
+                elif _cid.startswith("_cust_"):
+                    _phone_hint = _cid[len("_cust_"):][-4:]
+                else:
+                    _phone_hint = _cid[-4:] if _cid else ""
+                all_pairs.append({
+                    "customer": combined_customer[:200],
+                    "ketu": owner_content[:120],
+                    "ai": is_ai_flag,
+                    "chat_id": chat_id,
+                    "phone_hint": _phone_hint,  # last 4 digits for debug
+                    "contact_name": _chat_contact_name,
+                    "msg_timestamp": msg_ts.isoformat() if msg_ts else "",
+                })
+                return "ok"
 
             if broken_sids and not use_flag:
                 # Last resort heuristic: short (≤4 words) = customer, long (5+ words) = Ketu
                 words = len(content.split())
-                if words <= 4:
-                    last_customer_msg = content
-                elif words >= 5 and not is_ai and last_customer_msg:
-                    all_pairs.append({
-                        "customer": last_customer_msg[:100],
-                        "ketu": content[:120],
-                        "ai": is_ai,
-                        "chat_id": chat_id,
-                    })
-                    last_customer_msg = ""
+                if is_ai:
+                    # AI reply — clear customer buffer (don't let messages leak past)
+                    customer_msgs_buffer.clear()
+                    last_customer_ts = None
+                elif words <= 4:
+                    _add_to_buffer(content)
+                elif words >= 5 and customer_msgs_buffer:
+                    result = _try_create_pair(content, is_ai)
+                    if result == "low_quality":
+                        skipped_low_quality += 1
+                        # Don't clear buffer — same fix as sender_id path
+                    elif result == "no_intent":
+                        skipped_no_intent += 1
+                        customer_msgs_buffer.clear()
+                        last_customer_ts = None
+                    else:
+                        customer_msgs_buffer.clear()
+                        last_customer_ts = None
             else:
                 is_owner = _is_owner_by_flag(msg) if use_flag else _is_owner_message(msg, owner_user_id)
-                if not is_owner:
-                    last_customer_msg = content
-                elif is_owner and not is_ai and last_customer_msg:
-                    all_pairs.append({
-                        "customer": last_customer_msg[:100],
-                        "ketu": content[:120],
-                        "ai": is_ai,
-                        "chat_id": chat_id,
-                    })
-                    last_customer_msg = ""
 
+                # FIX: AI-generated messages (like deferral replies) must NEVER enter
+                # the customer buffer — even if is_owner detection fails. Without this,
+                # AI deferrals like "Bhai, ye Ketu sir khud batayenge" get paired as
+                # the "buyer" message instead of the actual customer question.
+                if is_ai and not is_owner:
+                    # AI message with broken is_owner flag — still clear buffer
+                    customer_msgs_buffer.clear()
+                    last_customer_ts = None
+                elif not is_owner and not is_ai:
+                    _add_to_buffer(content)
+                elif is_owner and not is_ai and customer_msgs_buffer:
+                    result = _try_create_pair(content, is_ai)
+                    if result == "low_quality":
+                        skipped_low_quality += 1
+                        # FIX: Don't clear customer buffer on low-quality reply.
+                        # Low-quality replies like "Ok", "Done" may be mis-assigned
+                        # to the wrong thread (out-of-order reply bug). Keeping the
+                        # buffer lets the NEXT real owner reply pair correctly.
+                    elif result == "no_intent":
+                        skipped_no_intent += 1
+                        customer_msgs_buffer.clear()
+                        last_customer_ts = None
+                    else:
+                        customer_msgs_buffer.clear()
+                        last_customer_ts = None
+                elif is_owner and is_ai:
+                    # AI-generated owner reply — clear customer buffer to prevent
+                    # customer messages from leaking past AI replies into the next
+                    # manual Ketu reply. Without this, messages accumulate wrongly.
+                    customer_msgs_buffer.clear()
+                    last_customer_ts = None
+
+    # Count how many chats had real chat_id vs synthetic assignment
+    real_chats = sum(1 for k in by_chat if not k.startswith("_"))
+    synthetic_chats = sum(1 for k in by_chat if k.startswith("_"))
     logger.info(
         f"[extract-pairs] msgs={len(messages)}, chats={len(by_chat)}, "
-        f"pairs={len(all_pairs)}, broken_sids={broken_sids}, use_flag={use_flag}"
+        f"pairs={len(all_pairs)}, skipped_low_quality={skipped_low_quality}, "
+        f"skipped_no_intent={skipped_no_intent}, "
+        f"broken_sids={broken_sids}, use_flag={use_flag}, "
+        f"real_chat_ids={real_chats}, synthetic={synthetic_chats}"
     )
     return all_pairs
 
@@ -701,7 +1210,10 @@ def _learn_ketu_only_pairs(messages: list[dict], owner_user_id: str, learn_fn):
 # We buffer them and only call Claude when we have 10+ quality pairs.
 # Free features (enders, bought detection, repeat buyer) still run immediately.
 
-_LEARNING_BUFFER_MIN_PAIRS = 10  # Need 10 quality Ketu manual messages before learning
+_LEARNING_BUFFER_MIN_PAIRS = 20  # Need 20 quality Ketu manual pairs before learning (bigger batch = better pattern detection)
+_LEARNING_FLUSH_COOLDOWN = 1800  # 30 minutes minimum between Claude learning calls (was 10 min — saves ~50% learning cost)
+_LEARNING_FORCE_FLUSH_PAIRS = 50  # Force flush if 50+ quality pairs (too much data waiting)
+_last_flush_time: float = 0  # Timestamp of last Claude learning flush
 _last_owner_user_id = ""  # Remember last owner_user_id from sync calls
 
 
@@ -755,6 +1267,78 @@ def _save_learning_buffer(buffer: list[dict]):
             kv_set("wwbun_learning_buffer", buffer)
     except Exception as e:
         logger.warning(f"[Buffer] Save failed: {e}")
+
+
+# --- Processed Fingerprints ---
+# Survives buffer flushes so old messages don't get re-added after flush clears the buffer.
+# Without this, wwbun re-sending old messages would pass dedup (since buffer is empty after flush).
+
+def _get_processed_fingerprints() -> dict:
+    """Load processed message fingerprints from DB. Returns {fingerprint: timestamp}."""
+    try:
+        from core.database import is_db_available, kv_get
+        if is_db_available():
+            data = kv_get("processed_msg_fingerprints")
+            if data and isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+def _save_processed_fingerprints(fps: dict):
+    """Save processed fingerprints to DB."""
+    try:
+        from core.database import is_db_available, kv_set
+        if is_db_available():
+            kv_set("processed_msg_fingerprints", fps)
+    except Exception as e:
+        logger.warning(f"[ProcessedFP] Save failed: {e}")
+
+
+def _mark_messages_processed(buffer: list[dict]):
+    """Mark all messages in buffer as processed (called after flush).
+
+    Saves their fingerprints so they won't be re-added if wwbun re-sends them.
+    Also cleans up fingerprints older than 24 hours to prevent unbounded growth.
+    """
+    fps = _get_processed_fingerprints()
+    now_ts = time.time()
+
+    # Add new fingerprints
+    for m in buffer:
+        fp = _message_fingerprint(m)
+        if fp:
+            fps[fp] = now_ts
+
+    # Cleanup: remove fingerprints older than 24 hours
+    cutoff = now_ts - 86400  # 24 hours
+    fps = {k: v for k, v in fps.items() if v > cutoff}
+
+    _save_processed_fingerprints(fps)
+    logger.info(f"[ProcessedFP] Marked {len(buffer)} msgs as processed, total tracked: {len(fps)}")
+
+
+def _message_fingerprint(m: dict) -> str:
+    """Create a unique fingerprint for a message to detect duplicates.
+
+    Priority:
+    1. message_id (WhatsApp unique ID) — best, one field, 100% reliable
+    2. chat_id + sender_id + content + timestamp — fallback composite key
+    """
+    # Best: use WhatsApp's unique message_id if available
+    msg_id = m.get("message_id", m.get("msg_id", m.get("key_id", "")))
+    if msg_id:
+        return f"mid:{msg_id}"
+
+    # Fallback: composite fingerprint
+    chat_id = m.get("chat_id", m.get("remote_jid", ""))
+    sender = m.get("sender_id", "")
+    content = (m.get("content", "") or m.get("text", "") or m.get("body", "")).strip()
+    ts = str(m.get("timestamp", m.get("created_at", "")))
+    if not content:
+        return ""  # Skip empty messages
+    return f"{chat_id}|{sender}|{content[:100]}|{ts}"
 
 
 def _safe_bool(val) -> bool:
@@ -912,13 +1496,21 @@ def _flush_learning_buffer(owner_user_id: str) -> dict:
         f"Status: {knowledge.get('status', 'unknown')}"
     )
 
+    # Calculate: messages used in pairs vs skipped
+    msgs_in_pairs = len(quality_pairs) * 2  # each pair = customer + owner message
+    total_skipped = len(buffer) - msgs_in_pairs
+    unpaired_skipped = total_skipped - filter_stats.get("junk", 0) - filter_stats.get("too_short", 0)
+    if unpaired_skipped < 0:
+        unpaired_skipped = 0
+
     log_activity(
         source="wwbun-sync",
         action="batch-learned",
         details={
             "total_buffered": len(buffer),
             "quality_pairs_count": len(quality_pairs),
-            "quality_messages_count": filter_stats.get("kept", 0),
+            "msgs_used": msgs_in_pairs,
+            "unpaired_skipped": unpaired_skipped,
             "junk_skipped": filter_stats.get("junk", 0),
             "too_short_skipped": filter_stats.get("too_short", 0),
             "quality_messages_preview": quality_messages[:5],
@@ -927,6 +1519,10 @@ def _flush_learning_buffer(owner_user_id: str) -> dict:
         },
         items_count=result.get("count", 0),
     )
+
+    # Mark all buffer messages as processed BEFORE clearing —
+    # so wwbun re-sending old messages won't re-add them to fresh buffer
+    _mark_messages_processed(buffer)
 
     # Clear buffer after successful learning
     _save_learning_buffer([])
@@ -993,6 +1589,13 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     invalidate_ender_cache()
     _mark_run("whatsapp")
 
+    # --- Track ALL customer messages for insights (free, no AI cost) ---
+    insights_result = await asyncio.to_thread(
+        track_wwbun_insights,
+        messages=req.messages,
+        owner_user_id=req.owner_user_id,
+    )
+
     # --- PAID feature: accumulate messages for batch Claude learning ---
 
     # Debug: log what wwbun is sending so we can trace pairing issues
@@ -1025,9 +1628,44 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     else:
         logger.warning("[wwbun-sync DEBUG] Received EMPTY messages list!")
 
-    # Add new messages to buffer
+    # Add new messages to buffer — DEDUPLICATE to prevent wwbun sending
+    # same "last 20 messages" across multiple syncs from creating duplicate pairs.
     buffer = _get_learning_buffer()
-    buffer.extend(req.messages)
+
+    # Build a set of existing message fingerprints for dedup
+    # Check BOTH current buffer AND previously processed messages (survives flush)
+    existing_fps = set()
+    for m in buffer:
+        fp = _message_fingerprint(m)
+        if fp:
+            existing_fps.add(fp)
+
+    # Also load processed fingerprints — these persist after buffer flush
+    # so old messages don't get re-added when wwbun re-sends them
+    processed_fps = _get_processed_fingerprints()
+    already_processed_count = 0
+
+    # Only add genuinely new messages
+    new_count = 0
+    for m in req.messages:
+        fp = _message_fingerprint(m)
+        if fp and fp in existing_fps:
+            continue  # Skip duplicate (already in buffer)
+        if fp and fp in processed_fps:
+            already_processed_count += 1
+            continue  # Skip — already processed in a previous batch
+        buffer.append(m)
+        if fp:
+            existing_fps.add(fp)
+        new_count += 1
+
+    if already_processed_count:
+        logger.info(f"[wwbun-sync DEDUP] Skipped {already_processed_count} already-processed messages")
+
+    logger.info(
+        f"[wwbun-sync DEDUP] received={len(req.messages)}, new={new_count}, "
+        f"duplicates_skipped={len(req.messages) - new_count}, buffer_total={len(buffer)}"
+    )
 
     # Cap buffer at 500 messages to prevent unbounded growth
     if len(buffer) > 500:
@@ -1038,6 +1676,16 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     # Extract pairs for display and count quality for threshold (may differ when data is broken)
     buffer_pairs = _extract_pairs_from_buffer(buffer, req.owner_user_id)
     quality_count = _count_quality_owner_messages(buffer, req.owner_user_id)
+
+    # Track Ketu's manual reply lengths and peak hours from new pairs
+    if buffer_pairs:
+        from core.reply_length import track_ketu_reply as _track_ketu_len
+        from core.peak_hours import track_ketu_replies_batch
+        manual_pairs = [p for p in buffer_pairs if not p.get("ai")]
+        for p in manual_pairs:
+            _track_ketu_len(p["ketu"])
+        if manual_pairs:
+            track_ketu_replies_batch(len(manual_pairs))
     logger.info(
         f"[wwbun-sync QUALITY] buffer_size={len(buffer)}, quality_count={quality_count}, "
         f"pairs_for_display={len(buffer_pairs)}, "
@@ -1050,8 +1698,22 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
     filter_stats = {"total": len(req.messages), "kept": 0, "junk": 0, "too_short": 0}
     quality_messages = []
 
-    if quality_count >= _LEARNING_BUFFER_MIN_PAIRS:
-        # Enough data! Flush buffer and learn
+    global _last_flush_time
+    time_since_flush = time.time() - _last_flush_time
+    cooldown_active = time_since_flush < _LEARNING_FLUSH_COOLDOWN
+    force_flush = quality_count >= _LEARNING_FORCE_FLUSH_PAIRS  # Too much data waiting
+
+    should_flush = quality_count >= _LEARNING_BUFFER_MIN_PAIRS and (not cooldown_active or force_flush)
+
+    if force_flush and cooldown_active:
+        logger.info(
+            f"[wwbun-sync] Force flushing: {quality_count} quality pairs waiting "
+            f"(>{_LEARNING_FORCE_FLUSH_PAIRS} threshold). Cooldown overridden."
+        )
+
+    if should_flush:
+        # Enough data AND (cooldown expired OR too much data waiting)
+        _last_flush_time = time.time()
         learn_result = await asyncio.to_thread(
             _flush_learning_buffer, req.owner_user_id
         )
@@ -1061,9 +1723,12 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         invalidate_cache()
 
         # Track wwbun sync stats for dashboard
+        # IMPORTANT: Use new_count (messages from THIS sync only), NOT buffer_flushed.
+        # Buffer messages were already counted when they were buffered in previous syncs.
+        _flush_pairs_count = len(quality_pairs_preview) if quality_pairs_preview else 0
         _track_wwbun_sync(
-            total_messages=learn_result.get("buffer_flushed", len(req.messages)),
-            quality_count=filter_stats.get("kept", 0),
+            total_messages=new_count,
+            quality_count=_flush_pairs_count,
             junk_count=filter_stats.get("junk", 0),
             short_count=filter_stats.get("too_short", 0),
             knowledge_count=learn_result.get("updates_applied", {}).get("count", 0),
@@ -1076,7 +1741,14 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
             },
         )
     else:
-        # Not enough yet — just log the buffering
+        # Not enough data or cooldown active — buffer the messages
+        reason = "cooldown_active" if cooldown_active and quality_count >= _LEARNING_BUFFER_MIN_PAIRS else "insufficient_data"
+        cooldown_remaining = max(0, int(_LEARNING_FLUSH_COOLDOWN - time_since_flush)) if cooldown_active else 0
+        if reason == "cooldown_active":
+            logger.info(
+                f"[wwbun-sync] Enough data ({quality_count} pairs) but cooldown active "
+                f"({cooldown_remaining}s remaining). Buffering for next flush."
+            )
         log_activity(
             source="wwbun-sync",
             action="buffered",
@@ -1085,15 +1757,17 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
                 "buffer_total": len(buffer),
                 "quality_in_buffer": quality_count,
                 "needed": _LEARNING_BUFFER_MIN_PAIRS,
-                "remaining": _LEARNING_BUFFER_MIN_PAIRS - quality_count,
+                "remaining": max(0, _LEARNING_BUFFER_MIN_PAIRS - quality_count),
+                "reason": reason,
+                "cooldown_remaining_sec": cooldown_remaining,
             },
             items_count=0,
         )
 
-        # Still track sync stats even when buffering
+        # Still track sync stats even when buffering (use new_count to avoid counting duplicates)
         # Use buffer_pairs directly — same pairs that were counted = same pairs shown
         _track_wwbun_sync(
-            total_messages=len(req.messages),
+            total_messages=new_count,
             quality_count=quality_count,
             junk_count=0,
             short_count=0,
@@ -1112,7 +1786,9 @@ async def learn_from_wwbun(req: LearnWwbunRequest):
         "buffer": {
             "quality_pairs": quality_count,
             "threshold": _LEARNING_BUFFER_MIN_PAIRS,
+            "force_flush_threshold": _LEARNING_FORCE_FLUSH_PAIRS,
             "total_buffered": len(buffer) if learn_result.get("status") == "buffered" else 0,
+            "flush_cooldown_sec": max(0, int(_LEARNING_FLUSH_COOLDOWN - (time.time() - _last_flush_time))),
         },
         "learning": {
             "filter_stats": filter_stats,
@@ -1143,6 +1819,8 @@ async def clear_learning_buffer():
     """Clear the learning buffer without learning — use when buffer has bad data."""
     buffer = _get_learning_buffer()
     count = len(buffer)
+    # Mark as processed so they don't get re-added on next wwbun sync
+    _mark_messages_processed(buffer)
     _save_learning_buffer([])
     logger.info(f"[Buffer] Cleared {count} messages from buffer")
     return {"status": "cleared", "messages_cleared": count}
@@ -1416,12 +2094,12 @@ def _get_oauth_redirect_uri() -> str:
 
 @app.get("/api/learned-files")
 async def list_learned_files_endpoint():
-    """List all learned files with rich details (title, key_points for YT videos)."""
+    """List all learned files with rich details (title, FAQs for YT videos)."""
     import json as _json
     from core.database import is_db_available, load_learned_file
 
     def _parse_yt_details(filename: str, content: str | None) -> dict:
-        """Extract title and key_points from a YouTube learned file."""
+        """Extract title and FAQ status from a YouTube learned file."""
         info = {"file": filename}
         if not content:
             return info
@@ -1430,9 +2108,6 @@ async def list_learned_files_endpoint():
             info["title"] = data.get("title", "")
             info["video_url"] = data.get("video_url", "")
             knowledge = data.get("knowledge", {})
-            info["key_points"] = knowledge.get("key_points", [])
-            info["has_product_info"] = bool(knowledge.get("product_info"))
-            info["has_pricing"] = bool(knowledge.get("pricing"))
             info["has_faqs"] = bool(knowledge.get("faqs_covered"))
         except Exception:
             pass
@@ -1544,6 +2219,32 @@ async def sync_catalog_endpoint():
     return result
 
 
+# --- Correction History (ring buffer for dashboard) ---
+
+_correction_history: list[dict] = []
+_CORRECTION_HISTORY_MAX = 50
+
+
+def _add_correction_history(entry: dict):
+    """Add a correction to both in-memory ring buffer AND persistent DB."""
+    timestamped = {**entry, "timestamp": time.time()}
+    _correction_history.append(timestamped)
+    if len(_correction_history) > _CORRECTION_HISTORY_MAX:
+        _correction_history.pop(0)
+    # Persist to DB so corrections survive deploy/restart
+    try:
+        from core.database import is_db_available, save_activity
+        if is_db_available():
+            save_activity(
+                source="correction-history",
+                action=entry.get("source", "correction"),
+                details=timestamped,
+                items_count=1,
+            )
+    except Exception as e:
+        logger.warning(f"[CorrectionHistory] DB save failed (non-fatal): {e}")
+
+
 # --- Correction Learning ---
 
 
@@ -1576,6 +2277,20 @@ async def learn_correction(req: CorrectionRequest):
         customer_phone=req.customer_phone,
         customer_name=req.customer_name,
     )
+
+    # Track in correction history ring buffer
+    _add_correction_history({
+        "source": "api",
+        "customer_phone": req.customer_phone[-4:] if req.customer_phone else "?",
+        "customer_name": req.customer_name or "",
+        "customer_message": req.customer_message[:120],
+        "ai_reply": req.ai_reply[:120],
+        "ketu_correction": req.ketu_correction[:120],
+        "what_went_wrong": result.get("what_went_wrong", ""),
+        "status": result.get("status", "unknown"),
+        "updates_applied": result.get("updates_applied", []),
+        "updates_count": result.get("count", 0),
+    })
 
     if result.get("status") == "learned":
         log_activity(
@@ -1654,6 +2369,9 @@ async def learn_voice_note(req: VoiceNoteRequest):
             },
             items_count=result.get("count", 0),
         )
+        # Track that this voice note added to knowledge
+        from learner.audio_transcriber import track_knowledge_from_voice
+        track_knowledge_from_voice()
 
     return result
 
@@ -1707,7 +2425,12 @@ async def api_ketu_replied(req: KetuRepliedRequest):
     Also logs the customer's last question to the ketu-only queue so
     the dashboard shows what Ketu had to handle manually.
     """
-    ketu_manual_reply(req.customer_phone)
+    # Check if shutup is already active for this customer BEFORE resetting timer.
+    # If active, this is a follow-up message during cooldown — skip learning.
+    from core.engine import is_shutup_active
+    is_followup_msg = is_shutup_active(req.customer_phone)
+
+    ketu_manual_reply(req.customer_phone, reply_text=req.ketu_message or "", minutes=req.minutes)
 
     # Log the customer's last question to ketu-only queue
     # so "Needs Ketu's Reply" section shows what Ketu handled
@@ -1726,6 +2449,48 @@ async def api_ketu_replied(req: KetuRepliedRequest):
             customer_message=customer_last_msg,
             ketu_reply=req.ketu_message or "",
         )
+
+        # Log takeover IMMEDIATELY so dashboard shows it right away
+        _add_correction_history({
+            "source": "ketu-takeover",
+            "customer_phone": req.customer_phone[-4:] if req.customer_phone else "?",
+            "customer_message": customer_last_msg[:120],
+            "ketu_reply": (req.ketu_message or "")[:120],
+            "status": "learning..." if req.ketu_message else "takeover-only",
+        })
+
+        # Send to cloud for deep learning (background thread)
+        # ONLY for the FIRST takeover message — skip if this is a follow-up
+        # message during the 10-min cooldown (Ketu continuing the conversation)
+        if req.ketu_message and not is_followup_msg:
+            import threading
+            def _cloud_learn_takeover():
+                from learner.realtime_learner import learn_ketu_defer_patterns
+                result = learn_ketu_defer_patterns(
+                    customer_message=customer_last_msg,
+                    ketu_reply=req.ketu_message,
+                    customer_phone=req.customer_phone,
+                    source="ketu-takeover",
+                )
+            threading.Thread(target=_cloud_learn_takeover, daemon=True).start()
+        elif req.ketu_message and is_followup_msg:
+            # Follow-up messages during 10-min cooldown should NOT go to
+            # Ketu-only learning (learn_ketu_defer_patterns).
+            # Instead, send them to NORMAL conversation learning (buffer_conversation)
+            # — same as how manual chat from wwbun sync gets learned.
+            # This learns Ketu's reply style, FAQs, business knowledge — NOT
+            # "which questions need Ketu's reply" patterns.
+            from learner.realtime_learner import buffer_conversation
+            buffer_conversation(
+                customer_message=customer_last_msg,
+                ai_reply=req.ketu_message,  # Ketu's manual reply treated as conversation pair
+                customer_name="",
+                customer_phone=req.customer_phone,
+            )
+            logger.info(
+                f"[KetuTakeover] Follow-up during cooldown for {req.customer_phone[-4:]} — "
+                f"sent to NORMAL learning (buffer_conversation), not ketu-only learning"
+            )
 
     log_activity(
         source="ketu-replied",
@@ -1749,6 +2514,55 @@ async def api_ketu_replied(req: KetuRepliedRequest):
 async def realtime_learner_stats():
     """Get realtime learner statistics — buffer size, learning progress."""
     return get_realtime_stats()
+
+
+@app.get("/api/learn/correction-history")
+async def correction_history():
+    """Recent corrections with before/after and cloud analysis results."""
+    from core.cloud_payload_log import get_recent_payloads
+
+    # Get correction-specific cloud payloads
+    all_payloads = get_recent_payloads(50)
+    correction_payloads = [
+        {
+            "timestamp": p["timestamp"],
+            "source": p["source"],
+            "actual_input_tokens": p.get("actual_input_tokens"),
+            "actual_output_tokens": p.get("actual_output_tokens"),
+            "model": p.get("model", ""),
+            "prompt_word_count": p.get("prompt_word_count", 0),
+        }
+        for p in all_payloads
+        if p.get("source") in ("correction-learning", "correction-analysis")
+    ]
+
+    # Use in-memory if available, otherwise load from DB (survives deploy)
+    corrections = list(reversed(_correction_history))
+    if not corrections:
+        try:
+            from core.database import is_db_available, get_activity_from_db
+            if is_db_available():
+                db_rows = get_activity_from_db(limit=50, source_filter="correction-history")
+                corrections = [row.get("details", {}) for row in db_rows if row.get("details")]
+        except Exception as e:
+            logger.warning(f"[CorrectionHistory] DB load failed: {e}")
+
+    return {
+        "corrections": corrections,
+        "total": len(corrections),
+        "cloud_calls": correction_payloads,
+        "cloud_call_count": len(correction_payloads),
+    }
+
+
+@app.get("/api/learn/correction-stats")
+async def correction_learning_stats():
+    """Correction learning statistics — what mistakes AI keeps making.
+
+    Shows error categories, how many times each type of mistake happened,
+    and whether an auto-rule was generated to prevent it.
+    """
+    return get_correction_stats()
 
 
 @app.get("/api/costs")
@@ -1922,6 +2736,32 @@ async def customer_insights():
     return get_customer_insights()
 
 
+@app.post("/api/insights/customers/reset")
+async def reset_customer_insights():
+    """Reset customer insights counters. Use after fixing tracking bugs."""
+    from core.database import is_db_available, kv_set
+    if is_db_available():
+        kv_set("customer_insights", {
+            "message_counts": {},
+            "names": {},
+            "hourly": {},
+        })
+        kv_set("customer_insights_total", {
+            "message_counts": {},
+            "names": {},
+            "hourly": {},
+        })
+    # Also clear in-memory
+    from core.engine import _customer_message_counts, _customer_names, _hourly_message_counts
+    from core.engine import _total_customer_counts, _total_hourly_counts
+    _customer_message_counts.clear()
+    _customer_names.clear()
+    _hourly_message_counts.clear()
+    _total_customer_counts.clear()
+    _total_hourly_counts.clear()
+    return {"status": "reset", "message": "Both AI and Total customer insights cleared. Will rebuild from incoming messages."}
+
+
 # --- FAQ Hit Rate ---
 
 
@@ -2083,6 +2923,20 @@ async def edit_whatsapp_message(req: EditMessageRequest):
                 },
             )
 
+            # Log correction IMMEDIATELY so dashboard shows it right away
+            # (don't wait for cloud learning — that can take 5-10 seconds or fail)
+            _add_correction_history({
+                "source": "whatsapp-edit",
+                "customer_phone": req.phone[-4:] if req.phone else "?",
+                "customer_name": customer_name or "",
+                "customer_message": customer_message[:120],
+                "ai_reply": ai_reply[:120],
+                "ketu_correction": req.new_text[:120],
+                "status": "learning...",
+                "updates_applied": [],
+                "updates_count": 0,
+            })
+
             # Learn from the correction in background thread
             import threading
             def _learn_from_edit():
@@ -2223,6 +3077,20 @@ async def backup_knowledge():
     )
 
 
+# --- Confidence & Peak Hours & Reply Length Stats ---
+
+
+@app.get("/api/confidence/stats")
+async def confidence_stats():
+    """Get reply confidence scoring stats."""
+    from core.peak_hours import get_peak_hours_stats
+    from core.reply_length import get_length_stats
+    return {
+        "peak_hours": get_peak_hours_stats(),
+        "reply_length": get_length_stats(),
+    }
+
+
 # --- Scheduler Status ---
 
 
@@ -2230,6 +3098,17 @@ async def backup_knowledge():
 async def scheduler_status():
     """Next sync countdown for all scheduled tasks."""
     return get_scheduler_status()
+
+
+# --- Cloud Payload Debug ---
+
+
+@app.get("/api/cloud-payloads")
+async def cloud_payloads():
+    """Show exactly what was sent to Claude API (for debugging token usage)."""
+    from core.cloud_payload_log import get_recent_payloads
+    payloads = get_recent_payloads(limit=20)
+    return {"payloads": payloads, "count": len(payloads)}
 
 
 # --- Dashboard UI ---

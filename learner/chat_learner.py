@@ -2,8 +2,7 @@ import json
 import logging
 import re
 
-from anthropic import Anthropic
-
+from core.cloud_payload_log import get_anthropic_client
 from core.config import settings, KNOWLEDGE_DIR
 
 logger = logging.getLogger(__name__)
@@ -65,6 +64,19 @@ _JUNK_PATTERNS = [
     r"^\d{10,13}$",  # Just a phone number
     r"^https?://maps\.google",  # Google Maps links (location sharing)
     r"^https?://wa\.me/",  # WhatsApp links
+    # Media-only placeholders — no learning value for text-based AI
+    r"^\[?image\]?$",
+    r"^\[?video\]?$",
+    r"^\[?audio\]?$",
+    r"^\[?document\]?$",
+    r"^\[?sticker\]?$",
+    r"^\[?voice\s*note\]?$",
+    r"^\[?gif\]?$",
+    r"^\[?contact\s*card\]?$",
+    r"^\[?location\]?$",
+    r"^\[?image\s*sent\]?$",
+    r"^\[?document\s*sent\]?$",
+    r"^\[?video\s*sent\]?$",
     # Welcome / automated template messages — no learning value
     r"welcome\s*(to|sir|ji|bhai|!)",
     r"swagat\s*hai",
@@ -103,6 +115,132 @@ def is_junk_message(text: str) -> bool:
     for pattern in _JUNK_COMPILED:
         if pattern.search(cleaned):
             return True
+
+    return False
+
+
+def is_media_only_message(text: str) -> bool:
+    """Check if a message is media-only (image, document, video, etc.) with no real text content.
+
+    These are not useful for text-based learning — an AI can't learn to reply with images.
+    Also catches cases like '[Image sent — could be payment screenshot]' or '[Document]'.
+    """
+    cleaned = text.strip().lower()
+    if not cleaned:
+        return True
+
+    # Direct media placeholders: [Image], [Document], [Video], etc.
+    if re.match(r'^\[?\s*(?:image|video|audio|document|sticker|voice\s*note|gif|contact\s*card|location|photo|pdf|file)'
+                r'(?:\s+sent)?(?:\s*[-—:].*)?\s*\]?\s*$', cleaned, re.IGNORECASE):
+        return True
+
+    # WhatsApp export format: <media omitted>, <image omitted>, etc.
+    if re.match(r'^<\s*(?:media|image|video|audio|document|sticker|contact\s*card)\s*omitted\s*>$', cleaned, re.IGNORECASE):
+        return True
+
+    return False
+
+
+def has_business_intent(text: str) -> bool:
+    """Check if a customer message shows genuine business intent worth learning from.
+
+    Returns True if the message looks like a real business inquiry, order-related
+    question, complaint, product inquiry, or negotiation — the kind of messages
+    where the owner's reply would teach the AI something useful.
+
+    Returns False for random chit-chat, forwarded messages, or non-business content.
+    """
+    cleaned = text.strip().lower()
+    if not cleaned:
+        return False
+
+    # Too short to have business intent (single word greetings handled by junk filter)
+    words = cleaned.split()
+    if len(words) < _MIN_WORDS_CUSTOMER:
+        return False
+
+    # Business intent signals — if ANY match, it's likely a business message
+    _BUSINESS_SIGNALS = [
+        # Price / cost inquiry
+        r'(?:price|rate|cost|kitna|kitne|kya\s*rate|kya\s*price|amount|charges?|shipping\s*charge)',
+        # Product inquiry
+        r'(?:available|stock|hai\s*kya|milega|mil\s*jayega|in\s*stock|out\s*of\s*stock)',
+        r'(?:size|colour|color|gsm|material|quality|weight|dimension|specification)',
+        r'(?:sample|catalog|catalogue|brochure|photo|image|pics?|pictures?)',
+        # Order / purchase
+        r'(?:order|book|buy|purchase|kharidna|lena\s*hai|chahiye|chaiye|mangta|mangwana)',
+        r'(?:quantity|qty|minimum\s*order|moq|bulk|wholesale|retail)',
+        r'(?:cod|cash\s*on\s*delivery|online\s*payment|upi|gpay|phonepe|paytm|neft|rtgs)',
+        # Delivery / shipping
+        r'(?:delivery|dispatch|ship|courier|transport|deliver|bhej|bhejna|bhejdo)',
+        r'(?:pin\s*code|pincode|location|address|kahan|where)',
+        r'(?:time|kitne\s*din|days|kab\s*tak|when|estimated)',
+        # Negotiation
+        r'(?:discount|kam|less|kuch\s*kam|thoda\s*kam|best\s*price|final\s*price|last\s*price)',
+        # Complaint / issue
+        r'(?:problem|issue|defect|broken|damaged|wrong|galat|kharab|return|refund|exchange|replace)',
+        # Confirmation / follow-up
+        r'(?:confirm|payment\s*done|paid|sent|bhej\s*diya|kar\s*diya|ho\s*gaya|tracking)',
+        # Questions (generic business questions)
+        r'(?:kaise|how|kya|what|which|konsa|kaun)',
+        # Shop / godown availability
+        r'(?:open|band|close|closed|chutti|holiday|timing|visit|godown|shop|dukan|warehouse)',
+    ]
+
+    for pattern in _BUSINESS_SIGNALS:
+        if re.search(pattern, cleaned, re.IGNORECASE):
+            return True
+
+    # If message has a question mark, it's likely an inquiry
+    if '?' in cleaned:
+        return True
+
+    # Messages with numbers often relate to quantities, prices, sizes
+    if re.search(r'\d+', cleaned) and len(words) >= 2:
+        return True
+
+    # If none of the signals match but it's long enough (5+ words),
+    # give it the benefit of the doubt — could be a detailed message
+    if len(words) >= 5:
+        return True
+
+    return False
+
+
+def is_low_quality_owner_reply(text: str) -> bool:
+    """Check if an owner (Ketu) reply is too low-quality to be a learning pair.
+
+    Catches:
+    - Media-only replies (image, document, etc.)
+    - Very short acknowledgments that don't teach anything
+    - Pure URLs with no explanation
+    But KEEPS:
+    - URL + meaningful text (e.g., "Check this link for catalog: https://...")
+    """
+    if is_media_only_message(text):
+        return True
+    if is_junk_message(text):
+        return True
+
+    cleaned = text.strip()
+
+    # Pure URL with no explanation text (just a link, no context)
+    if re.match(r'^https?://\S+$', cleaned) and len(cleaned.split()) == 1:
+        return True
+
+    # URL + text combo: strip URLs and check if remaining text is meaningful
+    text_without_urls = re.sub(r'https?://\S+', '', cleaned).strip()
+    if text_without_urls != cleaned:  # had URLs
+        # If there's meaningful text alongside the URL, keep it
+        if len(text_without_urls.split()) >= _MIN_WORDS_OWNER:
+            return False
+        # URL + junk text like "ok https://..." is still low quality
+        if not text_without_urls or is_junk_message(text_without_urls):
+            return True
+
+    # Too short for a meaningful owner reply (less than 3 words)
+    if len(cleaned.split()) < _MIN_WORDS_OWNER:
+        return True
 
     return False
 
@@ -193,7 +331,7 @@ def parse_whatsapp_export(chat_text: str) -> list[dict]:
 
 def extract_knowledge_from_messages(messages: list[dict], ketu_name: str = "Ketu") -> dict:
     """Use Claude to extract knowledge from Ketu's manual messages."""
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = get_anthropic_client()
 
     # Smart filter: remove junk messages BEFORE sending to Claude
     filtered, filter_stats = filter_messages(messages, owner_key="sender", owner_value=ketu_name)
@@ -210,46 +348,25 @@ def extract_knowledge_from_messages(messages: list[dict], ketu_name: str = "Ketu
         for m in filtered[:200]
     )
 
-    # Load current prompt config for context
-    prompt_config = _load_prompt_config()
-    current_traits = prompt_config.get("personality_traits", []) + prompt_config.get("evolved_traits", [])
-    current_phrases = prompt_config.get("signature_phrases", []) + prompt_config.get("evolved_phrases", [])
+    # NOTE: We do NOT send current traits/phrases to Claude anymore.
+    # The 194KB prompt.json was adding ~8000+ tokens per call for dedup that
+    # already happens in apply_knowledge_updates() AFTER Claude returns.
 
-    prompt = f"""Analyze these WhatsApp chat messages from Ketu (the business owner of Sale91.com / Own Knitted Blank Wears).
-
-IMPORTANT: Analyze BOTH customer questions AND Ketu's replies together — the customer question gives context for WHY Ketu replied that way. But only learn FROM Ketu's messages.
+    prompt = f"""Analyze these WhatsApp chat messages from Ketu (business owner). Learn FROM Ketu's messages only, use customer questions as context.
 Ketu's name in chat: {ketu_name}
 
 Chat messages:
 {chat_sample}
 
-CURRENT personality traits already known:
-{json.dumps(current_traits, ensure_ascii=False)}
+Do NOT extract price info or product details (materials, colors, sizes, GSM) — catalog is the source of truth.
 
-CURRENT signature phrases already known:
-{json.dumps(current_phrases, ensure_ascii=False)}
+Extract JSON:
+1. "style_patterns": Ketu's phrases, greetings, tone, typical replies
+2. "new_faqs": Customer Q + Ketu A pairs (NOT price/product FAQs)
+3. "business_updates": New policies, offers, shipping info
+4. "prompt_evolution": {{"new_traits": [], "new_phrases": [], "new_rules": [], "example_conversations": [{{"customer": "q", "reply": "a"}}]}}
 
-IMPORTANT: Do NOT extract any price information or product details (materials, colors, sizes, GSM, etc.) from these chats.
-The product catalog is the single source of truth for all prices and product info. Only extract conversational knowledge.
-
-Extract the following (in JSON format):
-1. "style_patterns": How Ketu talks — phrases, greetings, closing patterns
-2. "new_faqs": Customer Q + Ketu's A pairs (use customer question for context) — but NOT price/product FAQs, those come from catalog
-3. "business_updates": Any new business info (offers, policies, etc.)
-4. "prompt_evolution": {{
-     "new_traits": ["NEW personality traits you noticed that are NOT already in the list above"],
-     "new_phrases": ["NEW signature phrases/words Ketu uses repeatedly that are NOT already known"],
-     "new_rules": ["NEW reply rules/patterns you noticed — how Ketu handles specific situations"],
-     "example_conversations": [{{"customer": "what customer asked", "reply": "what Ketu replied"}}]
-   }}
-
-CRITICAL for prompt_evolution:
-- Only add traits/phrases/rules that are genuinely NEW (not already in current list)
-- Look for Ketu's UNIQUE way of talking — his catchphrases, his way of convincing, his humor
-- Notice how he handles objections, how he upsells, how he closes deals
-- If you find a pattern Ketu uses 2+ times, that's a signature move — capture it
-
-Return ONLY valid JSON. If nothing new found, return empty arrays/objects."""
+Return ONLY valid JSON. If nothing new, return empty arrays."""
 
     try:
         response = client.messages.create(
@@ -293,7 +410,7 @@ def extract_knowledge_from_wwbun_messages(
         messages: List of message dicts from wwbun database
         owner_user_id: The user ID of Ketu (to identify his manual messages)
     """
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = get_anthropic_client()
 
     # Helper: safely parse boolean (wwbun may send string "true"/"false")
     def _safe_bool(val) -> bool:
@@ -359,7 +476,7 @@ def extract_knowledge_from_wwbun_messages(
     # Check if we have any quality Ketu messages BEFORE calling Claude API
     quality_ketu_msgs = [
         m for m in filtered
-        if _is_owner_msg(m) and not m.get("is_ai_generated", False)
+        if _is_owner_msg(m) and not _safe_bool(m.get("is_ai_generated", False))
     ]
     if not quality_ketu_msgs:
         logger.info(f"[wwbun-learn] 0 quality Ketu messages after filtering — skipping API call (saved money)")
@@ -370,57 +487,79 @@ def extract_knowledge_from_wwbun_messages(
             "quality_messages": [],
         }
 
-    # Include customer messages for context (to understand what Ketu was replying to)
-    # but only learn FROM Ketu's messages
+    # Cap at 20 Ketu messages max — sending more wastes tokens with minimal learning gain
+    # The threshold is 20 pairs, so we should never need more than 20 Ketu messages
+    if len(quality_ketu_msgs) > 20:
+        logger.info(f"[wwbun-learn] Capping quality Ketu msgs from {len(quality_ketu_msgs)} to 20")
+        quality_ketu_msgs = quality_ketu_msgs[-20:]  # Keep newest 20
+
+    # Extract only quality PAIRS (customer question + Ketu reply) to send to Claude
+    # This avoids sending 100+ messages when only ~20 pairs matter (~70% token savings)
+    quality_ketu_set = set(id(m) for m in quality_ketu_msgs)
+    pair_messages = []
+    for i, m in enumerate(filtered):
+        if id(m) in quality_ketu_set:
+            # Include preceding customer message for context (if exists)
+            if i > 0 and id(filtered[i - 1]) not in quality_ketu_set:
+                pair_messages.append(filtered[i - 1])
+            pair_messages.append(m)
+
+    # Tag conversations from buyers ([BUYER]) for sales-prioritized learning
+    buyer_phones = set()
+    try:
+        from core.customer_memory import get_profile, STAGE_BOUGHT, STAGE_REPEAT
+        for m in pair_messages:
+            phone = m.get("contact_phone", "") or m.get("phone", "")
+            if phone and phone not in buyer_phones:
+                profile = get_profile(phone)
+                if profile.get("stage") in (STAGE_BOUGHT, STAGE_REPEAT):
+                    buyer_phones.add(phone)
+    except Exception:
+        pass
+
     chat_context = []
-    for m in filtered[:200]:
+    for m in pair_messages:
         text = m.get("content", "") or m.get("text", "") or m.get("body", "")
         if broken_sids and not is_owner_reliable:
-            # Last resort heuristic: short messages = customer, longer = Ketu
             role = "KETU" if len(text.split()) >= 5 else "CUSTOMER"
         elif broken_sids and is_owner_reliable:
             role = "KETU" if _is_owner_by_flag(m) else "CUSTOMER"
         else:
             role = "KETU" if _is_owner_msg(m) else "CUSTOMER"
-        is_ai = " [AI]" if m.get("is_ai_generated") else ""
-        chat_context.append(f"{role}{is_ai}: {text}")
+        is_ai = " [AI]" if _safe_bool(m.get("is_ai_generated", False)) else ""
+        phone = m.get("contact_phone", "") or m.get("phone", "")
+        buyer_tag = " [BUYER]" if phone in buyer_phones else ""
+        chat_context.append(f"{role}{is_ai}{buyer_tag}: {text}")
 
     chat_text = "\n".join(chat_context)
+    # Estimate token usage: ~1.3 tokens per word for Hinglish text
+    chat_words = len(chat_text.split())
+    est_chat_tokens = int(chat_words * 1.3)
+    logger.info(
+        f"[wwbun-learn] Sending {len(pair_messages)} pair messages to Claude "
+        f"(from {len(filtered)} filtered, {len(messages)} total buffer). "
+        f"Chat text: {chat_words} words ≈ {est_chat_tokens} tokens, {len(chat_text)} chars"
+    )
+    buyer_count = len(buyer_phones)
 
-    # Load current prompt config for context
-    prompt_config = _load_prompt_config()
-    current_traits = prompt_config.get("personality_traits", []) + prompt_config.get("evolved_traits", [])
-    current_phrases = prompt_config.get("signature_phrases", []) + prompt_config.get("evolved_phrases", [])
+    # NOTE: We do NOT send current traits/phrases to Claude anymore.
+    # The 194KB prompt.json was adding ~8000+ tokens per call for dedup that
+    # already happens in apply_knowledge_updates() AFTER Claude returns.
 
     prompt = f"""Analyze these WhatsApp conversations. Learn from KETU's MANUAL messages only (NOT [AI] tagged). Use CUSTOMER messages as CONTEXT to understand why Ketu replied that way.
+{f"IMPORTANT: {buyer_count} conversations are from BUYERS (marked [BUYER]). Pay EXTRA attention to these — learn what led to a sale." if buyer_count > 0 else ""}
 
 Messages:
 {chat_text}
 
-CURRENT personality traits already known:
-{json.dumps(current_traits, ensure_ascii=False)}
+Do NOT extract price info or product details (materials, colors, sizes, GSM) — catalog is the source of truth.
 
-CURRENT signature phrases already known:
-{json.dumps(current_phrases, ensure_ascii=False)}
-
-IMPORTANT: Do NOT extract any price information or product details (materials, colors, sizes, GSM, etc.) from these chats.
-The product catalog is the single source of truth for all prices and product info. Only extract conversational knowledge.
-
-Extract in JSON format:
-1. "style_patterns": How Ketu types — his phrases, greetings, tone, typical replies
-2. "new_faqs": Customer Q + Ketu's A pairs (use customer question for context) — but NOT price/product FAQs, those come from catalog
-3. "business_updates": Any new policies, offers, shipping info
-4. "prompt_evolution": {{
-     "new_traits": ["NEW personality traits NOT already known"],
-     "new_phrases": ["NEW signature phrases/words NOT already known"],
-     "new_rules": ["NEW reply patterns — how Ketu handles specific situations"],
-     "example_conversations": [{{"customer": "question", "reply": "Ketu's reply"}}]
-   }}
-
-CRITICAL for prompt_evolution:
-- Only add genuinely NEW traits/phrases/rules (not duplicates)
-- Capture Ketu's unique selling style, humor, objection handling
-- If Ketu uses a phrase 2+ times, it's a signature — add it
+Extract JSON:
+1. "style_patterns": Ketu's phrases, greetings, tone, typical replies
+2. "new_faqs": Customer Q + Ketu A pairs (NOT price/product FAQs)
+3. "business_updates": New policies, offers, shipping info
+4. "prompt_evolution": {{"new_traits": [], "new_phrases": [], "new_rules": [], "example_conversations": [{{"customer": "q", "reply": "a"}}]}}
+5. "sales_patterns": [{{"pattern": "what worked", "example": "msg"}}] (from [BUYER] chats only, or [])
 
 Return ONLY valid JSON."""
 
@@ -464,6 +603,21 @@ def apply_knowledge_updates(updates: dict) -> dict:
     for skip_key in ("price_updates", "new_products", "product_updates"):
         if updates.pop(skip_key, None):
             logger.info(f"[apply] Skipped '{skip_key}' from chat — catalog is source of truth")
+
+    # Convert sales_patterns to style_patterns (tagged with [Sales])
+    sales_patterns = updates.pop("sales_patterns", [])
+    if sales_patterns and isinstance(sales_patterns, list):
+        sales_style = [
+            f"[Sales] {sp['pattern']}" for sp in sales_patterns
+            if isinstance(sp, dict) and sp.get("pattern")
+        ]
+        if sales_style:
+            existing = updates.get("style_patterns", [])
+            if isinstance(existing, list):
+                updates["style_patterns"] = existing + sales_style
+            else:
+                updates["style_patterns"] = sales_style
+            logger.info(f"[apply] Converted {len(sales_style)} sales patterns to style patterns")
 
     # Update FAQ
     if updates.get("new_faqs"):
@@ -717,6 +871,16 @@ def learn_conversation_enders(messages: list[dict], owner_user_id: str) -> dict:
     new_enders = []
     new_non_enders = []
 
+    # NEVER learn greetings as enders — these are conversation starters, not enders.
+    # Ketu may not reply to "hi" because he's busy, but AI must always reply.
+    _never_learn_as_ender = {
+        "hi", "hii", "hiii", "hiiii", "hello", "hey", "heyy", "heyyy",
+        "hlo", "helo", "hllo", "helloo", "hellooo",
+        "namaste", "namaskar", "namaskaar",
+        "good morning", "good afternoon", "good evening", "good night",
+        "gm", "gn", "sir", "bhai", "bhaiya", "bro", "boss",
+    }
+
     # Walk through messages looking for conversation gaps
     for i in range(len(messages) - 1):
         msg = messages[i]
@@ -736,6 +900,10 @@ def learn_conversation_enders(messages: list[dict], owner_user_id: str) -> dict:
             continue
 
         content_lower = content.lower().rstrip("!.,?").strip()
+
+        # Never learn greetings as enders
+        if content_lower in _never_learn_as_ender:
+            continue
 
         # Pattern 1: Customer said something, then ANOTHER customer msg came (Ketu stayed silent)
         # This means Ketu chose not to reply — it's a conversation ender
@@ -766,7 +934,9 @@ def learn_conversation_enders(messages: list[dict], owner_user_id: str) -> dict:
     if last_msg.get("sender_id") != owner_user_id:
         content = last_msg.get("content", "").strip()
         content_lower = content.lower().rstrip("!.,?").strip()
-        if content and len(content) <= 50 and content_lower not in existing_learned:
+        if (content and len(content) <= 50
+                and content_lower not in existing_learned
+                and content_lower not in _never_learn_as_ender):
             if "?" not in content:
                 new_enders.append({
                     "pattern": content_lower,
