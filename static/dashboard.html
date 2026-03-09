@@ -2767,49 +2767,45 @@ async function loadLearnedKnowledge() {
 
   let html = '';
 
-  // Correction Patterns (most important — from direct edits)
-  if (data.learned_patterns?.length > 0) {
-    html += '<div style="margin-bottom:12px;">';
-    html += '<div style="font-size:12px;font-weight:600;color:var(--accent);margin-bottom:6px;padding:4px 8px;background:rgba(108,92,231,0.1);border-radius:4px;display:inline-block;">Correction Patterns (' + data.learned_patterns.length + ')</div>';
-    data.learned_patterns.forEach((p, i) => {
-      const isCorrection = p.includes('[Correction]');
-      const color = isCorrection ? 'var(--accent)' : 'var(--text-dim)';
-      html += '<div style="padding:8px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;margin-bottom:4px;font-size:12px;color:' + color + ';border-left:3px solid ' + color + ';">' + escapeHtml(p) + '</div>';
-    });
-    html += '</div>';
+  // Helper: safely convert any item to display string
+  function toStr(item) {
+    if (typeof item === 'string') return item;
+    if (item && typeof item === 'object') return JSON.stringify(item, null, 0);
+    return String(item || '');
   }
 
-  // Evolved Rules
-  if (data.evolved_rules?.length > 0) {
-    html += '<div style="margin-bottom:12px;">';
-    html += '<div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:6px;padding:4px 8px;background:rgba(0,184,148,0.1);border-radius:4px;display:inline-block;">Evolved Rules (' + data.evolved_rules.length + ')</div>';
-    data.evolved_rules.forEach(r => {
-      html += '<div style="padding:8px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;margin-bottom:4px;font-size:12px;color:var(--green);border-left:3px solid var(--green);">' + escapeHtml(r) + '</div>';
+  // Helper: render a category with "show more" (max 25 visible)
+  function renderCat(title, items, color, bg, max) {
+    if (!items || items.length === 0) return '';
+    max = max || 25;
+    let out = '<div style="margin-bottom:12px;">';
+    out += '<div style="font-size:12px;font-weight:600;color:' + color + ';margin-bottom:6px;padding:4px 8px;background:' + bg + ';border-radius:4px;display:inline-block;">' + title + ' (' + items.length + ')</div>';
+    items.slice(0, max).forEach(item => {
+      const text = toStr(item);
+      const isCor = text.includes('[Correction]');
+      const c = isCor ? 'var(--accent)' : color;
+      out += '<div style="padding:6px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;margin-bottom:3px;font-size:11px;color:' + c + ';border-left:3px solid ' + c + ';">' + escapeHtml(text) + '</div>';
     });
-    html += '</div>';
+    if (items.length > max) out += '<div style="color:var(--text-dim);font-size:11px;text-align:center;padding:6px;">... and ' + (items.length - max) + ' more</div>';
+    out += '</div>';
+    return out;
   }
 
-  // Evolved Traits
-  if (data.evolved_traits?.length > 0) {
-    html += '<div style="margin-bottom:12px;">';
-    html += '<div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:6px;padding:4px 8px;background:rgba(0,206,201,0.1);border-radius:4px;display:inline-block;">Evolved Traits (' + data.evolved_traits.length + ')</div>';
-    data.evolved_traits.forEach(t => {
-      html += '<div style="padding:8px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;margin-bottom:4px;font-size:12px;color:var(--accent2);border-left:3px solid var(--accent2);">' + escapeHtml(t) + '</div>';
-    });
-    html += '</div>';
-  }
+  html += renderCat('Correction Patterns', data.learned_patterns, 'var(--accent)', 'rgba(108,92,231,0.1)', 25);
+  html += renderCat('Evolved Rules', data.evolved_rules, 'var(--green)', 'rgba(0,184,148,0.1)', 25);
+  html += renderCat('Evolved Traits', data.evolved_traits, 'var(--accent2)', 'rgba(0,206,201,0.1)', 25);
 
-  // Auto-Learned FAQs
+  // Auto-Learned FAQs (Q/A format)
   if (data.auto_learned_faqs?.length > 0) {
     html += '<div style="margin-bottom:12px;">';
     html += '<div style="font-size:12px;font-weight:600;color:var(--orange);margin-bottom:6px;padding:4px 8px;background:rgba(253,203,110,0.1);border-radius:4px;display:inline-block;">Auto-Learned FAQs (' + data.auto_learned_faqs.length + ')</div>';
-    data.auto_learned_faqs.forEach(f => {
-      html += '<div style="padding:8px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;margin-bottom:4px;font-size:12px;">';
-      html += '<span style="color:var(--orange);">Q: ' + escapeHtml(f.question || '') + '</span><br>';
-      html += '<span style="color:var(--text-bright);">A: ' + escapeHtml(f.answer || '') + '</span>';
-      if (f.added_at) html += '<br><span style="color:var(--text-dim);font-size:10px;">Added: ' + escapeHtml(f.added_at) + '</span>';
+    data.auto_learned_faqs.slice(0, 25).forEach(f => {
+      html += '<div style="padding:6px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;margin-bottom:3px;font-size:11px;">';
+      html += '<span style="color:var(--orange);">Q: ' + escapeHtml(toStr(f.question || f.q || '')) + '</span><br>';
+      html += '<span style="color:var(--text-bright);">A: ' + escapeHtml(toStr(f.answer || f.a || '')) + '</span>';
       html += '</div>';
     });
+    if (data.auto_learned_faqs.length > 25) html += '<div style="color:var(--text-dim);font-size:11px;text-align:center;padding:6px;">... and ' + (data.auto_learned_faqs.length - 25) + ' more</div>';
     html += '</div>';
   }
 
@@ -2817,12 +2813,13 @@ async function loadLearnedKnowledge() {
   if (data.example_conversations?.length > 0) {
     html += '<div style="margin-bottom:12px;">';
     html += '<div style="font-size:12px;font-weight:600;color:#fd79a8;margin-bottom:6px;padding:4px 8px;background:rgba(253,121,168,0.1);border-radius:4px;display:inline-block;">Example Conversations (' + data.example_conversations.length + ')</div>';
-    data.example_conversations.forEach(ex => {
-      html += '<div style="padding:8px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;margin-bottom:4px;font-size:12px;">';
-      html += '<span style="color:var(--text-dim);">Customer:</span> <span style="color:var(--text-bright);">' + escapeHtml(ex.customer || '') + '</span><br>';
-      html += '<span style="color:var(--text-dim);">Ketu:</span> <span style="color:var(--green);">' + escapeHtml(ex.reply || '') + '</span>';
+    data.example_conversations.slice(0, 15).forEach(ex => {
+      html += '<div style="padding:6px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;margin-bottom:3px;font-size:11px;">';
+      html += '<span style="color:var(--text-dim);">Customer:</span> <span style="color:var(--text-bright);">' + escapeHtml(toStr(ex.customer || '')) + '</span><br>';
+      html += '<span style="color:var(--text-dim);">Ketu:</span> <span style="color:var(--green);">' + escapeHtml(toStr(ex.reply || '')) + '</span>';
       html += '</div>';
     });
+    if (data.example_conversations.length > 15) html += '<div style="color:var(--text-dim);font-size:11px;text-align:center;padding:6px;">... and ' + (data.example_conversations.length - 15) + ' more</div>';
     html += '</div>';
   }
 

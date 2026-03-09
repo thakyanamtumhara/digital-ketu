@@ -136,6 +136,22 @@ class _TrackedMessages:
         with _lock:
             _payloads.append(entry)
 
+        # Persist to DB so payloads survive deploy/restart
+        try:
+            from core.database import is_db_available, save_activity
+            if is_db_available():
+                # Store without the full prompt_text (too large for activity log)
+                db_entry = {k: v for k, v in entry.items() if k != "prompt_text"}
+                db_entry["prompt_preview"] = (entry.get("prompt_text") or "")[:500]
+                save_activity(
+                    source="cloud-payload",
+                    action=entry.get("source", "unknown"),
+                    details=db_entry,
+                    items_count=1,
+                )
+        except Exception:
+            pass  # Non-fatal — don't break API calls for logging
+
         return response
 
 
@@ -151,8 +167,18 @@ def get_anthropic_client() -> Anthropic:
 
 
 def get_recent_payloads(limit: int = 20) -> list[dict]:
-    """Return recent payloads, newest first."""
+    """Return recent payloads, newest first. Falls back to DB if in-memory is empty."""
     with _lock:
         items = list(_payloads)
-    items.reverse()
-    return items[:limit]
+    if items:
+        items.reverse()
+        return items[:limit]
+    # Fallback: load from DB (survives deploy/restart)
+    try:
+        from core.database import is_db_available, get_activity_from_db
+        if is_db_available():
+            db_rows = get_activity_from_db(limit=limit, source_filter="cloud-payload")
+            return [row.get("details", {}) for row in db_rows if row.get("details")]
+    except Exception:
+        pass
+    return []

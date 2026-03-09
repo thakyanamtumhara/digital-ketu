@@ -1147,7 +1147,16 @@ def _extract_conversation_pairs(messages: list[dict], owner_user_id: str) -> lis
                         last_customer_ts = None
             else:
                 is_owner = _is_owner_by_flag(msg) if use_flag else _is_owner_message(msg, owner_user_id)
-                if not is_owner:
+
+                # FIX: AI-generated messages (like deferral replies) must NEVER enter
+                # the customer buffer — even if is_owner detection fails. Without this,
+                # AI deferrals like "Bhai, ye Ketu sir khud batayenge" get paired as
+                # the "buyer" message instead of the actual customer question.
+                if is_ai and not is_owner:
+                    # AI message with broken is_owner flag — still clear buffer
+                    customer_msgs_buffer.clear()
+                    last_customer_ts = None
+                elif not is_owner and not is_ai:
                     _add_to_buffer(content)
                 elif is_owner and not is_ai and customer_msgs_buffer:
                     result = _try_create_pair(content, is_ai)
@@ -2220,10 +2229,23 @@ _CORRECTION_HISTORY_MAX = 50
 
 
 def _add_correction_history(entry: dict):
-    """Add a correction to the in-memory ring buffer for dashboard display."""
-    _correction_history.append({**entry, "timestamp": time.time()})
+    """Add a correction to both in-memory ring buffer AND persistent DB."""
+    timestamped = {**entry, "timestamp": time.time()}
+    _correction_history.append(timestamped)
     if len(_correction_history) > _CORRECTION_HISTORY_MAX:
         _correction_history.pop(0)
+    # Persist to DB so corrections survive deploy/restart
+    try:
+        from core.database import is_db_available, save_activity
+        if is_db_available():
+            save_activity(
+                source="correction-history",
+                action=entry.get("source", "correction"),
+                details=timestamped,
+                items_count=1,
+            )
+    except Exception as e:
+        logger.warning(f"[CorrectionHistory] DB save failed (non-fatal): {e}")
 
 
 # --- Correction Learning ---
@@ -2497,9 +2519,20 @@ async def correction_history():
         if p.get("source") in ("correction-learning", "correction-analysis")
     ]
 
+    # Use in-memory if available, otherwise load from DB (survives deploy)
+    corrections = list(reversed(_correction_history))
+    if not corrections:
+        try:
+            from core.database import is_db_available, get_activity_from_db
+            if is_db_available():
+                db_rows = get_activity_from_db(limit=50, source_filter="correction-history")
+                corrections = [row.get("details", {}) for row in db_rows if row.get("details")]
+        except Exception as e:
+            logger.warning(f"[CorrectionHistory] DB load failed: {e}")
+
     return {
-        "corrections": list(reversed(_correction_history)),  # newest first
-        "total": len(_correction_history),
+        "corrections": corrections,
+        "total": len(corrections),
         "cloud_calls": correction_payloads,
         "cloud_call_count": len(correction_payloads),
     }
