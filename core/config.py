@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # Server
     port: int = 8000
     auto_reply_enabled: bool = True
-    followup_enabled: bool = True  # Auto-activates with auto_reply, can be toggled independently
+    followup_enabled: bool = False  # Toggled independently via /api/followup/toggle
 
     # Rate Limiting (per hour)
     rate_limit_per_customer: int = 10  # max msgs per customer per hour

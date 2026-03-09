@@ -371,11 +371,8 @@ class ToggleRequest(BaseModel):
 
 @app.post("/api/toggle")
 async def toggle_auto_reply(req: ToggleRequest):
-    """Enable/disable auto-reply. Also auto-enables follow-up when turning on."""
+    """Enable/disable auto-reply. Follow-up is controlled independently."""
     settings.auto_reply_enabled = req.enabled
-    # Auto-enable followup when auto-reply turns on
-    if req.enabled:
-        settings.followup_enabled = True
     status = "enabled" if req.enabled else "disabled"
     logger.info(f"Auto-reply {status} (followup: {'on' if settings.followup_enabled else 'off'})")
     return {
