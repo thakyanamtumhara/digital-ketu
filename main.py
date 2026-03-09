@@ -2425,6 +2425,11 @@ async def api_ketu_replied(req: KetuRepliedRequest):
     Also logs the customer's last question to the ketu-only queue so
     the dashboard shows what Ketu had to handle manually.
     """
+    # Check if shutup is already active for this customer BEFORE resetting timer.
+    # If active, this is a follow-up message during cooldown — skip learning.
+    from core.engine import is_shutup_active
+    is_followup_msg = is_shutup_active(req.customer_phone)
+
     ketu_manual_reply(req.customer_phone, reply_text=req.ketu_message or "")
 
     # Log the customer's last question to ketu-only queue
@@ -2455,7 +2460,9 @@ async def api_ketu_replied(req: KetuRepliedRequest):
         })
 
         # Send to cloud for deep learning (background thread)
-        if req.ketu_message:
+        # ONLY for the FIRST takeover message — skip if this is a follow-up
+        # message during the 10-min cooldown (Ketu continuing the conversation)
+        if req.ketu_message and not is_followup_msg:
             import threading
             def _cloud_learn_takeover():
                 from learner.realtime_learner import learn_ketu_defer_patterns
@@ -2466,6 +2473,11 @@ async def api_ketu_replied(req: KetuRepliedRequest):
                     source="ketu-takeover",
                 )
             threading.Thread(target=_cloud_learn_takeover, daemon=True).start()
+        elif req.ketu_message and is_followup_msg:
+            logger.info(
+                f"[KetuTakeover] Skipping learning for {req.customer_phone[-4:]} — "
+                f"follow-up msg during cooldown, not first takeover"
+            )
 
     log_activity(
         source="ketu-replied",
