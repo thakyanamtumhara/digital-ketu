@@ -385,14 +385,14 @@ def is_shutup_active(customer_phone: str) -> bool:
     return False
 
 
-def ketu_manual_reply(customer_phone: str, reply_text: str = ""):
+def ketu_manual_reply(customer_phone: str, reply_text: str = "", minutes: float = 10):
     """Called when Ketu manually replies to a customer.
 
     Activates shut-up mode so AI doesn't jump back into the conversation.
     wwbun should call this (via /api/ketu-replied) when it detects Ketu typing.
     Also tracks Ketu's activity for peak hours and reply length.
     """
-    activate_shutup(customer_phone, reason="ketu_manual_reply", minutes=10)
+    activate_shutup(customer_phone, reason="ketu_manual_reply", minutes=minutes)
     # Track for peak hours detection
     track_ketu_reply()
     # Track reply length for auto-constraint

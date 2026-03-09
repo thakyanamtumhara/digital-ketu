@@ -338,7 +338,7 @@ async def api_reply(req: ReplyRequest):
     log_conversation(
         customer_phone=req.customer_phone or "",
         customer_name=req.customer_name or "",
-        customer_message=req.message,
+        customer_message=clean_message,
         ai_reply=reply,
     )
 
@@ -2430,7 +2430,7 @@ async def api_ketu_replied(req: KetuRepliedRequest):
     from core.engine import is_shutup_active
     is_followup_msg = is_shutup_active(req.customer_phone)
 
-    ketu_manual_reply(req.customer_phone, reply_text=req.ketu_message or "")
+    ketu_manual_reply(req.customer_phone, reply_text=req.ketu_message or "", minutes=req.minutes)
 
     # Log the customer's last question to ketu-only queue
     # so "Needs Ketu's Reply" section shows what Ketu handled
