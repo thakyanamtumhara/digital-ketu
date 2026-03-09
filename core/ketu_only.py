@@ -297,9 +297,9 @@ def add_learned_pattern(pattern: str, category_id: str = "learned", category_nam
 
     # Save to DB
     try:
-        from core.database import is_db_available, save_knowledge_to_db
+        from core.database import is_db_available, save_knowledge
         if is_db_available():
-            save_knowledge_to_db("ketu_only", config)
+            save_knowledge("ketu_only", config)
     except Exception:
         pass
 

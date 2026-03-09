@@ -996,9 +996,12 @@ def generate_reply(
             )
 
             # COST ALERT — warn if this single reply cost more than ₹1
+            # Use actual model pricing (Haiku vs Sonnet)
+            _cost_input_rate = 3.00 if "sonnet" in model else 0.80
+            _cost_output_rate = 15.00 if "sonnet" in model else 4.00
             cost_inr = (
-                (response.usage.input_tokens / 1_000_000) * 0.80
-                + (response.usage.output_tokens / 1_000_000) * 4.00
+                (response.usage.input_tokens / 1_000_000) * _cost_input_rate
+                + (response.usage.output_tokens / 1_000_000) * _cost_output_rate
             ) * 83.5
             if cost_inr > 1.0:
                 logger.warning(
