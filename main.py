@@ -2474,9 +2474,22 @@ async def api_ketu_replied(req: KetuRepliedRequest):
                 )
             threading.Thread(target=_cloud_learn_takeover, daemon=True).start()
         elif req.ketu_message and is_followup_msg:
+            # Follow-up messages during 10-min cooldown should NOT go to
+            # Ketu-only learning (learn_ketu_defer_patterns).
+            # Instead, send them to NORMAL conversation learning (buffer_conversation)
+            # — same as how manual chat from wwbun sync gets learned.
+            # This learns Ketu's reply style, FAQs, business knowledge — NOT
+            # "which questions need Ketu's reply" patterns.
+            from learner.realtime_learner import buffer_conversation
+            buffer_conversation(
+                customer_message=customer_last_msg,
+                ai_reply=req.ketu_message,  # Ketu's manual reply treated as conversation pair
+                customer_name="",
+                customer_phone=req.customer_phone,
+            )
             logger.info(
-                f"[KetuTakeover] Skipping learning for {req.customer_phone[-4:]} — "
-                f"follow-up msg during cooldown, not first takeover"
+                f"[KetuTakeover] Follow-up during cooldown for {req.customer_phone[-4:]} — "
+                f"sent to NORMAL learning (buffer_conversation), not ketu-only learning"
             )
 
     log_activity(
