@@ -721,6 +721,26 @@ def generate_reply(
             activate_shutup(customer_phone, reason="ketu_only_deferral", minutes=10)
         return defer_reply
 
+    # --- GREETING FAST-PATH ---
+    # Greetings like "Hello sir", "Hi", "Good morning" must ALWAYS get a warm reply.
+    # Never defer greetings to Ketu — that looks unprofessional. The AI knows enough
+    # to welcome someone and give them the catalog link.
+    msg_words_lower = set(message.strip().lower().split())
+    greeting_words = {"hi", "hii", "hiii", "hello", "hey", "hlo", "helo", "helloo",
+                      "namaste", "namaskar"}
+    # Check: is this mostly a greeting? (greeting word + optionally "sir"/"bhai"/"bro")
+    filler_words = {"sir", "ji", "bhai", "bhaiya", "bro", "boss", "g"}
+    actual_words = msg_words_lower - filler_words
+    is_greeting = bool(actual_words & greeting_words) and len(actual_words) <= 3
+    # Also catch "good morning", "good evening" etc.
+    msg_lower_stripped = message.strip().lower()
+    if msg_lower_stripped.startswith(("good morning", "good afternoon", "good evening")):
+        is_greeting = True
+
+    if is_greeting:
+        logger.info(f"[Greeting] Detected greeting, skipping confidence check: '{message[:50]}'")
+        # Don't defer — let the AI generate a proper welcome reply below
+
     # --- CONFIDENCE SCORING ---
     # Score how confident we are about replying to this message.
     # Low confidence → defer to Ketu instead of risking fabrication.
@@ -754,7 +774,7 @@ def generate_reply(
             _conversation_timestamps[customer_phone] = time.time()
         return ""
 
-    if confidence["should_defer"]:
+    if confidence["should_defer"] and not is_greeting:
         defer_reply = _get_leave_aware_defer_reply("Bhai, ye Ketu sir khud batayenge — thodi der mein reply aayega.")
         logger.info(
             f"[Confidence] LOW score={confidence['score']} — deferring to Ketu. "
@@ -781,7 +801,7 @@ def generate_reply(
 
     # Check if borderline confidence should defer during Ketu's active hours
     peak_defer = should_defer_borderline(confidence["score"])
-    if peak_defer:
+    if peak_defer and not is_greeting:
         defer_reply = _get_leave_aware_defer_reply(peak_defer["defer_reply"])
         logger.info(
             f"[PeakHours] Deferring borderline (score={confidence['score']}) — "

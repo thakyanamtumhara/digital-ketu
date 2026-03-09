@@ -297,9 +297,17 @@ async def api_reply(req: ReplyRequest):
         # Other media: skip silently (images, stickers, etc.)
         return ReplyResponse(reply="", status="skipped", should_reply=False)
 
+    # Strip wwbun's [Replying to: "..."] prefix from quoted replies.
+    # The quote context is already in conversation_history — the prefix just
+    # confuses ender detection (e.g. "Ok" becomes "[Replying to: ...] Ok" and
+    # doesn't get caught as a conversation ender).
+    clean_message = re.sub(r'^\[Replying to:\s*"?[^]]*"?\]\s*', '', req.message.strip()).strip()
+    if not clean_message:
+        clean_message = req.message.strip()  # Fallback: don't lose message
+
     reply = await asyncio.to_thread(
         generate_reply,
-        message=req.message,
+        message=clean_message,
         customer_phone=req.customer_phone,
         customer_name=req.customer_name,
         conversation_history=req.conversation_history,
